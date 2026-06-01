@@ -36,18 +36,7 @@ spec:
               value: {{ .Values.discordBot.taskQueue | quote }}
             - name: HEALTH_PORT
               value: {{ .Values.discordBot.healthPort | quote }}
-          livenessProbe:
-            httpGet:
-              path: /healthz
-              port: health
-            initialDelaySeconds: 10
-            periodSeconds: 30
-          readinessProbe:
-            httpGet:
-              path: /healthz
-              port: health
-            initialDelaySeconds: 5
-            periodSeconds: 10
+          {{- include "devloop.healthProbes" . | nindent 10 }}
           {{- if .Values.discordBot.resources }}
           resources:
             {{- toYaml .Values.discordBot.resources | nindent 12 }}

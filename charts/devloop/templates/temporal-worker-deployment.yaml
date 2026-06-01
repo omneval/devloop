@@ -41,18 +41,7 @@ spec:
               value: {{ .Values.temporalWorker.webhookPort | quote }}
             - name: PROJECTS_FILE
               value: {{ .Values.temporalWorker.projectsFile | quote }}
-          livenessProbe:
-            httpGet:
-              path: /healthz
-              port: health
-            initialDelaySeconds: 10
-            periodSeconds: 30
-          readinessProbe:
-            httpGet:
-              path: /healthz
-              port: health
-            initialDelaySeconds: 5
-            periodSeconds: 10
+          {{- include "devloop.healthProbes" . | nindent 10 }}
           {{- if .Values.temporalWorker.resources }}
           resources:
             {{- toYaml .Values.temporalWorker.resources | nindent 12 }}

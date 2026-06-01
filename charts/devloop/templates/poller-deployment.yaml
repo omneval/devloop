@@ -1,12 +1,12 @@
 {{- include "devloop.validate.temporalHost" . }}
 {{- if and .Values.poller.enabled .Values.poller.projects }}
 {{- range $idx, $project := .Values.poller.projects }}
-{{- $index := regexReplaceAll "[^a-zA-Z0-9]" .repo "" | lower | trunc 52 -}}
+{{- $sanitizedRepoName := regexReplaceAll "[^a-zA-Z0-9]" .repo "" | lower | trunc 52 -}}
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ $.Release.Name }}-poller-{{ $index }}
+  name: {{ $.Release.Name }}-poller-{{ $sanitizedRepoName }}
   labels:
     {{- include "devloop.labels" $ | nindent 4 }}
     app.kubernetes.io/component: poller
@@ -46,18 +46,7 @@ spec:
               value: {{ $.Values.poller.pollIntervalSeconds | quote }}
             - name: HEALTH_PORT
               value: {{ $.Values.poller.healthPort | quote }}
-          livenessProbe:
-            httpGet:
-              path: /healthz
-              port: health
-            initialDelaySeconds: 10
-            periodSeconds: 30
-          readinessProbe:
-            httpGet:
-              path: /healthz
-              port: health
-            initialDelaySeconds: 5
-            periodSeconds: 10
+          {{- include "devloop.healthProbes" $ | nindent 10 }}
           {{- if $.Values.poller.resources }}
           resources:
             {{- toYaml $.Values.poller.resources | nindent 12 }}
