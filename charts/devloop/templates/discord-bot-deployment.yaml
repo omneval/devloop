@@ -1,0 +1,55 @@
+{{- include "devloop.validate.temporalHost" . }}
+{{- if .Values.discordBot.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-discord-bot
+  labels:
+    {{- include "devloop.labels" . | nindent 4 }}
+    app.kubernetes.io/component: discord-bot
+spec:
+  replicas: {{ .Values.discordBot.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: discord-bot
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/component: discord-bot
+        app.kubernetes.io/instance: {{ .Release.Name }}
+    spec:
+      containers:
+        - name: discord-bot
+          image: "{{ .Values.discordBot.image.repository }}:{{ .Values.discordBot.image.tag }}"
+          imagePullPolicy: {{ .Values.discordBot.image.pullPolicy }}
+          ports:
+            - name: health
+              containerPort: {{ .Values.discordBot.healthPort }}
+              protocol: TCP
+          env:
+            - name: TEMPORAL_HOST
+              value: {{ .Values.temporalHost | quote }}
+            - name: DISCORD_TOKEN
+              value: {{ .Values.discordBot.token | quote }}
+            - name: TASK_QUEUE
+              value: {{ .Values.discordBot.taskQueue | quote }}
+            - name: HEALTH_PORT
+              value: {{ .Values.discordBot.healthPort | quote }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          {{- if .Values.discordBot.resources }}
+          resources:
+            {{- toYaml .Values.discordBot.resources | nindent 12 }}
+          {{- end }}
+{{- end }}

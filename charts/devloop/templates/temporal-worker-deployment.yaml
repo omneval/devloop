@@ -1,0 +1,60 @@
+{{- include "devloop.validate.temporalHost" . }}
+{{- if .Values.temporalWorker.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-temporal-worker
+  labels:
+    {{- include "devloop.labels" . | nindent 4 }}
+    app.kubernetes.io/component: temporal-worker
+spec:
+  replicas: {{ .Values.temporalWorker.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: temporal-worker
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/component: temporal-worker
+        app.kubernetes.io/instance: {{ .Release.Name }}
+    spec:
+      containers:
+        - name: temporal-worker
+          image: "{{ .Values.temporalWorker.image.repository }}:{{ .Values.temporalWorker.image.tag }}"
+          imagePullPolicy: {{ .Values.temporalWorker.image.pullPolicy }}
+          ports:
+            - name: health
+              containerPort: {{ .Values.temporalWorker.healthPort }}
+              protocol: TCP
+            - name: webhook
+              containerPort: {{ .Values.temporalWorker.webhookPort }}
+              protocol: TCP
+          env:
+            - name: TEMPORAL_HOST
+              value: {{ .Values.temporalHost | quote }}
+            - name: TASK_QUEUE
+              value: {{ .Values.temporalWorker.taskQueue | quote }}
+            - name: HEALTH_PORT
+              value: {{ .Values.temporalWorker.healthPort | quote }}
+            - name: WEBHOOK_PORT
+              value: {{ .Values.temporalWorker.webhookPort | quote }}
+            - name: PROJECTS_FILE
+              value: {{ .Values.temporalWorker.projectsFile | quote }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          {{- if .Values.temporalWorker.resources }}
+          resources:
+            {{- toYaml .Values.temporalWorker.resources | nindent 12 }}
+          {{- end }}
+{{- end }}

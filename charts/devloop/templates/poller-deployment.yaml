@@ -1,0 +1,66 @@
+{{- include "devloop.validate.temporalHost" . }}
+{{- if and .Values.poller.enabled .Values.poller.projects }}
+{{- range $idx, $project := .Values.poller.projects }}
+{{- $index := regexReplaceAll "[^a-zA-Z0-9]" .repo "" | lower | trunc 52 -}}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $.Release.Name }}-poller-{{ $index }}
+  labels:
+    {{- include "devloop.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: poller
+    app.kubernetes.io/project: {{ .repo | quote }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: poller
+      app.kubernetes.io/instance: {{ $.Release.Name }}
+      app.kubernetes.io/project: {{ .repo | quote }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/component: poller
+        app.kubernetes.io/instance: {{ $.Release.Name }}
+        app.kubernetes.io/project: {{ .repo | quote }}
+    spec:
+      containers:
+        - name: poller
+          image: "{{ $.Values.poller.image.repository }}:{{ $.Values.poller.image.tag }}"
+          imagePullPolicy: {{ $.Values.poller.image.pullPolicy }}
+          ports:
+            - name: health
+              containerPort: {{ $.Values.poller.healthPort }}
+              protocol: TCP
+          env:
+            - name: GITHUB_TOKEN
+              value: {{ $.Values.poller.githubToken | quote }}
+            - name: GITHUB_REPO
+              value: {{ .repo | quote }}
+            - name: AGENT_LABEL
+              value: {{ default "agent-ready" .label | quote }}
+            - name: WEBHOOK_URL
+              value: {{ .webhookUrl | quote }}
+            - name: POLL_INTERVAL_SECONDS
+              value: {{ $.Values.poller.pollIntervalSeconds | quote }}
+            - name: HEALTH_PORT
+              value: {{ $.Values.poller.healthPort | quote }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          {{- if $.Values.poller.resources }}
+          resources:
+            {{- toYaml $.Values.poller.resources | nindent 12 }}
+          {{- end }}
+{{- end }}
+{{- end }}
