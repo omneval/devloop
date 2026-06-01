@@ -1,0 +1,11 @@
+temporalHost: "temporal-frontend.agents.svc:7233"
+
+discordBot:
+  token: "test-token-placeholder"
+
+poller:
+  githubToken: "test-token-placeholder"
+  projects:
+    - repo: "org/repo"
+      label: "agent-ready"
+      webhookUrl: "http://devloop-temporal-worker.default.svc:8088/webhook"

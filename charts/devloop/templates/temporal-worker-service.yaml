@@ -1,0 +1,24 @@
+{{- include "devloop.validate.temporalHost" . }}
+{{- if .Values.temporalWorker.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-temporal-worker
+  labels:
+    {{- include "devloop.labels" . | nindent 4 }}
+    app.kubernetes.io/component: temporal-worker
+spec:
+  type: ClusterIP
+  ports:
+    - name: webhook
+      port: {{ .Values.temporalWorker.webhookPort }}
+      targetPort: webhook
+      protocol: TCP
+    - name: health
+      port: {{ .Values.temporalWorker.healthPort }}
+      targetPort: health
+      protocol: TCP
+  selector:
+    app.kubernetes.io/component: temporal-worker
+    app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end }}

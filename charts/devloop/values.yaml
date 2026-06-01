@@ -1,0 +1,92 @@
+# Required: Temporal server address (host:port).
+# The chart does NOT deploy Temporal — the consumer must provide it.
+# Example: "temporal-frontend.agents.svc:7233"
+temporalHost: ""
+
+# ---------------------------------------------------------------------------
+# Temporal Orchestration Worker
+# ---------------------------------------------------------------------------
+temporalWorker:
+  enabled: true
+  image:
+    repository: ghcr.io/omneval/devloop-temporal-worker
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  # Resource limits for the worker container
+  resources: {}
+  #   requests:
+  #     cpu: 250m
+  #     memory: 256Mi
+  #   limits:
+  #     cpu: 500m
+  #     memory: 512Mi
+  # Task queue name
+  taskQueue: "homelab-orchestration"
+  # Health probe port
+  healthPort: 8080
+  # Webhook receiver port
+  webhookPort: 8088
+  # Path to projects registry file (mounted as ConfigMap or secret)
+  projectsFile: "/etc/projects/projects.yaml"
+  # Replica count
+  replicas: 1
+
+# ---------------------------------------------------------------------------
+# Discord Bot
+# ---------------------------------------------------------------------------
+discordBot:
+  enabled: true
+  image:
+    repository: ghcr.io/omneval/devloop-discord-bot
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  # Discord bot token (use a Kubernetes Secret in production)
+  token: ""
+  # Resource limits
+  resources: {}
+  #   requests:
+  #     cpu: 100m
+  #     memory: 128Mi
+  #   limits:
+  #     cpu: 200m
+  #     memory: 256Mi
+  # Task queue for discord-bot activities
+  taskQueue: "discord-bot"
+  # Health probe port
+  healthPort: 8080
+  # Replica count
+  replicas: 1
+
+# ---------------------------------------------------------------------------
+# GitHub Issue Poller(s)
+# ---------------------------------------------------------------------------
+# Each entry creates a separate poller deployment for one repository.
+# GITHUB_TOKEN is shared across all pollers; repo-specific fields are per-entry.
+poller:
+  enabled: true
+  # Shared GitHub token for all poller instances (use a Kubernetes Secret)
+  githubToken: ""
+  image:
+    repository: ghcr.io/omneval/devloop-poller
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  # Resource limits (applied to all poller instances)
+  resources: {}
+  #   requests:
+  #     cpu: 50m
+  #     memory: 64Mi
+  #   limits:
+  #     cpu: 100m
+  #     memory: 128Mi
+  # Health probe port
+  healthPort: 8080
+  # Seconds between poll cycles
+  pollIntervalSeconds: 300
+  # List of project configs. Each creates one poller deployment.
+  #   - repo:       full GitHub repo name (e.g. "omneval/omneval")
+  #   - label:      the agent trigger label (default: "agent-ready")
+  #   - webhookUrl: URL of the temporal-worker webhook endpoint
+  projects: []
+  #   - repo: "org/repo"
+  #     label: "agent-ready"
+  #     webhookUrl: "http://devloop-temporal-worker.default.svc.cluster.local:8088/webhook/github"
