@@ -54,12 +54,18 @@ def _register_project():
 
 def _dispatch_input(**kw):
     spec = TaskSpec(
-        phase="execute", project_id="omneval", issue_number=42,
-        title="stub test issue", body="test",
+        phase="execute",
+        project_id="omneval",
+        issue_number=42,
+        title="stub test issue",
+        body="test",
     )
     return DispatchInput(
-        project_id="omneval", issue_number=42, task_spec=spec,
-        poll_interval_seconds=0.0, **kw,
+        project_id="omneval",
+        issue_number=42,
+        task_spec=spec,
+        poll_interval_seconds=0.0,
+        **kw,
     )
 
 
@@ -92,7 +98,10 @@ class FakeCore:
 
     def read_namespaced_config_map(self, name, ns):
         from kubernetes.client.exceptions import ApiException
-        payload = self._payloads.pop(0) if len(self._payloads) > 1 else self._payloads[0]
+
+        payload = (
+            self._payloads.pop(0) if len(self._payloads) > 1 else self._payloads[0]
+        )
         if payload is None:
             raise ApiException(status=404, reason="Not Found")
         return _cm({"result": json.dumps(payload)})
@@ -126,6 +135,7 @@ def _load_entrypoint():
 # Cycle 1 — render_job propagates AGENT_STUB when set
 # --------------------------------------------------------------------------- #
 
+
 def test_render_job_propagates_agent_stub_when_set(monkeypatch):
     """When AGENT_STUB=1 is in the worker env, render_job must forward it into
     the Job container env so the agent entrypoint takes the stub fast-path."""
@@ -133,7 +143,10 @@ def test_render_job_propagates_agent_stub_when_set(monkeypatch):
 
     d = _dispatch_input()
     manifest = k8s_jobs.render_job(d, "agent-omneval-execute-42-a1")
-    env = {e["name"]: e.get("value") for e in manifest["spec"]["template"]["spec"]["containers"][0]["env"]}
+    env = {
+        e["name"]: e.get("value")
+        for e in manifest["spec"]["template"]["spec"]["containers"][0]["env"]
+    }
 
     assert "AGENT_STUB" in env, "AGENT_STUB must be present in the Job container env"
     assert env["AGENT_STUB"] == "1"
@@ -146,7 +159,9 @@ def test_render_job_omits_agent_stub_when_not_set(monkeypatch):
 
     d = _dispatch_input()
     manifest = k8s_jobs.render_job(d, "agent-omneval-execute-42-a1")
-    env_names = {e["name"] for e in manifest["spec"]["template"]["spec"]["containers"][0]["env"]}
+    env_names = {
+        e["name"] for e in manifest["spec"]["template"]["spec"]["containers"][0]["env"]
+    }
 
     assert "AGENT_STUB" not in env_names
 
@@ -154,6 +169,7 @@ def test_render_job_omits_agent_stub_when_not_set(monkeypatch):
 # --------------------------------------------------------------------------- #
 # Cycle 2 — entrypoint stub path produces a parseable output payload
 # --------------------------------------------------------------------------- #
+
 
 def _git(*args, cwd):
     subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True, text=True)
@@ -193,10 +209,17 @@ def test_entrypoint_stub_produces_valid_output_payload(origin, tmp_path, monkeyp
 
     monkeypatch.setattr(entrypoint, "open_draft_pr", lambda *a, **k: "pr://stub")
     monkeypatch.setenv("AGENT_STUB", "1")
-    monkeypatch.setenv("TASK_SPEC", json.dumps({
-        "phase": "execute", "project_id": "omneval",
-        "issue_number": 42, "title": "stub test issue",
-    }))
+    monkeypatch.setenv(
+        "TASK_SPEC",
+        json.dumps(
+            {
+                "phase": "execute",
+                "project_id": "omneval",
+                "issue_number": 42,
+                "title": "stub test issue",
+            }
+        ),
+    )
     monkeypatch.setenv("GITHUB_URL", str(origin))
     monkeypatch.setenv("DEFAULT_BRANCH", "main")
     monkeypatch.setenv("WORKDIR", str(workdir))
@@ -224,6 +247,7 @@ def test_entrypoint_stub_produces_valid_output_payload(origin, tmp_path, monkeyp
 # Cycle 3 — _result_from_payload returns terminal AgentJobResult
 # --------------------------------------------------------------------------- #
 
+
 @pytest.mark.skip(reason="entrypoint.py migrates in issue #3 (devloop-agent-base)")
 def test_result_from_payload_returns_terminal_result(origin, tmp_path, monkeypatch):
     """The payload produced by the stub path feeds through _result_from_payload
@@ -235,10 +259,17 @@ def test_result_from_payload_returns_terminal_result(origin, tmp_path, monkeypat
 
     monkeypatch.setattr(entrypoint, "open_draft_pr", lambda *a, **k: "pr://stub")
     monkeypatch.setenv("AGENT_STUB", "1")
-    monkeypatch.setenv("TASK_SPEC", json.dumps({
-        "phase": "execute", "project_id": "omneval",
-        "issue_number": 42, "title": "stub test issue",
-    }))
+    monkeypatch.setenv(
+        "TASK_SPEC",
+        json.dumps(
+            {
+                "phase": "execute",
+                "project_id": "omneval",
+                "issue_number": 42,
+                "title": "stub test issue",
+            }
+        ),
+    )
     monkeypatch.setenv("GITHUB_URL", str(origin))
     monkeypatch.setenv("DEFAULT_BRANCH", "main")
     monkeypatch.setenv("WORKDIR", str(workdir))
@@ -260,6 +291,7 @@ def test_result_from_payload_returns_terminal_result(origin, tmp_path, monkeypat
 # --------------------------------------------------------------------------- #
 # Cycle 4 — fake-k8s dispatch poll using stub payload completes the activity
 # --------------------------------------------------------------------------- #
+
 
 @pytest.mark.asyncio
 async def test_dispatch_with_stub_payload_returns_complete(monkeypatch):

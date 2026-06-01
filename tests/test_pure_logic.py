@@ -40,10 +40,19 @@ def test_build_plan_breaks_cycles():
 
 
 # ---- approval / merge parsing (#20, #23) --------------------------------- #
-@pytest.mark.parametrize("reply,expected", [
-    ("approve", True), ("Approved!", True), ("yes please", True),
-    ("✅", True), ("lgtm", True), ("no", False), ("redo the plan", False), ("", False),
-])
+@pytest.mark.parametrize(
+    "reply,expected",
+    [
+        ("approve", True),
+        ("Approved!", True),
+        ("yes please", True),
+        ("✅", True),
+        ("lgtm", True),
+        ("no", False),
+        ("redo the plan", False),
+        ("", False),
+    ],
+)
 def test_is_approval(reply, expected):
     assert dl.is_approval(reply) is expected
 
@@ -64,9 +73,9 @@ def test_parse_merge_reply_none():
 
 # ---- summary dedup (#24) ------------------------------------------------- #
 def test_should_summarize():
-    assert should_summarize("abc", "def", []) is True       # new head
-    assert should_summarize("abc", "abc", []) is False      # nothing new
-    assert should_summarize("abc", "abc", [1]) is True      # closed issues present
+    assert should_summarize("abc", "def", []) is True  # new head
+    assert should_summarize("abc", "abc", []) is False  # nothing new
+    assert should_summarize("abc", "abc", [1]) is True  # closed issues present
     assert should_summarize("", "", []) is False
 
 

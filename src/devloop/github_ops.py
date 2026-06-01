@@ -76,7 +76,9 @@ def build_plan(project_id: str, raw_issues: list[dict[str, Any]]) -> ExecutionPl
     (stable topological sort; cycles fall back to issue-number order).
     """
     issues = [
-        PlannedIssue(number=i["number"], title=i.get("title", ""), body=i.get("body") or "")
+        PlannedIssue(
+            number=i["number"], title=i.get("title", ""), body=i.get("body") or ""
+        )
         for i in raw_issues
         if "pull_request" not in i  # exclude PRs (the issues API returns both)
     ]
@@ -198,8 +200,12 @@ async def plan_issues(inp: PlanInput) -> ExecutionPlan:
         while True:
             resp = c.get(
                 f"/repos/{repo}/issues",
-                params={"state": "open", "labels": cfg.agent_label,
-                        "per_page": 100, "page": page},
+                params={
+                    "state": "open",
+                    "labels": cfg.agent_label,
+                    "per_page": 100,
+                    "page": page,
+                },
             )
             resp.raise_for_status()
             batch = resp.json()
@@ -234,8 +240,12 @@ async def post_pr_comments(inp: PostCommentsInput) -> None:
                 f"/repos/{repo}/pulls/{inp.pr_number}/reviews",
                 json={"commit_id": commit_id, "event": "COMMENT", "comments": comments},
             ).raise_for_status()
-    log.info("posted %d inline comment(s) to %s#%d",
-             len(inp.inline_comments), repo, inp.pr_number)
+    log.info(
+        "posted %d inline comment(s) to %s#%d",
+        len(inp.inline_comments),
+        repo,
+        inp.pr_number,
+    )
 
 
 @activity.defn
@@ -247,8 +257,11 @@ async def file_issues(inp: FileIssuesInput) -> list[int]:
         for issue in inp.issues:
             resp = c.post(
                 f"/repos/{repo}/issues",
-                json={"title": issue.title, "body": issue.body,
-                      "labels": [cfg.agent_label]},
+                json={
+                    "title": issue.title,
+                    "body": issue.body,
+                    "labels": [cfg.agent_label],
+                },
             )
             resp.raise_for_status()
             created.append(resp.json()["number"])

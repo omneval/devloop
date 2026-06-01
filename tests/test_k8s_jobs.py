@@ -5,12 +5,9 @@ so ``activity.info().attempt`` resolves.
 """
 
 import json
-import os
 import types
-from pathlib import Path
 
 import pytest
-import yaml
 from kubernetes.client.exceptions import ApiException
 from temporalio.exceptions import ApplicationError
 from temporalio.testing import ActivityEnvironment
@@ -79,7 +76,9 @@ class FakeCore:
         self.deleted = []
 
     def read_namespaced_config_map(self, name, ns):
-        payload = self._payloads.pop(0) if len(self._payloads) > 1 else self._payloads[0]
+        payload = (
+            self._payloads.pop(0) if len(self._payloads) > 1 else self._payloads[0]
+        )
         if payload is None:
             raise _not_found()
         return _cm({"result": json.dumps(payload)})
@@ -97,10 +96,20 @@ def _patch(monkeypatch, batch, core):
 
 
 def _dispatch_input(**kw):
-    spec = TaskSpec(phase="execute", project_id="omneval", issue_number=42,
-                    title="Add feature", body="do the thing")
-    return DispatchInput(project_id="omneval", issue_number=42, task_spec=spec,
-                         poll_interval_seconds=0.0, **kw)
+    spec = TaskSpec(
+        phase="execute",
+        project_id="omneval",
+        issue_number=42,
+        title="Add feature",
+        body="do the thing",
+    )
+    return DispatchInput(
+        project_id="omneval",
+        issue_number=42,
+        task_spec=spec,
+        poll_interval_seconds=0.0,
+        **kw,
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -117,12 +126,21 @@ def test_render_job_sets_otlp_and_secret_env():
     assert env["OTEL_EXPORTER_OTLP_PROTOCOL"]["value"] == "http/protobuf"
     assert env["OTEL_EXPORTER_OTLP_HEADERS"]["value"] == "x-api-key=$(OMNEVAL_API_KEY)"
     # X-API-Key sourced from the project's ingest secret, not a bearer token
-    assert env["OMNEVAL_API_KEY"]["valueFrom"]["secretKeyRef"]["name"] == "omneval-ingest-omneval"
+    assert (
+        env["OMNEVAL_API_KEY"]["valueFrom"]["secretKeyRef"]["name"]
+        == "omneval-ingest-omneval"
+    )
     # GitHub token comes from the project's own scoped secret (per-org)
-    assert env["GITHUB_TOKEN"]["valueFrom"]["secretKeyRef"]["name"] == "omneval-agent-github-token"
+    assert (
+        env["GITHUB_TOKEN"]["valueFrom"]["secretKeyRef"]["name"]
+        == "omneval-agent-github-token"
+    )
     # GH_TOKEN mirrors GITHUB_TOKEN so the ``gh`` CLI can authenticate inside
     # the OpenHands sandbox (env vars are inherited from the container).
-    assert env["GH_TOKEN"]["valueFrom"]["secretKeyRef"]["name"] == "omneval-agent-github-token"
+    assert (
+        env["GH_TOKEN"]["valueFrom"]["secretKeyRef"]["name"]
+        == "omneval-agent-github-token"
+    )
     # task spec is serialized for the entrypoint
     assert json.loads(env["TASK_SPEC"]["value"])["issue_number"] == 42
     assert manifest["spec"]["backoffLimit"] == 0
@@ -149,7 +167,10 @@ def test_job_name_uses_discriminator_when_no_issue():
 def test_render_job_defaults_to_agent_job_sa():
     d = _dispatch_input()
     manifest = k8s_jobs.render_job(d, "agent-omneval-execute-42-a1")
-    assert manifest["spec"]["template"]["spec"]["serviceAccountName"] == k8s_jobs.SERVICE_ACCOUNT
+    assert (
+        manifest["spec"]["template"]["spec"]["serviceAccountName"]
+        == k8s_jobs.SERVICE_ACCOUNT
+    )
 
 
 def test_render_job_honors_service_account_override():
@@ -157,7 +178,9 @@ def test_render_job_honors_service_account_override():
     can inspect the cluster; render_job must use the override when set."""
     d = _dispatch_input(service_account_override="agent-diagnosis")
     manifest = k8s_jobs.render_job(d, "agent-homelab-alerts-diagnosis-a1")
-    assert manifest["spec"]["template"]["spec"]["serviceAccountName"] == "agent-diagnosis"
+    assert (
+        manifest["spec"]["template"]["spec"]["serviceAccountName"] == "agent-diagnosis"
+    )
 
 
 def test_render_job_omits_github_token_when_no_secret():
@@ -165,12 +188,17 @@ def test_render_job_omits_github_token_when_no_secret():
     # Response diagnosis) must not reference a GitHub token secret.
     spec = TaskSpec(phase="diagnosis", project_id="unknown", issue_number=0)
     d = DispatchInput(
-        project_id="unknown", issue_number=0, task_spec=spec,
+        project_id="unknown",
+        issue_number=0,
+        task_spec=spec,
         poll_interval_seconds=0.0,
         omneval_secret_override="omneval-ingest-homelab-alerts",
     )
     manifest = k8s_jobs.render_job(d, "agent-unknown-diagnosis-a1")
-    env = {e["name"]: e for e in manifest["spec"]["template"]["spec"]["containers"][0]["env"]}
+    env = {
+        e["name"]: e
+        for e in manifest["spec"]["template"]["spec"]["containers"][0]["env"]
+    }
     assert "GITHUB_TOKEN" not in env
     assert "GH_TOKEN" not in env
 
@@ -187,12 +215,23 @@ def test_job_name_includes_attempt():
 @pytest.mark.asyncio
 async def test_dispatch_completes_and_reads_configmap(monkeypatch):
     batch = FakeBatch([(None, None), (1, None)])  # pending then succeeded
-    core = FakeCore([None, {"status": "complete", "branch": "agent/issue-42",
-                            "pr_url": "https://github.com/omneval/omneval/pull/9",
-                            "tests_passed": True, "issue_number": 42}])
+    core = FakeCore(
+        [
+            None,
+            {
+                "status": "complete",
+                "branch": "agent/issue-42",
+                "pr_url": "https://github.com/omneval/omneval/pull/9",
+                "tests_passed": True,
+                "issue_number": 42,
+            },
+        ]
+    )
     _patch(monkeypatch, batch, core)
 
-    result = await ActivityEnvironment().run(k8s_jobs.dispatch_agent_job, _dispatch_input())
+    result = await ActivityEnvironment().run(
+        k8s_jobs.dispatch_agent_job, _dispatch_input()
+    )
 
     assert result.status == JobStatus.COMPLETE.value
     assert result.branch == "agent/issue-42"
@@ -217,7 +256,9 @@ async def test_dispatch_returns_awaiting_human(monkeypatch):
     core = FakeCore([{"status": "awaiting_human", "question": "Use lib A or B?"}])
     _patch(monkeypatch, batch, core)
 
-    result = await ActivityEnvironment().run(k8s_jobs.dispatch_agent_job, _dispatch_input())
+    result = await ActivityEnvironment().run(
+        k8s_jobs.dispatch_agent_job, _dispatch_input()
+    )
 
     assert result.status == JobStatus.AWAITING_HUMAN.value
     assert result.question == "Use lib A or B?"
@@ -234,7 +275,9 @@ async def test_dispatch_attaches_to_existing_job_on_conflict(monkeypatch):
     core = FakeCore([{"status": "complete", "branch": "b"}])
     _patch(monkeypatch, batch, core)
 
-    result = await ActivityEnvironment().run(k8s_jobs.dispatch_agent_job, _dispatch_input())
+    result = await ActivityEnvironment().run(
+        k8s_jobs.dispatch_agent_job, _dispatch_input()
+    )
     assert result.status == JobStatus.COMPLETE.value
 
 
@@ -244,7 +287,9 @@ async def test_cleanup_deletes_job_and_configmap(monkeypatch):
     core = FakeCore([None])
     _patch(monkeypatch, batch, core)
 
-    await ActivityEnvironment().run(k8s_jobs.cleanup_agent_job, "agent-omneval-execute-42-a1")
+    await ActivityEnvironment().run(
+        k8s_jobs.cleanup_agent_job, "agent-omneval-execute-42-a1"
+    )
     assert batch.deleted == ["agent-omneval-execute-42-a1"]
     assert core.deleted == ["agent-omneval-execute-42-a1"]
 
@@ -252,6 +297,7 @@ async def test_cleanup_deletes_job_and_configmap(monkeypatch):
 # --------------------------------------------------------------------------- #
 # Fix #34 — LLM + OTLP env pass-through into Job manifest
 # --------------------------------------------------------------------------- #
+
 
 def test_render_job_passes_llm_env_when_set(monkeypatch):
     """When AGENT_MODEL, AGENT_LLM_BASE_URL, AGENT_LLM_API_KEY are set in the
@@ -263,8 +309,11 @@ def test_render_job_passes_llm_env_when_set(monkeypatch):
 
     d = _dispatch_input()
     manifest = k8s_jobs.render_job(d, "agent-omneval-execute-42-a1")
-    env = {e["name"]: e["value"] for e in manifest["spec"]["template"]["spec"]["containers"][0]["env"]
-           if "value" in e}
+    env = {
+        e["name"]: e["value"]
+        for e in manifest["spec"]["template"]["spec"]["containers"][0]["env"]
+        if "value" in e
+    }
 
     assert env["AGENT_MODEL"] == "qwen3.6-27b-mtp"
     assert env["AGENT_LLM_BASE_URL"] == "http://dgx.local/v1"
@@ -280,7 +329,9 @@ def test_render_job_omits_llm_env_when_unset(monkeypatch):
 
     d = _dispatch_input()
     manifest = k8s_jobs.render_job(d, "agent-omneval-execute-42-a1")
-    env_names = {e["name"] for e in manifest["spec"]["template"]["spec"]["containers"][0]["env"]}
+    env_names = {
+        e["name"] for e in manifest["spec"]["template"]["spec"]["containers"][0]["env"]
+    }
 
     assert "AGENT_MODEL" not in env_names
     assert "AGENT_LLM_BASE_URL" not in env_names
@@ -296,8 +347,11 @@ def test_render_job_passes_otlp_overrides_from_env(monkeypatch):
 
     d = _dispatch_input()
     manifest = k8s_jobs.render_job(d, "agent-omneval-execute-42-a1")
-    env = {e["name"]: e for e in manifest["spec"]["template"]["spec"]["containers"][0]["env"]
-           if "value" in e}
+    env = {
+        e["name"]: e
+        for e in manifest["spec"]["template"]["spec"]["containers"][0]["env"]
+        if "value" in e
+    }
 
     assert env["OTEL_EXPORTER_OTLP_ENDPOINT"]["value"] == "http://custom-collector:4318"
     assert env["OTEL_EXPORTER_OTLP_HEADERS"]["value"] == "x-api-key=custom-key"
@@ -310,9 +364,11 @@ def test_render_job_does_not_set_otel_service_name_from_env(monkeypatch):
 
     d = _dispatch_input()
     manifest = k8s_jobs.render_job(d, "agent-omneval-execute-42-a1")
-    env = {e["name"]: e["value"] for e in manifest["spec"]["template"]["spec"]["containers"][0]["env"]
-           if "value" in e}
+    env = {
+        e["name"]: e["value"]
+        for e in manifest["spec"]["template"]["spec"]["containers"][0]["env"]
+        if "value" in e
+    }
 
     # Must be the phase, not the worker's own service name
     assert env["OTEL_SERVICE_NAME"] == "execute"
-

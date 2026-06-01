@@ -41,12 +41,16 @@ class SummarizationWorkflow:
     @workflow.run
     async def run(self, inp: SummarizeInput) -> SummarizeResult:
         result: SummarizeResult = await workflow.execute_activity(
-            "summarize_changes", inp,
+            "summarize_changes",
+            inp,
             result_type=SummarizeResult,
-            start_to_close_timeout=timedelta(minutes=10), retry_policy=_RETRY,
+            start_to_close_timeout=timedelta(minutes=10),
+            retry_policy=_RETRY,
         )
         if result.skipped:
-            workflow.logger.info("summary skipped (no new changes) for %s", inp.project_id)
+            workflow.logger.info(
+                "summary skipped (no new changes) for %s", inp.project_id
+            )
             return result
 
         title = f"{inp.project_id} — {inp.trigger} digest"

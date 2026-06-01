@@ -34,7 +34,9 @@ class Mocks:
     plan_rounds: list[dict] = field(default_factory=list)
     plan_default: dict = field(default_factory=lambda: {"issues": []})
     plan_calls: int = 0
-    dispatch_behavior: dict = field(default_factory=dict)  # (phase, issue) -> AgentJobResult
+    dispatch_behavior: dict = field(
+        default_factory=dict
+    )  # (phase, issue) -> AgentJobResult
     execute_commits: int = 1
     execute_status: str = JobStatus.COMPLETE.value
     review_commits: int = 1
@@ -54,41 +56,71 @@ M = Mocks()
 
 
 def _one_issue(num=1):
-    return {"issues": [{"id": str(num), "title": f"Issue {num}",
-                        "branch": f"agent/issue-{num}"}]}
+    return {
+        "issues": [
+            {"id": str(num), "title": f"Issue {num}", "branch": f"agent/issue-{num}"}
+        ]
+    }
 
 
 def _make_activities():
     @activity.defn(name="dispatch_agent_job")
     async def dispatch_agent_job(inp) -> AgentJobResult:
-        phase = inp["task_spec"]["phase"] if isinstance(inp, dict) else inp.task_spec.phase
+        phase = (
+            inp["task_spec"]["phase"] if isinstance(inp, dict) else inp.task_spec.phase
+        )
         issue = inp["issue_number"] if isinstance(inp, dict) else inp.issue_number
         M.dispatched_phases.append(phase)
         key = (phase, issue)
         if key in M.dispatch_behavior:
             return M.dispatch_behavior[key]
         if phase == "plan":
-            doc = M.plan_rounds[M.plan_calls] if M.plan_calls < len(M.plan_rounds) else M.plan_default
+            doc = (
+                M.plan_rounds[M.plan_calls]
+                if M.plan_calls < len(M.plan_rounds)
+                else M.plan_default
+            )
             M.plan_calls += 1
-            return AgentJobResult(status=JobStatus.COMPLETE.value, job_name="plan", plan=doc)
+            return AgentJobResult(
+                status=JobStatus.COMPLETE.value, job_name="plan", plan=doc
+            )
         if phase == "execute":
             if M.execute_status != JobStatus.COMPLETE.value:
-                return AgentJobResult(status=M.execute_status, job_name=f"j{issue}",
-                                      issue_number=issue, error="boom")
+                return AgentJobResult(
+                    status=M.execute_status,
+                    job_name=f"j{issue}",
+                    issue_number=issue,
+                    error="boom",
+                )
             has = M.execute_commits > 0
             return AgentJobResult(
-                status=JobStatus.COMPLETE.value, job_name=f"j{issue}", issue_number=issue,
+                status=JobStatus.COMPLETE.value,
+                job_name=f"j{issue}",
+                issue_number=issue,
                 branch=f"agent/issue-{issue}" if has else "",
-                pr_url=f"https://github.com/omneval/omneval/pull/{issue}" if has else "",
-                commits=M.execute_commits, tests_passed=True)
+                pr_url=f"https://github.com/omneval/omneval/pull/{issue}"
+                if has
+                else "",
+                commits=M.execute_commits,
+                tests_passed=True,
+            )
         if phase == "review":
-            return AgentJobResult(status=JobStatus.COMPLETE.value, job_name=f"r{issue}",
-                                  issue_number=issue, commits=M.review_commits)
+            return AgentJobResult(
+                status=JobStatus.COMPLETE.value,
+                job_name=f"r{issue}",
+                issue_number=issue,
+                commits=M.review_commits,
+            )
         if phase == "merge":
-            return AgentJobResult(status=M.merge_status, job_name="merge",
-                                  pr_url=f"https://github.com/omneval/omneval/pull/{issue}",
-                                  merged_issues=[issue],
-                                  error="merge conflict" if M.merge_status != JobStatus.COMPLETE.value else "")
+            return AgentJobResult(
+                status=M.merge_status,
+                job_name="merge",
+                pr_url=f"https://github.com/omneval/omneval/pull/{issue}",
+                merged_issues=[issue],
+                error="merge conflict"
+                if M.merge_status != JobStatus.COMPLETE.value
+                else "",
+            )
         return AgentJobResult(status=JobStatus.COMPLETE.value, job_name="x")
 
     @activity.defn(name="answer_agent_job")
@@ -99,12 +131,21 @@ def _make_activities():
     async def await_agent_job(inp) -> AgentJobResult:
         issue = inp["issue_number"] if isinstance(inp, dict) else inp.issue_number
         if M.await_status != JobStatus.COMPLETE.value:
-            return AgentJobResult(status=M.await_status, job_name=f"j{issue}",
-                                  issue_number=issue, error="post-answer failure")
-        return AgentJobResult(status=JobStatus.COMPLETE.value, job_name=f"j{issue}",
-                              issue_number=issue, branch=f"agent/issue-{issue}",
-                              pr_url=f"https://github.com/omneval/omneval/pull/{issue}",
-                              commits=1, tests_passed=True)
+            return AgentJobResult(
+                status=M.await_status,
+                job_name=f"j{issue}",
+                issue_number=issue,
+                error="post-answer failure",
+            )
+        return AgentJobResult(
+            status=JobStatus.COMPLETE.value,
+            job_name=f"j{issue}",
+            issue_number=issue,
+            branch=f"agent/issue-{issue}",
+            pr_url=f"https://github.com/omneval/omneval/pull/{issue}",
+            commits=1,
+            tests_passed=True,
+        )
 
     @activity.defn(name="send_message")
     async def send_message(inp: SendMessageInput) -> SendMessageOutput:
@@ -120,8 +161,12 @@ def _make_activities():
         return list(M.open_agent_prs)
 
     return (
-        [dispatch_agent_job, answer_agent_job, await_agent_job,
-         open_agent_pr_issue_numbers],
+        [
+            dispatch_agent_job,
+            answer_agent_job,
+            await_agent_job,
+            open_agent_pr_issue_numbers,
+        ],
         [send_message, send_notification],
     )
 
@@ -146,10 +191,15 @@ async def _run_devloop(client: Client, inp: DevLoopInput, replies: list[str]):
 async def _env_and_run(inp: DevLoopInput, replies: list[str]):
     orch_acts, discord_acts = _make_activities()
     async with await WorkflowEnvironment.start_time_skipping() as env:
-        async with Worker(
-            env.client, task_queue=ORCHESTRATION_QUEUE,
-            workflows=[DevLoopWorkflow], activities=orch_acts,
-        ), Worker(env.client, task_queue=DISCORD_QUEUE, activities=discord_acts):
+        async with (
+            Worker(
+                env.client,
+                task_queue=ORCHESTRATION_QUEUE,
+                workflows=[DevLoopWorkflow],
+                activities=orch_acts,
+            ),
+            Worker(env.client, task_queue=DISCORD_QUEUE, activities=discord_acts),
+        ):
             return await _run_devloop(env.client, inp, replies)
 
 
@@ -210,8 +260,12 @@ async def test_plan_approve_runs_one_issue_to_merge(reset_mocks):
 async def test_plan_replan_then_approve(reset_mocks):
     # First plan offers #1 and #2; reviewer says drop #2; re-plan offers only #1.
     reset_mocks.plan_rounds = [
-        {"issues": [{"id": "1", "title": "A", "branch": "agent/issue-1"},
-                    {"id": "2", "title": "B", "branch": "agent/issue-2"}]},
+        {
+            "issues": [
+                {"id": "1", "title": "A", "branch": "agent/issue-1"},
+                {"id": "2", "title": "B", "branch": "agent/issue-2"},
+            ]
+        },
         _one_issue(1),
     ]
     result = await _env_and_run(
@@ -252,7 +306,9 @@ async def test_execute_no_commits_skips_to_next_round(reset_mocks):
 async def test_execute_mid_run_question_reply(reset_mocks):
     reset_mocks.plan_rounds = [_one_issue(1)]
     reset_mocks.dispatch_behavior[("execute", 1)] = AgentJobResult(
-        status=JobStatus.AWAITING_HUMAN.value, job_name="j1", issue_number=1,
+        status=JobStatus.AWAITING_HUMAN.value,
+        job_name="j1",
+        issue_number=1,
         question="Use lib A or B?",
     )
     result = await _env_and_run(
@@ -269,7 +325,9 @@ async def test_execute_mid_run_question_reply(reset_mocks):
 async def test_execute_mid_run_question_timeout(reset_mocks):
     reset_mocks.plan_rounds = [_one_issue(1)]
     reset_mocks.dispatch_behavior[("execute", 1)] = AgentJobResult(
-        status=JobStatus.AWAITING_HUMAN.value, job_name="j1", issue_number=1,
+        status=JobStatus.AWAITING_HUMAN.value,
+        job_name="j1",
+        issue_number=1,
         question="Which approach?",
     )
     reset_mocks.await_status = JobStatus.FAILED.value  # best-guess answer then fails

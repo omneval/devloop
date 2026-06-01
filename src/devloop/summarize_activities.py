@@ -39,9 +39,9 @@ def should_summarize(last_sha: str, head_sha: str, closed_issues: list[int]) -> 
 
 def build_prompt(commits: list[str], issues: list[dict]) -> str:
     commit_block = "\n".join(f"- {c}" for c in commits) or "- (no new commits)"
-    issue_block = "\n".join(
-        f"- #{i['number']} {i['title']}" for i in issues
-    ) or "- (none)"
+    issue_block = (
+        "\n".join(f"- #{i['number']} {i['title']}" for i in issues) or "- (none)"
+    )
     return (
         "You are writing a changelog entry for a homelab Kubernetes repo. "
         "Given the commit messages and resolved issues below, write a short "
@@ -92,7 +92,9 @@ def set_last_sha(project_id: str, sha: str) -> None:
 # --------------------------------------------------------------------------- #
 # GitHub + LLM
 # --------------------------------------------------------------------------- #
-def _fetch_changes(repo: str, base: str, head: str, closed: list[int]) -> tuple[list[str], list[dict], str]:
+def _fetch_changes(
+    repo: str, base: str, head: str, closed: list[int]
+) -> tuple[list[str], list[dict], str]:
     commits: list[str] = []
     issues: list[dict] = []
     resolved_head = head
@@ -104,7 +106,10 @@ def _fetch_changes(repo: str, base: str, head: str, closed: list[int]) -> tuple[
         if base and base != resolved_head:
             r = c.get(f"/repos/{repo}/compare/{base}...{resolved_head}")
             if r.status_code == 200:
-                commits = [cm["commit"]["message"].splitlines()[0] for cm in r.json().get("commits", [])]
+                commits = [
+                    cm["commit"]["message"].splitlines()[0]
+                    for cm in r.json().get("commits", [])
+                ]
         for n in closed:
             r = c.get(f"/repos/{repo}/issues/{n}")
             if r.status_code == 200:
@@ -118,9 +123,11 @@ def _llm_summary(prompt: str) -> str:
 
     resp = httpx.post(
         f"{OPENAI_BASE_URL}/chat/completions",
-        json={"model": SUMMARY_MODEL,
-              "messages": [{"role": "user", "content": prompt}],
-              "temperature": 0.3},
+        json={
+            "model": SUMMARY_MODEL,
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0.3,
+        },
         timeout=120.0,
     )
     resp.raise_for_status()
@@ -133,7 +140,9 @@ async def summarize_changes(inp: SummarizeInput) -> SummarizeResult:
     repo = parse_github_repo(cfg.github_url)
     last_sha = get_last_sha(inp.project_id)
 
-    commits, issues, head = _fetch_changes(repo, last_sha, inp.head_sha, inp.closed_issues)
+    commits, issues, head = _fetch_changes(
+        repo, last_sha, inp.head_sha, inp.closed_issues
+    )
 
     if not should_summarize(last_sha, head, inp.closed_issues):
         return SummarizeResult(skipped=True, head_sha=head)

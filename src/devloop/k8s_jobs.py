@@ -41,7 +41,9 @@ OMNEVAL_OTLP_ENDPOINT = os.getenv(
     "OMNEVAL_OTLP_ENDPOINT", "http://omneval-ingest.omneval.svc.cluster.local:8000"
 )
 OPENAI_BASE_URL = os.getenv("AGENT_OPENAI_BASE_URL", "http://192.168.68.104/v1")
-AGENT_BASE_IMAGE = os.getenv("AGENT_BASE_IMAGE", "ghcr.io/omneval/devloop-agent-base:latest")
+AGENT_BASE_IMAGE = os.getenv(
+    "AGENT_BASE_IMAGE", "ghcr.io/omneval/devloop-agent-base:latest"
+)
 
 # Defaults; overridable via DispatchInput for tests.
 DEFAULT_CPU = os.getenv("AGENT_JOB_CPU", "2")
@@ -104,7 +106,9 @@ def _resolve_job_refs(d: DispatchInput):
     except KeyError:
         cfg = None
     image = d.image_override or (cfg.agent_image if cfg else AGENT_BASE_IMAGE)
-    omneval_secret = d.omneval_secret_override or (cfg.omneval_ingest_secret if cfg else "")
+    omneval_secret = d.omneval_secret_override or (
+        cfg.omneval_ingest_secret if cfg else ""
+    )
     github_url = d.github_url_override or (cfg.github_url if cfg else "")
     default_branch = cfg.default_branch if cfg else "main"
     github_token_secret = d.github_token_secret_override or (
@@ -139,13 +143,13 @@ def render_job(d: DispatchInput, job_name: str) -> dict:
         {"name": "OTEL_EXPORTER_OTLP_PROTOCOL", "value": "http/protobuf"},
         {
             "name": "OTEL_EXPORTER_OTLP_ENDPOINT",
-            "value": os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT", OMNEVAL_OTLP_ENDPOINT),
+            "value": os.environ.get(
+                "OTEL_EXPORTER_OTLP_ENDPOINT", OMNEVAL_OTLP_ENDPOINT
+            ),
         },
         {
             "name": "OMNEVAL_API_KEY",
-            "valueFrom": {
-                "secretKeyRef": {"name": omneval_secret, "key": "api-key"}
-            },
+            "valueFrom": {"secretKeyRef": {"name": omneval_secret, "key": "api-key"}},
         },
         {
             "name": "OTEL_EXPORTER_OTLP_HEADERS",
@@ -183,20 +187,28 @@ def render_job(d: DispatchInput, job_name: str) -> dict:
     # ``GITHUB_TOKEN`` is used for git push/clone; ``GH_TOKEN`` is consumed by
     # the ``gh`` CLI (``gh issue list``) inside the agent sandbox.
     if github_token_secret:
-        env.extend([
-            {
-                "name": "GITHUB_TOKEN",
-                "valueFrom": {
-                    "secretKeyRef": {"name": github_token_secret, "key": "GITHUB_TOKEN"}
+        env.extend(
+            [
+                {
+                    "name": "GITHUB_TOKEN",
+                    "valueFrom": {
+                        "secretKeyRef": {
+                            "name": github_token_secret,
+                            "key": "GITHUB_TOKEN",
+                        }
+                    },
                 },
-            },
-            {
-                "name": "GH_TOKEN",
-                "valueFrom": {
-                    "secretKeyRef": {"name": github_token_secret, "key": "GITHUB_TOKEN"}
+                {
+                    "name": "GH_TOKEN",
+                    "valueFrom": {
+                        "secretKeyRef": {
+                            "name": github_token_secret,
+                            "key": "GITHUB_TOKEN",
+                        }
+                    },
                 },
-            },
-        ])
+            ]
+        )
 
     return {
         "apiVersion": "batch/v1",
@@ -285,8 +297,16 @@ def _result_from_payload(payload: dict, job_name: str) -> AgentJobResult:
 def _job_terminal(job) -> str | None:
     """Return 'complete', 'failed', or None for a batch/v1 Job object/dict."""
     status = job.status if not isinstance(job, dict) else job.get("status", {})
-    succeeded = getattr(status, "succeeded", None) if not isinstance(status, dict) else status.get("succeeded")
-    failed = getattr(status, "failed", None) if not isinstance(status, dict) else status.get("failed")
+    succeeded = (
+        getattr(status, "succeeded", None)
+        if not isinstance(status, dict)
+        else status.get("succeeded")
+    )
+    failed = (
+        getattr(status, "failed", None)
+        if not isinstance(status, dict)
+        else status.get("failed")
+    )
     if succeeded:
         return "complete"
     if failed:
@@ -297,7 +317,9 @@ def _job_terminal(job) -> str | None:
 # --------------------------------------------------------------------------- #
 # Polling
 # --------------------------------------------------------------------------- #
-async def _poll_to_terminal(core, batch, job_name: str, d: DispatchInput) -> AgentJobResult:
+async def _poll_to_terminal(
+    core, batch, job_name: str, d: DispatchInput
+) -> AgentJobResult:
     """Poll a running Job until terminal or until it asks a human a question."""
     while True:
         payload = _read_output(core, job_name)
@@ -308,7 +330,9 @@ async def _poll_to_terminal(core, batch, job_name: str, d: DispatchInput) -> Age
         job = batch.read_namespaced_job_status(job_name, NAMESPACE)
         terminal = _job_terminal(job)
         if terminal == "complete":
-            payload = _read_output(core, job_name) or {"status": JobStatus.COMPLETE.value}
+            payload = _read_output(core, job_name) or {
+                "status": JobStatus.COMPLETE.value
+            }
             return _result_from_payload(payload, job_name)
         if terminal == "failed":
             payload = _read_output(core, job_name) or {}
@@ -332,9 +356,9 @@ async def dispatch_agent_job(d: DispatchInput) -> AgentJobResult:
     if not d.issue_number:
         import hashlib
 
-        discriminator = hashlib.sha1(
-            activity.info().workflow_id.encode()
-        ).hexdigest()[:8]
+        discriminator = hashlib.sha1(activity.info().workflow_id.encode()).hexdigest()[
+            :8
+        ]
     job_name = job_name_for(d, attempt, discriminator)
     manifest = render_job(d, job_name)
 

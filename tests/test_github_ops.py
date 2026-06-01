@@ -16,9 +16,13 @@ from devloop.github_ops import (
 from devloop.projects import ProjectConfig, _REGISTRY
 
 _PROJECT = ProjectConfig(
-    id="omneval", github_url="https://github.com/omneval/omneval",
-    default_branch="main", agent_image="img", agent_label="agent-ready",
-    discord_channel="agent-approvals", omneval_ingest_secret="s",
+    id="omneval",
+    github_url="https://github.com/omneval/omneval",
+    default_branch="main",
+    agent_image="img",
+    agent_label="agent-ready",
+    discord_channel="agent-approvals",
+    omneval_ingest_secret="s",
     github_token_secret="omneval-agent-github-token",
 )
 
@@ -70,10 +74,13 @@ class FakeClient:
 
 @pytest.mark.asyncio
 async def test_plan_issues_orders_and_fetches(monkeypatch):
-    pages = [[
-        {"number": 2, "title": "B", "body": "after #1"},
-        {"number": 1, "title": "A", "body": ""},
-    ], []]
+    pages = [
+        [
+            {"number": 2, "title": "B", "body": "after #1"},
+            {"number": 1, "title": "A", "body": ""},
+        ],
+        [],
+    ]
     monkeypatch.setattr(github_ops, "_client", lambda cfg: FakeClient(get_pages=pages))
     plan = await ActivityEnvironment().run(plan_issues, PlanInput("omneval"))
     assert [i.number for i in plan.issues] == [1, 2]
@@ -82,7 +89,9 @@ async def test_plan_issues_orders_and_fetches(monkeypatch):
 @pytest.mark.asyncio
 async def test_file_issues_applies_agent_label(monkeypatch):
     posts = []
-    monkeypatch.setattr(github_ops, "_client", lambda cfg: FakeClient(post_capture=posts))
+    monkeypatch.setattr(
+        github_ops, "_client", lambda cfg: FakeClient(post_capture=posts)
+    )
     created = await ActivityEnvironment().run(
         file_issues, FileIssuesInput("omneval", [NewIssue("t", "b")])
     )
@@ -94,7 +103,8 @@ async def test_file_issues_applies_agent_label(monkeypatch):
 async def test_close_issues_comments_then_closes(monkeypatch):
     posts, patches = [], []
     monkeypatch.setattr(
-        github_ops, "_client",
+        github_ops,
+        "_client",
         lambda cfg: FakeClient(post_capture=posts, patch_capture=patches),
     )
     await ActivityEnvironment().run(
@@ -111,10 +121,10 @@ def test_agent_pr_issue_numbers_parses_agent_branches():
     pulls = [
         {"head": {"ref": "agent/issue-56-fix-project-setting-persistence"}},
         {"head": {"ref": "agent/issue-51"}},
-        {"head": {"ref": "feature/unrelated"}},   # not an agent branch → ignored
+        {"head": {"ref": "feature/unrelated"}},  # not an agent branch → ignored
         {"head": {"ref": "agent/issue-56-dup"}},  # duplicate issue → deduped
-        {"head": {}},                              # malformed → skipped
-        {},                                        # malformed → skipped
+        {"head": {}},  # malformed → skipped
+        {},  # malformed → skipped
     ]
     assert github_ops.agent_pr_issue_numbers(pulls) == [51, 56]
 

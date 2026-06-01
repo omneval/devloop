@@ -17,8 +17,6 @@ import hmac
 import json
 import logging
 import os
-import time
-import uuid
 
 from fastapi import FastAPI, Request, Response
 from temporalio.client import Client
@@ -91,7 +89,9 @@ def create_app(client: Client, projects: list[ProjectConfig]) -> FastAPI:
             task_queue=ORCHESTRATION_QUEUE,
             id_conflict_policy=WorkflowIDConflictPolicy.USE_EXISTING,
         )
-        log.info("triggered Dev Loop %s for %s (issue #%s)", wf_id, project.id, issue_number)
+        log.info(
+            "triggered Dev Loop %s for %s (issue #%s)", wf_id, project.id, issue_number
+        )
         return {"workflow_id": wf_id, "project": project.id, "issue": issue_number}
 
     return app

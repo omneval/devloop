@@ -21,7 +21,9 @@ from devloop.summarization import SummarizationWorkflow, SummarizeInput, Summari
 
 @dataclass
 class Mocks:
-    result: SummarizeResult = field(default_factory=lambda: SummarizeResult(False, "digest", "sha9"))
+    result: SummarizeResult = field(
+        default_factory=lambda: SummarizeResult(False, "digest", "sha9")
+    )
     seen_inputs: list = field(default_factory=list)
     changelog_posts: list = field(default_factory=list)
 
@@ -53,19 +55,30 @@ def reset_mocks():
 async def _run(inp: SummarizeInput):
     orch, disc = _activities()
     async with await WorkflowEnvironment.start_time_skipping() as env:
-        async with Worker(env.client, task_queue=ORCHESTRATION_QUEUE,
-                          workflows=[SummarizationWorkflow], activities=orch), \
-                   Worker(env.client, task_queue=DISCORD_QUEUE, activities=disc):
+        async with (
+            Worker(
+                env.client,
+                task_queue=ORCHESTRATION_QUEUE,
+                workflows=[SummarizationWorkflow],
+                activities=orch,
+            ),
+            Worker(env.client, task_queue=DISCORD_QUEUE, activities=disc),
+        ):
             return await env.client.execute_workflow(
-                SummarizationWorkflow.run, inp,
-                id=f"sum-{uuid.uuid4().hex[:8]}", task_queue=ORCHESTRATION_QUEUE,
+                SummarizationWorkflow.run,
+                inp,
+                id=f"sum-{uuid.uuid4().hex[:8]}",
+                task_queue=ORCHESTRATION_QUEUE,
             )
 
 
 @pytest.mark.asyncio
 async def test_post_merge_posts_to_changelog(reset_mocks):
-    result = await _run(SummarizeInput("omneval", trigger="post-merge",
-                                       head_sha="abc", closed_issues=[1, 2]))
+    result = await _run(
+        SummarizeInput(
+            "omneval", trigger="post-merge", head_sha="abc", closed_issues=[1, 2]
+        )
+    )
     assert result.skipped is False
     assert M.changelog_posts, "expected a #changelog post"
     channel, message, title = M.changelog_posts[0]

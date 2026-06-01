@@ -60,7 +60,10 @@ def render_plan(project_id: str, iteration: int, issues: list[dict]) -> str:
     if len(issues) > 1:
         lines += ["", "Other unblocked candidates this round:"]
         lines += [f"- #{i.get('id')} — {i.get('title', '')}" for i in issues[1:]]
-    lines += ["", "Reply **approve** to implement it, or reply with feedback to re-plan."]
+    lines += [
+        "",
+        "Reply **approve** to implement it, or reply with feedback to re-plan.",
+    ]
     return "\n".join(lines)
 
 

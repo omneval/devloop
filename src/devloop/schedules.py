@@ -49,9 +49,12 @@ async def ensure_schedules(client: Client, projects: list[ProjectConfig]) -> Non
                     task_queue=ORCHESTRATION_QUEUE,
                 ),
                 spec=ScheduleSpec(
-                    calendars=[ScheduleCalendarSpec(
-                        hour=[ScheduleRange(3)], minute=[ScheduleRange(0)],
-                    )]
+                    calendars=[
+                        ScheduleCalendarSpec(
+                            hour=[ScheduleRange(3)],
+                            minute=[ScheduleRange(0)],
+                        )
+                    ]
                 ),
             ),
         )
@@ -66,11 +69,14 @@ async def ensure_schedules(client: Client, projects: list[ProjectConfig]) -> Non
                     task_queue=ORCHESTRATION_QUEUE,
                 ),
                 spec=ScheduleSpec(
-                    calendars=[ScheduleCalendarSpec(
-                        # Monday = 1 in Temporal's day-of-week range
-                        day_of_week=[ScheduleRange(1)],
-                        hour=[ScheduleRange(8)], minute=[ScheduleRange(0)],
-                    )]
+                    calendars=[
+                        ScheduleCalendarSpec(
+                            # Monday = 1 in Temporal's day-of-week range
+                            day_of_week=[ScheduleRange(1)],
+                            hour=[ScheduleRange(8)],
+                            minute=[ScheduleRange(0)],
+                        )
+                    ]
                 ),
             ),
         )

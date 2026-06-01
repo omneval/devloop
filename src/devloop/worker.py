@@ -39,13 +39,11 @@ from .github_ops import (
     plan_issues,
     post_pr_comments,
 )
-from remediation import check_allowed, run_command
 from .summarize_activities import summarize_changes
 
 # Workflows
 from .workflows import NoopWorkflow, noop_activity
 from .dev_loop import DevLoopWorkflow
-from alert_response import AlertResponseWorkflow
 from .summarization import SummarizationWorkflow
 
 logging.basicConfig(
@@ -117,8 +115,12 @@ async def main() -> None:
         workflows=WORKFLOWS,
         activities=ACTIVITIES,
     )
-    logging.info("Worker polling '%s' on %s; webhooks on :%d",
-                 TASK_QUEUE, TEMPORAL_HOST, WEBHOOK_PORT)
+    logging.info(
+        "Worker polling '%s' on %s; webhooks on :%d",
+        TASK_QUEUE,
+        TEMPORAL_HOST,
+        WEBHOOK_PORT,
+    )
     await asyncio.gather(worker.run(), server.serve())
 
 

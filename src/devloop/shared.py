@@ -92,11 +92,21 @@ class ExecutionPlan:
     def render(self) -> str:
         if not self.issues:
             return "_No open agent-ready issues to plan._"
-        lines = [f"**Execution plan for `{self.project_id}`** ({len(self.issues)} issue(s)):", ""]
+        lines = [
+            f"**Execution plan for `{self.project_id}`** ({len(self.issues)} issue(s)):",
+            "",
+        ]
         for i, issue in enumerate(self.issues, 1):
-            dep = f" (after #{', #'.join(map(str, issue.depends_on))})" if issue.depends_on else ""
+            dep = (
+                f" (after #{', #'.join(map(str, issue.depends_on))})"
+                if issue.depends_on
+                else ""
+            )
             lines.append(f"{i}. #{issue.number} — {issue.title}{dep}")
-        lines += ["", "Reply **approve** to proceed, or reply with feedback to re-plan."]
+        lines += [
+            "",
+            "Reply **approve** to proceed, or reply with feedback to re-plan.",
+        ]
         return "\n".join(lines)
 
 

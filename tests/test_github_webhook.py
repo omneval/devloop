@@ -307,8 +307,12 @@ def test_unknown_repo_ignored_gracefully(client_and_spy):
 
 def test_non_issues_event_type_ignored(client_and_spy):
     tc, fake = client_and_spy
-    payload = {"action": "labeled", "label": {"name": _AGENT_LABEL},
-               "repository": {"full_name": _GITHUB_REPO}, "issue": {"number": 1, "title": "x"}}
+    payload = {
+        "action": "labeled",
+        "label": {"name": _AGENT_LABEL},
+        "repository": {"full_name": _GITHUB_REPO},
+        "issue": {"number": 1, "title": "x"},
+    }
     body = json.dumps(payload).encode()
     sig = _sign(body, _SECRET)
 
@@ -316,7 +320,7 @@ def test_non_issues_event_type_ignored(client_and_spy):
         "/webhook/github",
         content=body,
         headers={
-            "X-GitHub-Event": "push",   # not "issues"
+            "X-GitHub-Event": "push",  # not "issues"
             "X-Hub-Signature-256": sig,
             "Content-Type": "application/json",
         },
