@@ -62,24 +62,43 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Wait for the pinned SDK to appear on PyPI
+      - name: Wait for the pinned SDK to be downloadable from PyPI
         if: inputs.wait_for_pypi != ''
         run: |
           pkg_ver='${{ inputs.wait_for_pypi }}'
           name="${pkg_ver%%==*}"
           ver="${pkg_ver##*==}"
           url="https://pypi.org/pypi/${name}/${ver}/json"
-          echo "Waiting for ${pkg_ver} at ${url}"
+          echo "Waiting for ${pkg_ver} files to be downloadable (metadata at ${url})"
+          # The JSON metadata endpoint flips to 200 the instant the release is
+          # registered, but the wheel/sdist files on files.pythonhosted.org lag a
+          # few seconds behind. Polling the metadata alone let the build start in
+          # that window, where uv saw the version, failed to download the file,
+          # and exited 1 (see v0.0.3). So wait until every published file actually
+          # HEADs 200 — the same CDN uv pulls from — not just until metadata exists.
           for i in $(seq 1 40); do
-            code=$(curl -s -o /dev/null -w '%{http_code}' "$url")
-            if [ "$code" = "200" ]; then
-              echo "Found ${pkg_ver} on PyPI (attempt $i)"
-              exit 0
+            file_urls=$(curl -s "$url" | jq -r '.urls[].url')
+            if [ -n "$file_urls" ]; then
+              all_ok=1
+              for fu in $file_urls; do
+                code=$(curl -s -o /dev/null -w '%{http_code}' --head "$fu")
+                if [ "$code" != "200" ]; then
+                  all_ok=0
+                  echo "Attempt $i/40: ${fu##*/} not downloadable yet (HTTP $code)"
+                  break
+                fi
+              done
+              if [ "$all_ok" = "1" ]; then
+                echo "Found all ${pkg_ver} files downloadable (attempt $i)"
+                exit 0
+              fi
+            else
+              echo "Attempt $i/40: ${pkg_ver} metadata not on PyPI yet"
             fi
-            echo "Attempt $i/40: ${pkg_ver} not on PyPI yet (HTTP $code); retrying in 15s"
+            echo "Retrying in 15s"
             sleep 15
           done
-          echo "ERROR: ${pkg_ver} did not appear on PyPI within ~10 minutes"
+          echo "ERROR: ${pkg_ver} files did not become downloadable within ~10 minutes"
           exit 1
 
       - name: Compute sha-<short>-<epoch> tag
