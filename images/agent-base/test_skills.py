@@ -92,7 +92,7 @@ class TestResolveEffectiveSkills:
         assert "default debugging" in result["debugging"]
 
     def test_project_skills_override_defaults(self, tmp_path: Path):
-        default_dir, project_dir = self._setup_skills(
+        default_dir, _ = self._setup_skills(
             tmp_path,
             defaults={"tdd": "default tdd skill"},
             project={"tdd": "custom tdd skill"},
@@ -105,7 +105,7 @@ class TestResolveEffectiveSkills:
         assert "default tdd" not in result["tdd"]
 
     def test_project_can_add_new_skills(self, tmp_path: Path):
-        default_dir, project_dir = self._setup_skills(
+        default_dir, _ = self._setup_skills(
             tmp_path,
             defaults={"tdd": "default tdd"},
             project={"tdd": "custom tdd", "custom-skill": "my custom skill"},
@@ -227,4 +227,3 @@ class TestDefaultSkillsDir:
 
     def test_default_skills_dir_is_set(self):
         assert DEFAULT_SKILLS_DIR == "/usr/local/share/agent-skills"
-        assert isinstance(DEFAULT_SKILLS_DIR, str)

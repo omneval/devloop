@@ -51,6 +51,14 @@ def list_skills(directory: str | Path) -> list[str]:
     )
 
 
+def _read_skill(skill_dir: Path) -> str:
+    """Read the ``SKILL.md`` content from *skill_dir*, or ``""`` if absent."""
+    skill_file = skill_dir / SKILL_FILENAME
+    if skill_file.is_file():
+        return skill_file.read_text()
+    return ""
+
+
 # --------------------------------------------------------------------------- #
 # Skill resolution
 # --------------------------------------------------------------------------- #
@@ -85,7 +93,6 @@ def resolve_effective_skills(
     workdir = Path(workdir)
     default_dir = Path(default_skills_dir)
 
-    # Start with defaults.
     skills: dict[str, str] = {}
     if default_dir.is_dir():
         for name in list_skills(default_dir):
@@ -93,27 +100,16 @@ def resolve_effective_skills(
             if content:
                 skills[name] = content
 
-    # Overlay project-level skills.
     project_skills_dir = workdir / PROJECT_SKILLS_SUFFIX
     if project_skills_dir.is_dir():
         for name in list_skills(project_skills_dir):
             content = _read_skill(project_skills_dir / name)
             if content:
-                # Project skill overrides (or adds) a default.
                 skills[name] = content
             else:
-                # Empty project skill explicitly removes the default.
                 skills.pop(name, None)
 
     return skills
-
-
-def _read_skill(skill_dir: Path) -> str:
-    """Read the ``SKILL.md`` content from *skill_dir*, or ``""`` if absent."""
-    skill_file = skill_dir / SKILL_FILENAME
-    if skill_file.is_file():
-        return skill_file.read_text()
-    return ""
 
 
 # --------------------------------------------------------------------------- #
@@ -138,7 +134,7 @@ def _run(cmd: list[str], cwd: str | None = None) -> str:
 
 def install_skills(
     target_dir: str | Path,
-    skills: list[dict],
+    skills: list[dict[str, str]],
     agent: str = "openhands",
 ) -> list[str]:
     """Install skills using the ``npx skills`` CLI.
