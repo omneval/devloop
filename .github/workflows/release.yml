@@ -1,0 +1,162 @@
+name: Release
+
+# Single orchestrator for a tagged release. Pushing a v* tag drives the whole
+# release as one job DAG, so ordering is structural (needs:) instead of a race
+# between independent workflows:
+#
+#   test ─┬─> pypi ─> sdk-images (agent-base, temporal-worker)   [pinned SDK]
+#         ├─> chart                                              [parallel]
+#         └─> images (discord-bot, poller)                       [parallel, no SDK]
+#
+# The git tag is the single source of truth: hatch-vcs derives the SDK version
+# from it (e.g. v0.0.2 -> 0.0.2), the PyPI release carries that version, the
+# Docker images are tagged with the same semver, and the SDK pinned into the
+# SDK-embedding images is exactly that release — so an image tagged 0.0.2 can
+# never contain SDK 0.0.1. sdk-images both `needs: pypi` and wait for the release
+# to be queryable on PyPI before building.
+#
+# The continuous (main) path is unchanged and lives elsewhere: ci.yml runs the
+# SDK suite, and the per-image publish-*-image.yml workflows publish sha/latest
+# after CI succeeds.
+
+on:
+  push:
+    tags: ['v*']
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  meta:
+    name: Resolve release version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      # v0.0.2 -> 0.0.2; used to pin the SDK and to poll PyPI.
+      - id: v
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+  test:
+    name: SDK test suite
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history + tags so hatch-vcs can resolve the version.
+          fetch-depth: 0
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.9.11"
+
+      - name: Install dependencies
+        run: uv sync --all-groups
+
+      - name: Lint
+        run: uv run ruff check src/ tests/
+
+      - name: Test
+        run: uv run pytest
+
+  pypi:
+    name: Build and publish to PyPI
+    needs: test
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # hatch-vcs reads the tag from git history to version the build.
+          fetch-depth: 0
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.11.18"
+
+      - name: Build package
+        run: uv build
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+
+  chart:
+    name: Package and push Helm chart
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.14.0
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Package chart
+        id: package
+        run: |
+          helm package charts/devloop/ -u -d .cr-release-packages
+          echo "chart=$(ls .cr-release-packages/devloop-*.tgz)" >> "$GITHUB_OUTPUT"
+
+      - name: Lint chart
+        run: helm lint ${{ steps.package.outputs.chart }}
+
+      - name: Push chart to GHCR
+        run: helm push ${{ steps.package.outputs.chart }} oci://ghcr.io/omneval/charts
+
+  images:
+    name: Build ${{ matrix.image_name }}
+    needs: test
+    strategy:
+      matrix:
+        include:
+          - image_name: devloop-discord-bot
+            docker_context: './images/discord-bot'
+            dockerfile: './images/discord-bot/Dockerfile'
+          - image_name: devloop-poller
+            docker_context: '.'
+            dockerfile: './images/poller/Dockerfile'
+    uses: ./.github/workflows/build-image.yml
+    with:
+      image_name: ${{ matrix.image_name }}
+      docker_context: ${{ matrix.docker_context }}
+      dockerfile: ${{ matrix.dockerfile }}
+    secrets: inherit
+
+  sdk-images:
+    name: Build ${{ matrix.image_name }}
+    # Only build after the pinned SDK is published; the reusable workflow also
+    # waits for it to be queryable on PyPI before building.
+    needs: [test, meta, pypi]
+    strategy:
+      matrix:
+        include:
+          - image_name: devloop-agent-base
+            docker_context: './images/agent-base'
+            dockerfile: './images/agent-base/Dockerfile'
+          - image_name: devloop-temporal-worker
+            docker_context: './images/temporal-worker'
+            dockerfile: './images/temporal-worker/Dockerfile'
+    uses: ./.github/workflows/build-image.yml
+    with:
+      image_name: ${{ matrix.image_name }}
+      docker_context: ${{ matrix.docker_context }}
+      dockerfile: ${{ matrix.dockerfile }}
+      build_args: SDK_VERSION=${{ needs.meta.outputs.version }}
+      wait_for_pypi: omneval-devloop==${{ needs.meta.outputs.version }}
+    secrets: inherit

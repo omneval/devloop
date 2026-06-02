@@ -1,12 +1,15 @@
 name: Build and Push Image
 
-# Reusable workflow called by the per-image publish workflows.
-# Handles checkout (workflow_run SHA pinning), GHCR auth, tag computation,
-# metadata extraction, and the build/push step.
+# Reusable workflow called by the per-image publish workflows and by the release
+# orchestrator (release.yml). Handles checkout (workflow_run SHA pinning), GHCR
+# auth, tag computation, metadata extraction, and the build/push step.
 #
 # The caller's github context flows through, so github.event_name and
 # github.event.workflow_run.* are evaluated correctly here even though
 # this workflow is triggered via workflow_call.
+#
+# SDK-embedding images pass build_args (SDK_VERSION) and wait_for_pypi so the
+# pinned SDK is published before the image that bakes it is built.
 
 on:
   workflow_call:
@@ -23,6 +26,16 @@ on:
         description: 'Path to the Dockerfile (relative to repo root)'
         required: true
         type: string
+      build_args:
+        description: 'Newline-separated KEY=value build args (e.g. SDK_VERSION=0.0.2)'
+        required: false
+        type: string
+        default: ''
+      wait_for_pypi:
+        description: 'If set ("pkg==version"), poll PyPI until that release is queryable before building'
+        required: false
+        type: string
+        default: ''
 
 jobs:
   build_and_push:
@@ -49,6 +62,26 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Wait for the pinned SDK to appear on PyPI
+        if: inputs.wait_for_pypi != ''
+        run: |
+          pkg_ver='${{ inputs.wait_for_pypi }}'
+          name="${pkg_ver%%==*}"
+          ver="${pkg_ver##*==}"
+          url="https://pypi.org/pypi/${name}/${ver}/json"
+          echo "Waiting for ${pkg_ver} at ${url}"
+          for i in $(seq 1 40); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' "$url")
+            if [ "$code" = "200" ]; then
+              echo "Found ${pkg_ver} on PyPI (attempt $i)"
+              exit 0
+            fi
+            echo "Attempt $i/40: ${pkg_ver} not on PyPI yet (HTTP $code); retrying in 15s"
+            sleep 15
+          done
+          echo "ERROR: ${pkg_ver} did not appear on PyPI within ~10 minutes"
+          exit 1
+
       - name: Compute sha-<short>-<epoch> tag
         id: shatag
         run: echo "value=sha-$(git rev-parse --short=7 HEAD)-$(date +%s)" >> "$GITHUB_OUTPUT"
@@ -58,9 +91,12 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/omneval/${{ inputs.image_name }}
+          # sha/latest track the rolling main line (workflow_run after CI, or a
+          # direct push to main). type=semver emits only on tag refs, which is
+          # the release path, so it needs no explicit enable guard.
           tags: |
-            type=raw,value=${{ steps.shatag.outputs.value }},enable=${{ github.event_name == 'workflow_run' }}
-            type=raw,value=latest,enable=${{ github.event_name == 'workflow_run' }}
+            type=raw,value=${{ steps.shatag.outputs.value }},enable=${{ github.event_name == 'workflow_run' || github.ref == 'refs/heads/main' }}
+            type=raw,value=latest,enable=${{ github.event_name == 'workflow_run' || github.ref == 'refs/heads/main' }}
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
 
@@ -69,6 +105,7 @@ jobs:
         with:
           context: ${{ inputs.docker_context }}
           file: ${{ inputs.dockerfile }}
+          build-args: ${{ inputs.build_args }}
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}

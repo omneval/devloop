@@ -49,11 +49,17 @@ RUN curl -fsSL --retry 5 --retry-delay 5 --max-time 300 \
 # omneval-devloop brings the shared Agent Job protocol (devloop.shared) plus its
 # pinned Temporal + kubernetes clients, so both the worker and this image use one
 # definition of the protocol.
+#
+# SDK_VERSION pins omneval-devloop to the exact release on PyPI. The release
+# pipeline (release.yml) passes the tag version and only builds this image after
+# the PyPI publish has landed, so the baked SDK always matches the image's semver
+# tag. Left empty on continuous (main) builds, where the latest release is fine.
+ARG SDK_VERSION=
 RUN UV_HTTP_TIMEOUT=300 uv pip install --system --no-cache \
     "openhands-ai==1.7.0" \
     "opentelemetry-sdk>=1.33.1" \
     "opentelemetry-exporter-otlp-proto-http>=1.33.1" \
-    "omneval-devloop"
+    "omneval-devloop${SDK_VERSION:+==$SDK_VERSION}"
 
 # Agent Execution Job entrypoint (issues #18/#19). Project repos are cloned at
 # runtime; this is the only application code baked into the image.

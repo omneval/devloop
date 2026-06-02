@@ -4,20 +4,18 @@ name: Publish Poller Image
 # that detects `agent-ready`-labeled issues and forwards them to the Temporal
 # Orchestration Worker webhook to start a Dev Loop.
 #
-# Triggers:
+# Triggers (continuous / main only):
 #   - workflow_run after "CI" succeeds on main → sha-<short>-<epoch> + latest tags
-#   - push of a v* tag                         → semver tags
 #   - pull_request                             → build + test only (no push)
 #
 # Depending on CI (rather than push to main directly) ensures the image is never
-# pushed against a broken devloop package.
+# pushed against a broken devloop package. Release (semver) builds run in
+# release.yml; this workflow has no tag trigger so the two never race.
 
 on:
   workflow_run:
     workflows: ["CI"]
     types: [completed]
-  push:
-    tags: ['v*']
   pull_request:
 
 concurrency:
@@ -47,10 +45,9 @@ jobs:
     needs: test
     if: >-
       github.event_name == 'pull_request' ||
-      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) ||
       (github.event_name == 'workflow_run' &&
-       github.event.workflow_run.conclusion == 'success' &&
-       github.event.workflow_run.head_branch == 'main')
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_branch == 'main')
     uses: ./.github/workflows/build-image.yml
     with:
       image_name: devloop-poller

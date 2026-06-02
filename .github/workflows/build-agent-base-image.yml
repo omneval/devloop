@@ -4,19 +4,17 @@ name: Build Agent Base Image
 # base for all per-project agent images (OpenHands SDK, Temporal SDK, git, gh,
 # kubectl, flux).
 #
-# Triggers:
-#   - push to main          → sha-<short>-<epoch> + latest tags
-#   - push of a v* tag       → semver tags (e.g. 1.2.3, 1.2)
-#   - pull_request           → build + test only (no push)
+# Triggers (continuous / main only):
+#   - push to main   → sha-<short>-<epoch> + latest tags (SDK unpinned = latest)
+#   - pull_request   → build + test only (no push)
 #
-# No `paths:` filter: a release tag points at a commit already on main with no
-# file delta, so a path filter would silently skip the semver build. Concurrency
-# serialises the heavy OpenHands install instead.
+# Release (semver) builds run in release.yml, which pins omneval-devloop to the
+# tag version and waits for the PyPI publish first. This workflow deliberately
+# omits a tag trigger so the two never race.
 
 on:
   push:
     branches: [main]
-    tags: ['v*']
   pull_request:
 
 concurrency:
@@ -42,67 +40,9 @@ jobs:
   build_and_push:
     name: Build and push agent-base to GHCR
     needs: test
-    runs-on: ubuntu-latest
-    permissions:
-      packages: write
-      contents: read
-    steps:
-      - name: Check out the repo
-        uses: actions/checkout@v4
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Log in to GHCR
-        if: github.event_name != 'pull_request'
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Compute sha-<short>-<epoch> tag
-        id: shatag
-        run: echo "value=sha-$(git rev-parse --short=7 HEAD)-$(date +%s)" >> "$GITHUB_OUTPUT"
-
-      - name: Extract metadata (tags, labels) for Docker
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ghcr.io/omneval/devloop-agent-base
-          tags: |
-            type=raw,value=${{ steps.shatag.outputs.value }},enable=${{ github.ref == 'refs/heads/main' }}
-            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-
-      - name: Build agent-base image (load locally for size check)
-        id: build
-        uses: docker/build-push-action@v6
-        with:
-          context: ./images/agent-base
-          file: ./images/agent-base/Dockerfile
-          load: true
-          push: false
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-
-      - name: Report image size (gate at 4 GB)
-        run: |
-          # Inspect by image ID, not tag: on pull_request builds the metadata
-          # tag rules are all gated to main/tags and produce no tag at all.
-          SIZE=$(docker image inspect "${{ steps.build.outputs.imageid }}" --format='{{.Size}}')
-          python3 -c "
-          size = $SIZE
-          mb = size / 1048576
-          gb = size / 1073741824
-          print(f'Image size: {mb:.0f} MB ({gb:.2f} GB)')
-          if mb > 4096:
-              print('ERROR: Image exceeds 4 GB limit')
-              exit(1)
-          print('Image size within 4 GB limit')
-          "
-
-      - name: Push agent-base image
-        if: github.event_name != 'pull_request'
-        run: docker push --all-tags ghcr.io/omneval/devloop-agent-base
+    uses: ./.github/workflows/build-image.yml
+    with:
+      image_name: devloop-agent-base
+      docker_context: './images/agent-base'
+      dockerfile: './images/agent-base/Dockerfile'
+    secrets: inherit

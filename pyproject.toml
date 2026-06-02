@@ -1,6 +1,6 @@
 [project]
 name = "omneval-devloop"
-version = "0.1.0"
+dynamic = ["version"]
 requires-python = ">=3.12"
 dependencies = [
     "temporalio==1.27.2",
@@ -20,8 +20,14 @@ dev = [
 ]
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
+
+# Version is derived from the git tag (e.g. v0.0.2 -> 0.0.2) so the tag is the
+# single source of truth: the PyPI release, the Docker image semver tags, and the
+# SDK pinned into each image all agree by construction. No manual version bump.
+[tool.hatch.version]
+source = "vcs"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/devloop"]
