@@ -15,6 +15,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     curl \
     ca-certificates \
+    gnupg \
+    && rm -rf /var/lib/apt/lists/*
+
+# Node.js (minimal) — required for npx skills CLI (issue #20).
+# Uses the NodeSource binary distribution to avoid full npm/yarn bloat.
+RUN curl -fsSL --retry 5 --retry-delay 5 --max-time 300 \
+    "https://deb.nodesource.com/setup_22.x" | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/*
 
 # gh CLI
@@ -70,5 +78,30 @@ COPY entrypoint.py /usr/local/bin/agent-entrypoint.py
 # Phase prompt templates (plan / implement / review / merge), rendered per phase
 # by the entrypoint. Bundled here so every project shares the same agent prompts.
 COPY prompts/ /usr/local/share/agent-prompts/
+
+# Skills module — resolves baked-in defaults + project-level overrides (issue #20).
+COPY skills.py /usr/local/lib/python3.12/site-packages/skills.py
+
+# Default agent skills — curated, reusable instructions for common engineering
+# workflows, baked into the image so every agent starts with useful guidance.
+# Users can override per-project via .agents/skills/ in their repo.
+# 8 skills from mattpocock/skills (Vercel agent-skills CLI).
+RUN mkdir -p /usr/local/share/agent-skills \
+    && npx skills@latest add mattpocock/skills --skill tdd -a openhands -y \
+       --dir /usr/local/share/agent-skills \
+    && npx skills@latest add mattpocock/skills --skill debugging -a openhands -y \
+       --dir /usr/local/share/agent-skills \
+    && npx skills@latest add mattpocock/skills --skill architecture-review -a openhands -y \
+       --dir /usr/local/share/agent-skills \
+    && npx skills@latest add mattpocock/skills --skill triage -a openhands -y \
+       --dir /usr/local/share/agent-skills \
+    && npx skills@latest add mattpocock/skills --skill code-review -a openhands -y \
+       --dir /usr/local/share/agent-skills \
+    && npx skills@latest add mattpocock/skills --skill refactoring -a openhands -y \
+       --dir /usr/local/share/agent-skills \
+    && npx skills@latest add mattpocock/skills --skill documentation -a openhands -y \
+       --dir /usr/local/share/agent-skills \
+    && npx skills@latest add mattpocock/skills --skill testing -a openhands -y \
+       --dir /usr/local/share/agent-skills
 
 WORKDIR /workspace
