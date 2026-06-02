@@ -4,14 +4,12 @@ Activities run on the slack-bot task queue. The orchestration worker calls
 these to post messages/notifications and close threads.
 
 Uses the generic ``MessagingActivities`` wrapper from ``devloop.messaging``,
-wired to a ``SlackPlatform`` that implements the ``MessagingPlatform`` protocol.
+wired to a ``BotClient`` that implements the ``MessagingPlatform`` protocol.
 
 Signal contract (sent by the Slack gateway, not these activities):
   signal name : "human_reply"
   payload     : str  (the raw reply text from Slack)
 """
-
-import logging
 
 from temporalio import activity
 
@@ -23,10 +21,7 @@ from devloop.messaging import (
     SendNotificationInput,
 )
 
-import thread_store
 from slack_client import BotClient
-
-log = logging.getLogger(__name__)
 
 
 class SlackActivities:

@@ -8,6 +8,7 @@ Implements the ``devloop.messaging.MessagingPlatform`` protocol so the same
 generic ``MessagingActivities`` wrapper can be reused.
 """
 
+import asyncio
 import logging
 import os
 
@@ -141,8 +142,6 @@ class BotClient:
                 workflow_id,
             )
             handle = self.get_workflow_handle(workflow_id)
-            import asyncio
-
             loop = asyncio.new_event_loop()
             loop.run_until_complete(handle.signal("human_reply", reply_text))
             loop.close()

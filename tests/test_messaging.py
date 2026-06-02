@@ -6,11 +6,6 @@ that any messaging bridge (Discord, Slack, etc.) must conform to.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any
-
-import pytest
-
 from devloop.messaging import (
     ArchiveThreadInput,
     MessagingActivities,

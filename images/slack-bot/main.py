@@ -76,8 +76,9 @@ async def main() -> None:
     log.info("temporal activity worker polling queue '%s'", TASK_QUEUE)
 
     # Run the Socket Mode handler and Temporal worker concurrently.
+    loop = asyncio.get_running_loop()
     await asyncio.gather(
-        asyncio.get_event_loop().run_in_executor(None, handler.start),
+        loop.run_in_executor(None, handler.start),
         worker.run(),
     )
 
