@@ -1,0 +1,29 @@
+[project]
+name = "devloop-agent-base"
+version = "0.1.0"
+requires-python = ">=3.12"
+# Runtime dependencies for the Agent Execution Job toolchain image:
+#   - openhands-ai: the agent runtime
+#   - opentelemetry-*: OTLP tracing export (omneval tracing)
+#   - omneval-devloop: the shared Agent Job protocol (devloop.shared); pinned to
+#     the released SDK at build time via the SDK_VERSION build arg (see Dockerfile)
+dependencies = [
+    "openhands-ai==1.7.0",
+    "opentelemetry-sdk>=1.33.1",
+    "opentelemetry-exporter-otlp-proto-http>=1.33.1",
+    "omneval-devloop",
+]
+
+# The only first-party code (entrypoint.py, prompts/) is COPYed into the image
+# separately, so the build must not auto-discover/package modules — an empty
+# py-modules list makes `uv pip install .` resolve dependencies only.
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+py-modules = []
+
+# uv project commands (uv run) install dependencies but do not build this app.
+[tool.uv]
+package = false

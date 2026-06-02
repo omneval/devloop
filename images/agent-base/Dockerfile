@@ -4,7 +4,7 @@
 
 FROM python:3.12-slim
 
-COPY --from=ghcr.io/astral-sh/uv:0.11.17 /uv /uvx /bin/
+COPY --from=ghcr.io/astral-sh/uv:0.11.18 /uv /uvx /bin/
 
 ARG GH_VERSION=2.93.0
 ARG KUBECTL_VERSION=1.34.1
@@ -45,21 +45,23 @@ RUN curl -fsSL --retry 5 --retry-delay 5 --max-time 300 \
     "https://github.com/argoproj/argo-cd/releases/download/v${ARGOCD_VERSION}/argocd-linux-amd64" \
     && chmod +x /usr/local/bin/argocd
 
-# Python SDKs: OpenHands agent runtime + OTLP exporter (omneval tracing).
-# omneval-devloop brings the shared Agent Job protocol (devloop.shared) plus its
-# pinned Temporal + kubernetes clients, so both the worker and this image use one
-# definition of the protocol.
+# Runtime Python dependencies are declared in pyproject.toml (OpenHands agent
+# runtime, OTLP tracing exporter, and omneval-devloop — the shared Agent Job
+# protocol, devloop.shared). Installed --system; no first-party package is built.
 #
 # SDK_VERSION pins omneval-devloop to the exact release on PyPI. The release
 # pipeline (release.yml) passes the tag version and only builds this image after
 # the PyPI publish has landed, so the baked SDK always matches the image's semver
-# tag. Left empty on continuous (main) builds, where the latest release is fine.
+# tag. Left empty on continuous (main) builds, where the latest release is used.
 ARG SDK_VERSION=
-RUN UV_HTTP_TIMEOUT=300 uv pip install --system --no-cache \
-    "openhands-ai==1.7.0" \
-    "opentelemetry-sdk>=1.33.1" \
-    "opentelemetry-exporter-otlp-proto-http>=1.33.1" \
-    "omneval-devloop${SDK_VERSION:+==$SDK_VERSION}"
+COPY pyproject.toml /tmp/agent-base/pyproject.toml
+RUN if [ -n "$SDK_VERSION" ]; then \
+        echo "omneval-devloop==$SDK_VERSION" > /tmp/sdk-constraint.txt; \
+    fi; \
+    UV_HTTP_TIMEOUT=300 uv pip install --system --no-cache \
+        ${SDK_VERSION:+--constraint /tmp/sdk-constraint.txt} \
+        /tmp/agent-base \
+    && rm -rf /tmp/agent-base /tmp/sdk-constraint.txt
 
 # Agent Execution Job entrypoint (issues #18/#19). Project repos are cloned at
 # runtime; this is the only application code baked into the image.

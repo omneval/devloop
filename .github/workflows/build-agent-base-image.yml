@@ -31,11 +31,13 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v5
         with:
-          version: "0.9.11"
+          version: "0.11.18"
 
+      # Run from the repo root so uv uses the root project (local omneval-devloop),
+      # which provides devloop.shared that entrypoint.py imports — rather than the
+      # image's own pyproject.toml (whose heavy deps the mocked tests don't need).
       - name: Run entrypoint tests
-        working-directory: images/agent-base
-        run: uv run --with pytest --with pytest-asyncio pytest -q
+        run: uv run --with pytest --with pytest-asyncio pytest images/agent-base -q
 
   build_and_push:
     name: Build and push agent-base to GHCR

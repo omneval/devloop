@@ -15,13 +15,21 @@
 
 FROM python:3.12-slim
 
-COPY --from=ghcr.io/astral-sh/uv:0.11.17 /uv /uvx /bin/
+COPY --from=ghcr.io/astral-sh/uv:0.11.18 /uv /uvx /bin/
 
 WORKDIR /app
 
+# Runtime dependencies (just omneval-devloop) are declared in pyproject.toml.
+# SDK_VERSION pins omneval-devloop to the exact release when set (release builds);
+# empty on continuous builds, which take the latest release.
 ARG SDK_VERSION=
-RUN UV_HTTP_TIMEOUT=300 uv pip install --system --no-cache \
-    "omneval-devloop${SDK_VERSION:+==$SDK_VERSION}"
+COPY pyproject.toml ./
+RUN if [ -n "$SDK_VERSION" ]; then \
+        echo "omneval-devloop==$SDK_VERSION" > /tmp/sdk-constraint.txt; \
+    fi; \
+    UV_HTTP_TIMEOUT=300 uv pip install --system --no-cache \
+        ${SDK_VERSION:+--constraint /tmp/sdk-constraint.txt} . \
+    && rm -f /tmp/sdk-constraint.txt
 
 # /healthz (Kubernetes probes) and the webhook receiver port.
 EXPOSE 8080 8088

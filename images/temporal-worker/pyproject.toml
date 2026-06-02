@@ -1,0 +1,23 @@
+[project]
+name = "devloop-temporal-worker"
+version = "0.1.0"
+requires-python = ">=3.12"
+# The reference Temporal Orchestration Worker installs only omneval-devloop, which
+# brings the Dev Loop + Summarization workflows and their pinned clients. Pinned to
+# the released SDK at build time via the SDK_VERSION build arg (see Dockerfile).
+dependencies = [
+    "omneval-devloop",
+]
+
+# No first-party package in this image — it runs `python -m devloop.worker` from
+# the installed SDK — so the build resolves dependencies only.
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+py-modules = []
+
+# uv project commands (uv run) install dependencies but do not build this app.
+[tool.uv]
+package = false

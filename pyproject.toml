@@ -2,13 +2,19 @@
 name = "omneval-devloop"
 dynamic = ["version"]
 requires-python = ">=3.12"
+# Floors, not exact pins: omneval-devloop is a library installed alongside other
+# packages (e.g. openhands-ai in the agent-base image), so hard == pins cause
+# resolution conflicts. kubernetes in particular must be >=33.1 to co-install with
+# openhands-ai; the SDK only uses stable client surface
+# (CoreV1Api/BatchV1Api/V1DeleteOptions). Applications that need reproducible
+# builds pin exact versions via their own uv.lock.
 dependencies = [
-    "temporalio==1.27.2",
-    "pyyaml==6.0.2",
-    "kubernetes==32.0.1",
-    "httpx==0.28.1",
-    "fastapi==0.115.6",
-    "uvicorn==0.34.0",
+    "temporalio>=1.27.2",
+    "pyyaml>=6.0.2",
+    "kubernetes>=33.1",
+    "httpx>=0.28.1",
+    "fastapi>=0.115.6",
+    "uvicorn>=0.34.0",
 ]
 
 [dependency-groups]
