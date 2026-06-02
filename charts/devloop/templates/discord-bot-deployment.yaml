@@ -19,6 +19,13 @@ spec:
         app.kubernetes.io/component: discord-bot
         app.kubernetes.io/instance: {{ .Release.Name }}
     spec:
+      {{- if .Values.discordBot.serviceAccountName }}
+      serviceAccountName: {{ .Values.discordBot.serviceAccountName }}
+      {{- end }}
+      {{- with .Values.discordBot.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       containers:
         - name: discord-bot
           image: "{{ .Values.discordBot.image.repository }}:{{ .Values.discordBot.image.tag }}"
@@ -31,11 +38,28 @@ spec:
             - name: TEMPORAL_HOST
               value: {{ .Values.temporalHost | quote }}
             - name: DISCORD_TOKEN
+              {{- if .Values.discordBot.tokenSecret }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.discordBot.tokenSecret.name }}
+                  key: {{ .Values.discordBot.tokenSecret.key }}
+              {{- else }}
               value: {{ .Values.discordBot.token | quote }}
+              {{- end }}
+            {{- with .Values.discordBot.applicationIdSecret }}
+            - name: DISCORD_APPLICATION_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .name }}
+                  key: {{ .key }}
+            {{- end }}
             - name: TASK_QUEUE
               value: {{ .Values.discordBot.taskQueue | quote }}
             - name: HEALTH_PORT
               value: {{ .Values.discordBot.healthPort | quote }}
+            {{- with .Values.discordBot.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
           {{- include "devloop.healthProbes" . | nindent 10 }}
           {{- if .Values.discordBot.resources }}
           resources:

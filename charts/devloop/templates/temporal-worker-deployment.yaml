@@ -19,6 +19,13 @@ spec:
         app.kubernetes.io/component: temporal-worker
         app.kubernetes.io/instance: {{ .Release.Name }}
     spec:
+      {{- if .Values.temporalWorker.serviceAccountName }}
+      serviceAccountName: {{ .Values.temporalWorker.serviceAccountName }}
+      {{- end }}
+      {{- with .Values.temporalWorker.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       containers:
         - name: temporal-worker
           image: "{{ .Values.temporalWorker.image.repository }}:{{ .Values.temporalWorker.image.tag }}"
@@ -41,6 +48,9 @@ spec:
               value: {{ .Values.temporalWorker.webhookPort | quote }}
             - name: PROJECTS_FILE
               value: {{ .Values.temporalWorker.projectsFile | quote }}
+            {{- with .Values.temporalWorker.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
           {{- include "devloop.healthProbes" . | nindent 10 }}
           {{- if .Values.temporalWorker.resources }}
           resources:

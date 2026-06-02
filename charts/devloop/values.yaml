@@ -12,6 +12,20 @@ temporalWorker:
     repository: ghcr.io/omneval/devloop-temporal-worker
     tag: "latest"
     pullPolicy: IfNotPresent
+  # Name of a pre-existing ServiceAccount to run the pod as (e.g. one bound to a
+  # Role that can create Agent Execution Jobs). Empty uses the namespace default.
+  serviceAccountName: ""
+  # Image pull secrets (e.g. when the worker image lives in a private registry).
+  imagePullSecrets: []
+  #   - name: regcred
+  # Extra environment variables appended verbatim to the container. Use this for
+  # consumer-specific config (alternate task queues, custom workflow settings,
+  # agent LLM endpoints, etc.). Entries are standard core/v1 EnvVar objects.
+  extraEnv: []
+  #   - name: ORCHESTRATION_QUEUE
+  #     value: "homelab-orchestration"
+  #   - name: AGENT_MODEL
+  #     value: "openai/my-model"
   # Resource limits for the worker container
   resources: {}
   #   requests:
@@ -40,8 +54,24 @@ discordBot:
     repository: ghcr.io/omneval/devloop-discord-bot
     tag: "latest"
     pullPolicy: IfNotPresent
-  # Discord bot token (use a Kubernetes Secret in production)
+  # Discord bot token. Prefer `tokenSecret` (a Kubernetes Secret reference) over
+  # the plain `token` value, which is only suitable for local/dev use.
   token: ""
+  # tokenSecret: { name: "discord-bot", key: "TOKEN" }
+  tokenSecret: {}
+  # Optional Discord application ID, sourced from a Secret the same way.
+  # applicationIdSecret: { name: "discord-bot", key: "APPLICATION_ID" }
+  applicationIdSecret: {}
+  # Name of a pre-existing ServiceAccount (e.g. one allowed to read/write the
+  # thread-map ConfigMap). Empty uses the namespace default.
+  serviceAccountName: ""
+  # Image pull secrets for a private bot image.
+  imagePullSecrets: []
+  # Extra environment variables appended verbatim (e.g. channel IDs,
+  # K8S_NAMESPACE, CONFIGMAP_NAME). Standard core/v1 EnvVar objects.
+  extraEnv: []
+  #   - name: DISCORD_CHANNEL_APPROVALS
+  #     value: "123456789"
   # Resource limits
   resources: {}
   #   requests:
@@ -64,12 +94,27 @@ discordBot:
 # GITHUB_TOKEN is shared across all pollers; repo-specific fields are per-entry.
 poller:
   enabled: true
-  # Shared GitHub token for all poller instances (use a Kubernetes Secret)
+  # Shared GitHub token for all poller instances. Prefer `githubTokenSecret`
+  # (a Kubernetes Secret reference) over the plain `githubToken` value.
   githubToken: ""
+  # githubTokenSecret: { name: "agent-github-token", key: "GITHUB_TOKEN" }
+  githubTokenSecret: {}
   image:
     repository: ghcr.io/omneval/devloop-poller
     tag: "latest"
     pullPolicy: IfNotPresent
+  # Image pull secrets for a private poller image.
+  imagePullSecrets: []
+  # Persist poll state across restarts. Without this the poller re-notifies
+  # every issue on each restart (the state file lives on an emptyDir otherwise).
+  # When enabled, a PVC per poller deployment is created and mounted at
+  # `mountPath`, and STATE_FILE points inside it.
+  persistence:
+    enabled: false
+    storageClassName: ""
+    accessMode: ReadWriteOnce
+    size: 100Mi
+    mountPath: /data
   # Resource limits (applied to all poller instances)
   resources: {}
   #   requests:
