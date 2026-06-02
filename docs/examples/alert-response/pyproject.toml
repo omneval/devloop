@@ -1,0 +1,22 @@
+[project]
+name = "alert-response-example"
+version = "0.1.0"
+requires-python = ">=3.12"
+# Consumer extension example: installs omneval-devloop alongside custom workflow
+# code.  The worker registers both the SDK workflows (DevLoopWorkflow,
+# SummarizationWorkflow) and the custom AlertResponseWorkflow in a single
+# Temporal worker process.
+dependencies = [
+    "omneval-devloop",
+    "pyyaml>=6.0.2",
+]
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+py-modules = []
+
+[tool.uv]
+package = false
