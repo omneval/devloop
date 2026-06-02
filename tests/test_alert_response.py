@@ -15,7 +15,9 @@ from pathlib import Path
 import pytest
 import yaml
 
-EXAMPLE_DIR = Path(__file__).resolve().parent.parent / "docs" / "examples" / "alert-response"
+EXAMPLE_DIR = (
+    Path(__file__).resolve().parent.parent / "docs" / "examples" / "alert-response"
+)
 DOCS_DIR = Path(__file__).resolve().parent.parent / "docs"
 
 

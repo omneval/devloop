@@ -29,14 +29,11 @@ from devloop import DevLoopInput  # noqa: F401 — shows SDK import works
 from devloop.shared import (
     CHANNEL_ALERTS,
     MESSAGING_QUEUE,
-    ORCHESTRATION_QUEUE,
     AgentJobResult,
     AnswerInput,
     AwaitInput,
     DispatchInput,
     JobStatus,
-    SendMessageInput,
-    SendNotificationInput,
     TaskSpec,
 )
 
@@ -106,8 +103,6 @@ def _is_allowlisted(action: str, category: str, allowlist: dict) -> bool:
 # Workflow
 # --------------------------------------------------------------------------- #
 
-# Import inside workflow methods to avoid loading at import time in the sandbox.
-
 
 @workflow.defn
 class AlertResponseWorkflow:
@@ -131,18 +126,18 @@ class AlertResponseWorkflow:
 
     # ---- helpers ---------------------------------------------------------- #
 
-    def _wid(self) -> str:
+    def _workflow_id(self) -> str:
         return workflow.info().workflow_id
 
-    async def _say(
+    async def _send_message(
         self, message: str, thread_name: str = "", channel: str = CHANNEL_ALERTS
     ) -> None:
         with workflow.unsafe.import_outside_workflow_sandbox_mode():
-            from devloop.shared import SendMessageInput as _SI
+            from devloop.shared import SendMessageInput
 
         await workflow.execute_activity(
             "send_message",
-            _SI(self._wid(), message, channel, thread_name),
+            SendMessageInput(self._workflow_id(), message, channel, thread_name),
             task_queue=MESSAGING_QUEUE,
             start_to_close_timeout=_DISCORD_TIMEOUT,
             retry_policy=_RETRY,
@@ -150,11 +145,11 @@ class AlertResponseWorkflow:
 
     async def _notify(self, message: str) -> None:
         with workflow.unsafe.import_outside_workflow_sandbox_mode():
-            from devloop.shared import SendNotificationInput as _NI
+            from devloop.shared import SendNotificationInput
 
         await workflow.execute_activity(
             "send_notification",
-            _NI(self._wid(), message),
+            SendNotificationInput(self._workflow_id(), message),
             task_queue=MESSAGING_QUEUE,
             start_to_close_timeout=_DISCORD_TIMEOUT,
             retry_policy=_RETRY,
@@ -233,7 +228,7 @@ class AlertResponseWorkflow:
         """Handle an AWAITING_HUMAN result: ask Discord, then resume polling."""
         while result.status == JobStatus.AWAITING_HUMAN.value:
             async with self._ask_lock:
-                await self._say(f"❓ [{inp.alert_name}] {result.question}")
+                await self._send_message(f"❓ [{inp.alert_name}] {result.question}")
                 answer = await self._await_reply(
                     timeout=inp.approval_timeout_seconds
                     if inp.approval_timeout_seconds > 0
@@ -274,13 +269,13 @@ class AlertResponseWorkflow:
         """
         self._ask_lock = asyncio.Lock()
         thread_name = f"Alert: {inp.alert_name}"
-        allowlist = workflow.query(_load_allowlist_safe, path=_ALLOWLIST_PATH)
+        allowlist = workflow.query(load_allowlist, path=_ALLOWLIST_PATH)
 
         steps: list[str] = []
 
         # 1. Diagnose
         steps.append(f"🔍 Diagnosing alert: {inp.alert_name}")
-        await self._say(steps[-1], thread_name=thread_name)
+        await self._send_message(steps[-1], thread_name=thread_name)
         diagnosis = await self._dispatch_diagnosis(inp)
         diagnosis = await self._answer_and_await(inp, diagnosis)
 
@@ -305,10 +300,10 @@ class AlertResponseWorkflow:
 
             if _is_allowlisted(action, category, allowlist):
                 steps.append(f"✅ [{action}] allowlisted — executing")
-                await self._say(steps[-1], thread_name=thread_name)
+                await self._send_message(steps[-1], thread_name=thread_name)
             else:
                 steps.append(f"⚠️ [{action}] not allowlisted — requesting approval")
-                await self._say(steps[-1], thread_name=thread_name)
+                await self._send_message(steps[-1], thread_name=thread_name)
                 reply = await self._await_reply(
                     timeout=inp.approval_timeout_seconds
                     if inp.approval_timeout_seconds > 0
@@ -333,13 +328,3 @@ class AlertResponseWorkflow:
         summary = "\n".join(steps)
         await self._notify(f"📋 [{inp.alert_name}] Response complete:\n{summary}")
         return summary
-
-
-# --------------------------------------------------------------------------- #
-# Query handler — runs in sandbox, safe for workflow.query()
-# --------------------------------------------------------------------------- #
-
-
-def _load_allowlist_safe(path: str = _ALLOWLIST_PATH) -> dict:
-    """Sandbox-safe allowlist loader for workflow.query()."""
-    return load_allowlist(path)
