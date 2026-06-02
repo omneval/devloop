@@ -1,0 +1,50 @@
+# Alert Response Action Allowlist
+#
+# Actions listed here execute autonomously without human approval.
+# Any action NOT listed here pauses for Discord approval before running.
+#
+# Format:
+#   category:
+#     - action_name
+#     - another_action
+#
+# The category groups related actions (restart, scale, config, etc.).
+# The action_name is matched exactly against the "action" field in
+# diagnosis output.
+
+# ---------------------------------------------------------------------------
+# Allowed actions — these run automatically when suggested by diagnosis
+# ---------------------------------------------------------------------------
+
+restart:
+  # Restart a container/pod in the cluster
+  - nginx
+  - redis
+  - postgres
+
+scale:
+  # Scale up a deployment to handle load
+  - web-frontend
+  - api-server
+
+config:
+  # Apply a pre-approved configuration change
+  - reload-nginx
+  - flush-redis-cache
+
+# ---------------------------------------------------------------------------
+# Non-allowlisted examples (commented out) — these require human approval
+# ---------------------------------------------------------------------------
+#
+# destroy:
+#   # Dropping a database — always requires human approval
+#   - drop-database
+#
+# deploy:
+#   # Deploying a new version — requires human sign-off
+#   - deploy-canary
+#
+# network:
+#   # Changing firewall rules — security-sensitive, needs approval
+#   - open-port-3306
+#   - modify-security-group

@@ -193,6 +193,15 @@ kubectl logs -n agents -l app.kubernetes.io/component=discord-bot --tail=20
 
 Create an issue in your GitHub repository with the `agent-ready` label. The poller should pick it up within 60 seconds, and the Discord bot should announce the Dev Loop in the configured channel.
 
+## Extending devloop with Custom Workflows
+
+The devloop temporal worker can run custom workflows alongside the built-in
+DevLoop and Summarization workflows.  See the
+[Alert Response Workflow example](examples/alert-response/README.md) for a
+complete consumer extension pattern: install `omneval-devloop` as a dependency,
+write a custom `@workflow.defn`, register both in a single worker process, and
+reuse SDK activities for Kubernetes Job dispatch and Discord messaging.
+
 ## Project Registry Schema
 
 | Field                 | Required | Type  | Description                                      |
