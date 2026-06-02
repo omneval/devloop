@@ -1,0 +1,30 @@
+[project]
+name = "slack-bot"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "slack-bolt>=1.18",
+    "temporalio==1.27.2",
+    "kubernetes==32.0.1",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+]
+
+# Flat module layout (main.py, activities.py, …). The image installs runtime
+# dependencies with `uv pip install --system --no-cache .` and COPYs the modules
+# in separately, so the build must not try to auto-discover/package them — an
+# empty py-modules list makes `pip install .` resolve dependencies only.
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+py-modules = []
+
+# uv project commands (uv run) install dependencies but do not build this app.
+[tool.uv]
+package = false

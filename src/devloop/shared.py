@@ -48,33 +48,16 @@ class JobStatus(str, Enum):
 
 
 # ---------------------------------------------------------------------------
-# Discord activity I/O (mirror of images/discord-bot/activities.py dataclasses)
+# Messaging activity I/O — defined in messaging.py, re-exported here for
+# backwards compatibility (existing code imports from shared.py).
 # ---------------------------------------------------------------------------
 
-
-@dataclass
-class SendMessageInput:
-    workflow_id: str
-    message: str
-    channel: str = CHANNEL_APPROVALS
-    thread_name: str = ""
-
-
-@dataclass
-class SendMessageOutput:
-    thread_id: str
-
-
-@dataclass
-class SendNotificationInput:
-    workflow_id: str
-    message: str
-
-
-@dataclass
-class ArchiveThreadInput:
-    workflow_id: str
-
+from devloop.messaging import (
+    ArchiveThreadInput,
+    SendMessageInput,
+    SendMessageOutput,
+    SendNotificationInput,
+)
 
 # ---------------------------------------------------------------------------
 # GitHub activity I/O
