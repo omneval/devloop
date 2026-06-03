@@ -209,3 +209,68 @@ def test_stub_mode_round_trip(origin, tmp_path, monkeypatch):
 
     assert entrypoint.main() == 0
     assert json.loads(out_file.read_text())["status"] == "complete"
+
+
+# --------------------------------------------------------------------------- #
+# Per-phase skill allowlist parsing (issue #36)
+# --------------------------------------------------------------------------- #
+
+
+class TestLoadSkillsAllowlist:
+    """Unit tests for _load_skills_allowlist(phase).
+
+    The three-way semantics must hold:
+      - Env var absent   → None            (all skills, backward-compat)
+      - Env var = ""     → {phase: []}     (no skills)
+      - Env var = "a,b"  → {phase: [a, b]} (exactly those skills)
+    """
+
+    def test_absent_env_returns_none(self, monkeypatch):
+        """AGENT_SKILLS_ENABLED absent → None (all skills allowed)."""
+        monkeypatch.delenv("AGENT_SKILLS_ENABLED", raising=False)
+        result = entrypoint._load_skills_allowlist("execute")
+        assert result is None
+
+    def test_empty_string_returns_empty_phase_list(self, monkeypatch):
+        """AGENT_SKILLS_ENABLED="" → {phase: []} (no skills allowed)."""
+        monkeypatch.setenv("AGENT_SKILLS_ENABLED", "")
+        result = entrypoint._load_skills_allowlist("execute")
+        assert result == {"execute": []}
+
+    def test_whitespace_only_returns_empty_phase_list(self, monkeypatch):
+        """AGENT_SKILLS_ENABLED="   " (whitespace only) → {phase: []} (no skills)."""
+        monkeypatch.setenv("AGENT_SKILLS_ENABLED", "   ")
+        result = entrypoint._load_skills_allowlist("execute")
+        assert result == {"execute": []}
+
+    def test_single_name_returns_list(self, monkeypatch):
+        """AGENT_SKILLS_ENABLED="tdd" → {phase: ["tdd"]}."""
+        monkeypatch.setenv("AGENT_SKILLS_ENABLED", "tdd")
+        result = entrypoint._load_skills_allowlist("execute")
+        assert result == {"execute": ["tdd"]}
+
+    def test_comma_separated_names_returns_list(self, monkeypatch):
+        """AGENT_SKILLS_ENABLED="tdd,code-review" → {phase: ["tdd", "code-review"]}."""
+        monkeypatch.setenv("AGENT_SKILLS_ENABLED", "tdd,code-review")
+        result = entrypoint._load_skills_allowlist("execute")
+        assert result == {"execute": ["tdd", "code-review"]}
+
+    def test_names_with_spaces_are_stripped(self, monkeypatch):
+        """Spaces around skill names in the comma-separated list are stripped."""
+        monkeypatch.setenv("AGENT_SKILLS_ENABLED", " tdd , code-review ")
+        result = entrypoint._load_skills_allowlist("execute")
+        assert result == {"execute": ["tdd", "code-review"]}
+
+    def test_phase_key_in_allowlist_matches_phase_arg(self, monkeypatch):
+        """The phase key in the returned allowlist must match the ``phase`` argument."""
+        monkeypatch.setenv("AGENT_SKILLS_ENABLED", "foo")
+        result = entrypoint._load_skills_allowlist("review")
+        assert result is not None
+        assert "review" in result
+        assert "execute" not in result
+
+    def test_empty_segments_between_commas_are_ignored(self, monkeypatch):
+        """'a,,b' → ["a", "b"] (empty segments dropped)."""
+        monkeypatch.setenv("AGENT_SKILLS_ENABLED", "a,,b")
+        result = entrypoint._load_skills_allowlist("execute")
+        assert result == {"execute": ["a", "b"]}

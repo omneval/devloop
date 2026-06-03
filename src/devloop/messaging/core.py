@@ -12,59 +12,12 @@ import uuid
 from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 
-
-# --------------------------------------------------------------------------- #
-# Data contracts — shared between activities and workflows
-# --------------------------------------------------------------------------- #
-
-
-@dataclass
-class SendMessageInput:
-    """Input for the ``send_message`` activity.
-
-    Opens (or reuses) a thread in the given channel and posts the initial
-    message.  Used for phase-gate interactions where the workflow expects
-    a human reply.
-    """
-
-    workflow_id: str
-    message: str
-    channel: str = "approvals"
-    thread_name: str = ""
-
-
-@dataclass
-class SendMessageOutput:
-    """Output returned by ``send_message``.
-
-    The ``thread_id`` is an opaque identifier that subsequent activities
-    (e.g. ``send_notification``) can use to target the same thread.
-    """
-
-    thread_id: str
-
-
-@dataclass
-class SendNotificationInput:
-    """Input for the ``send_notification`` activity.
-
-    Posts to an existing thread identified by ``workflow_id``.
-    Used for one-way status updates that don't expect a reply.
-    """
-
-    workflow_id: str
-    message: str
-
-
-@dataclass
-class ArchiveThreadInput:
-    """Input for the ``archive_thread`` activity.
-
-    Archives the thread associated with ``workflow_id`` once the workflow
-    is finished.
-    """
-
-    workflow_id: str
+from devloop.shared import (
+    ArchiveThreadInput,
+    SendMessageInput,
+    SendMessageOutput,
+    SendNotificationInput,
+)
 
 
 # --------------------------------------------------------------------------- #

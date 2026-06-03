@@ -56,6 +56,26 @@ _Avoid_: devloop user, devloop instance
 The four container images published to `ghcr.io/omneval/` by this repo: `devloop-agent-base` (shared toolchain base), `devloop-temporal-worker` (reference Temporal Orchestration Worker), `devloop-discord-bot` (Discord ↔ Temporal bridge), `devloop-poller` (GitHub issue poller). Image tags follow `sha-<7-char-hash>-<unix-epoch>` for main builds and semver for releases.
 _Avoid_: devloop containers, agent images (too generic)
 
+**Agent Skill**:
+A reusable, model-agnostic capability in the AgentSkills `SKILL.md` format (YAML frontmatter — `name`, `description`, optional OpenHands-only `triggers:` — plus a markdown body, optionally with `scripts/` `references/` `assets/`). Loaded by the OpenHands agent with native progressive disclosure: a skill's name/description appears in `<available_skills>` and the agent reads the full body on demand via `invoke_skill()`, so a skill costs almost no context until used. The same format the `npx skills` ecosystem publishes (agentskills.io). Distinct from a Phase prompt template (always rendered, one per phase) — a skill is conditionally surfaced and shared across phases.
+_Avoid_: plugin, tool, microagent, prompt template
+
+**Skills convergence directory**:
+The single on-image directory where every Agent Skill resolves regardless of how it was delivered (`/usr/local/share/agent-skills/installed`, overridable via `AGENT_SKILLS_DIR`). Skills baked into the Agent Base Image or a per-project image sit here directly; skills delivered at deploy time via a Helm-managed ConfigMap are mounted to a separate read-only staging path and installed into this directory by the entrypoint at pod start (ConfigMap wins on name collision). The agent loads the merged set once via `load_installed_skills()`. A volume mount cannot target this directory directly — it would hide the baked skills — which is why ConfigMap skills are staged-and-installed, not mounted in place.
+_Avoid_: skills folder, skills mount, skills volume
+
+**Skill triggers**:
+Keywords declared in a skill's `SKILL.md` frontmatter (`triggers:` list) that gate whether a skill surfaces to the agent. In the default `"triggers"` selection mode, a skill is only presented to the agent when the conversation context matches at least one of these keywords, keeping context overhead low.
+_Avoid_: skill keywords, activation conditions, trigger words
+
+**Selection mode**:
+Controls how eligible skills are presented to the agent within a phase: `"triggers"` (default) surfaces a skill only when the conversation matches its `triggers:` frontmatter; `"advanced"` surfaces all phase-eligible skills so the model selects the most appropriate one autonomously. Configured via the `skillsSelectionMode` Helm value and forwarded to each Agent Execution Job as `AGENT_SKILLS_SELECTION_MODE`.
+_Avoid_: skill discovery mode, skill matching mode
+
+**Per-phase enablement**:
+Operator-controlled allowlist of skill names available in each Dev Loop phase (plan, execute, review, merge, diagnosis). Configured via the `skillsByPhase` Helm value and propagated to each Agent Execution Job as `AGENT_SKILLS_ENABLED`. Three-way semantics: phase key absent means all installed skills are available; `[]` means no skills for that phase; a name list means exactly those skills are loaded.
+_Avoid_: skill allowlist, skill whitelist, phase skill filter
+
 ---
 
 ## Conventions
@@ -80,3 +100,5 @@ Publish packages to PyPI with `uv build` + `uv publish` (OIDC trusted publisher 
 - **ADR-0004** (from `home-server`): Agent Execution Jobs use Kubernetes Jobs + OpenHands `LocalWorkspace` — no Docker-in-Docker. The pod is the isolation boundary.
 - **ADR-0005** (from `home-server`): OpenHands SDK replaced Pi/Sandcastle for stuck detection, built-in OTLP tracing, and native pause/resume.
 - **ADR-0006** (from `home-server`): Dev Loop core is extracted as the `omneval-devloop` Python package rather than a plugin/extension mechanism, giving consumers a stable, testable API surface with version mismatches caught at install time.
+- **ADR-0007**: `get_default_agent` is replaced with hand-rolled `Agent(...)` construction (`build_agent` in `entrypoint.py`) to gain the `agent_context` parameter needed for Agent Skills injection. The function is also the override seam for consumers who need custom tools.
+- **ADR-0008**: Agent Skills use a convergence directory with stage-and-install for ConfigMap delivery. Mounting the ConfigMap directly at the convergence directory would hide baked skills; instead the ConfigMap is mounted at a staging path and the entrypoint installs into the convergence directory at pod start.

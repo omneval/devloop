@@ -3,6 +3,35 @@
 # Example: "temporal-frontend.agents.svc:7233"
 temporalHost: ""
 
+# Namespace where Agent Execution Jobs (and their output ConfigMaps) are created.
+# Defaults to the Helm release namespace (.Release.Namespace) so that a standard
+# install lands everything in the same namespace.  Advanced operators can override
+# this to isolate agent workloads in a dedicated namespace (note: the worker's
+# ServiceAccount must have Job and ConfigMap RBAC in the target namespace).
+agentsNamespace: ""
+
+# ---------------------------------------------------------------------------
+# Agent Skills
+# ---------------------------------------------------------------------------
+# Per-phase allowlist of skill names that Agent Execution Jobs may load.
+# Semantics:
+#   - Key absent  → all installed skills are available for that phase.
+#   - Key = []    → no skills are available for that phase.
+#   - Key = names → exactly those installed skills are available.
+# Example:
+#   skillsByPhase:
+#     plan: []
+#     execute: [tdd, code-review]
+#     review: [code-review, security-review]
+skillsByPhase: {}
+
+# Skill selection mode for Agent Execution Jobs.
+#   "triggers"  — keyword-driven (default): the agent uses a skill only when
+#                 the conversation matches the skill's triggers: frontmatter.
+#   "advanced"  — model-driven: all eligible skills are surfaced to the model
+#                 so it can select the most appropriate one autonomously.
+skillsSelectionMode: "triggers"
+
 # ---------------------------------------------------------------------------
 # Temporal Orchestration Worker
 # ---------------------------------------------------------------------------

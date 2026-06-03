@@ -1,19 +1,21 @@
-"""Tests for run_agent SDK API usage (issue #34).
+"""Tests for run_agent and build_agent SDK API usage (issues #32, #34).
 
 Verifies that run_agent:
-  - uses the correct openhands-ai 1.19.x API:
+  - uses the correct openhands-sdk 1.24.0 API:
       LLM(model, base_url, api_key)
-      → get_default_agent(llm=llm, cli_mode=True)  (wires terminal/file_editor/
-        task_tracker tools; cli_mode drops the Chromium-only browser tool)
+      → build_agent(llm=llm, cli_mode=True, agent_context=None)
+        (hand-rolled Agent replicating the default preset; wires terminal/
+        file_editor/task_tracker; cli_mode drops the Chromium-only browser tool)
       → LocalConversation(agent, workspace)
       → send_message → run → get_agent_final_response(state.events)
   - returns stub outcome when AGENT_STUB=1
   - returns AgentOutcome with failure status on model/LLM error (no exception escapes)
   - detects empty diff / no changes and sets files_changed=False (not a false success)
   - OTEL_SERVICE_NAME propagates into the tracer provider (static config check)
+  - with no skills loaded, behaves identically to the pre-#32 path (no-op)
 
 All SDK calls are mocked via sys.modules injection so the test suite runs
-without openhands-ai installed.
+without openhands-sdk installed.
 """
 
 from __future__ import annotations
@@ -72,14 +74,22 @@ def _fake_sdk(
 ):
     """Context manager that installs a fake openhands.sdk into sys.modules.
 
-    Returns (LLM_mock, get_default_agent_mock, LocalConversation_mock,
+    Returns (LLM_mock, Agent_mock, LocalConversation_mock,
     get_final_response_mock).
+
+    build_agent hand-rolls an Agent(...) from the preset rather than calling
+    get_default_agent, so the mock tree reflects that:
+      - Agent is the constructor mock (openhands.sdk.Agent)
+      - AgentContext is also mocked (openhands.sdk.AgentContext)
+      - get_default_tools / get_default_condenser are mocked in
+        openhands.tools.preset.default so build_agent can call them
     """
     sdk = types.ModuleType("openhands")
     sdk_sub = types.ModuleType("openhands.sdk")
 
     LLM_cls = MagicMock(name="LLM")
-    get_default_agent = MagicMock(name="get_default_agent")
+    Agent_cls = MagicMock(name="Agent")
+    AgentContext_cls = MagicMock(name="AgentContext")
     conv_cls = conversation_cls or _FakeConversation
 
     # get_agent_final_response lives in openhands.sdk.conversation
@@ -88,6 +98,8 @@ def _fake_sdk(
     )
 
     sdk_sub.LLM = LLM_cls
+    sdk_sub.Agent = Agent_cls
+    sdk_sub.AgentContext = AgentContext_cls
     sdk_sub.LocalConversation = conv_cls
     sdk_sub.get_agent_final_response = get_final_response  # re-exported
 
@@ -95,17 +107,30 @@ def _fake_sdk(
     conv_mod = types.ModuleType("openhands.sdk.conversation")
     conv_mod.get_agent_final_response = get_final_response
 
-    # The agent is built via openhands.tools.preset.default.get_default_agent
+    # build_agent imports get_default_tools / get_default_condenser from preset
+    get_default_tools = MagicMock(name="get_default_tools", return_value=[])
+    get_default_condenser = MagicMock(name="get_default_condenser")
     tools_mod = types.ModuleType("openhands.tools")
     preset_mod = types.ModuleType("openhands.tools.preset")
     preset_default_mod = types.ModuleType("openhands.tools.preset.default")
-    preset_default_mod.get_default_agent = get_default_agent
+    preset_default_mod.get_default_tools = get_default_tools
+    preset_default_mod.get_default_condenser = get_default_condenser
+
+    # skills.py's default loader imports load_installed_skills from this path;
+    # return an empty list so the no-skills path is exercised (existing tests).
+    skills_installed_mod = types.ModuleType("openhands.sdk.skills.installed")
+    skills_installed_mod.load_installed_skills = MagicMock(
+        name="load_installed_skills", return_value=[]
+    )
+    sdk_skills_mod = types.ModuleType("openhands.sdk.skills")
 
     old = {}
     keys = (
         "openhands",
         "openhands.sdk",
         "openhands.sdk.conversation",
+        "openhands.sdk.skills",
+        "openhands.sdk.skills.installed",
         "openhands.tools",
         "openhands.tools.preset",
         "openhands.tools.preset.default",
@@ -116,12 +141,14 @@ def _fake_sdk(
     sys.modules["openhands"] = sdk
     sys.modules["openhands.sdk"] = sdk_sub
     sys.modules["openhands.sdk.conversation"] = conv_mod
+    sys.modules["openhands.sdk.skills"] = sdk_skills_mod
+    sys.modules["openhands.sdk.skills.installed"] = skills_installed_mod
     sys.modules["openhands.tools"] = tools_mod
     sys.modules["openhands.tools.preset"] = preset_mod
     sys.modules["openhands.tools.preset.default"] = preset_default_mod
 
     try:
-        yield LLM_cls, get_default_agent, conv_cls, get_final_response
+        yield LLM_cls, Agent_cls, conv_cls, get_final_response
     finally:
         for key, val in old.items():
             if val is None:
@@ -162,12 +189,12 @@ def _spec(**kw) -> TaskSpec:
 def test_stub_returns_stub_outcome(monkeypatch):
     """AGENT_STUB=1 returns the stub AgentOutcome without touching the SDK."""
     monkeypatch.setenv("AGENT_STUB", "1")
-    with _fake_sdk() as (LLM, get_default_agent, Conv, gfr):
+    with _fake_sdk() as (LLM, Agent_cls, Conv, gfr):
         outcome = entrypoint.run_agent(_spec(), "/tmp", _noop_tracer())
     assert outcome.summary == "stub run"
     assert outcome.files_changed is False
     LLM.assert_not_called()
-    get_default_agent.assert_not_called()
+    Agent_cls.assert_not_called()
 
 
 # --------------------------------------------------------------------------- #
@@ -177,8 +204,8 @@ def test_stub_returns_stub_outcome(monkeypatch):
 
 def test_happy_path_constructs_sdk_objects_correctly(monkeypatch, tmp_path):
     """run_agent passes model/base_url/api_key to LLM, builds the agent via
-    get_default_agent(llm=llm, cli_mode=True), and passes that agent (not the
-    LLM) to LocalConversation."""
+    build_agent (hand-rolled preset: get_default_tools + get_default_condenser +
+    Agent(..., agent_context=None)), and passes that agent to LocalConversation."""
     monkeypatch.delenv("AGENT_STUB", raising=False)
     monkeypatch.setenv("AGENT_MODEL", "qwen3-27b")
     monkeypatch.setenv("AGENT_LLM_BASE_URL", "http://192.168.68.104/v1")
@@ -193,7 +220,7 @@ def test_happy_path_constructs_sdk_objects_correctly(monkeypatch, tmp_path):
 
     with _fake_sdk(conversation_cls=TrackingConversation, final_response="done") as (
         LLM_cls,
-        get_default_agent,
+        Agent_cls,
         _,
         gfr,
     ):
@@ -208,16 +235,16 @@ def test_happy_path_constructs_sdk_objects_correctly(monkeypatch, tmp_path):
     assert llm_kwargs.kwargs.get("base_url") == "http://192.168.68.104/v1"
     assert llm_kwargs.kwargs.get("api_key") == "test-key"
 
-    # Agent built from the LLM with the tool preset, browser disabled (cli_mode).
-    get_default_agent.assert_called_once()
-    gda_call = get_default_agent.call_args
-    assert gda_call.kwargs.get("llm") == LLM_cls.return_value
-    assert gda_call.kwargs.get("cli_mode") is True
+    # Agent(...) was called (build_agent hand-rolls it with the tool preset).
+    Agent_cls.assert_called_once()
+    agent_call = Agent_cls.call_args
+    # agent_context=None is the no-skills path (behaves as pre-#32)
+    assert agent_call.kwargs.get("agent_context") is None
 
     # LocalConversation receives the built agent, not the LLM
     assert len(created_conversations) == 1
     conv = created_conversations[0]
-    assert conv.agent == get_default_agent.return_value
+    assert conv.agent == Agent_cls.return_value
 
     # get_agent_final_response called with conversation.state.events
     gfr.assert_called_once()
@@ -713,3 +740,76 @@ def test_diagnosis_prompt_renders_alert_fields():
     assert "omneval-writer-0" in msg  # alert details injected
     assert "<diagnosis>" in msg  # schema present
     assert "requires_approval" in msg
+
+
+# --------------------------------------------------------------------------- #
+# Issue #32: build_agent — empty-skills no-op
+# --------------------------------------------------------------------------- #
+
+
+def test_build_agent_with_no_agent_context_behaves_as_today(monkeypatch, tmp_path):
+    """build_agent(agent_context=None) reproduces the pre-#32 behaviour exactly:
+    Agent is constructed with the default preset tools and condenser, with no
+    agent_context attached (the skills seam is a no-op when context is None)."""
+    monkeypatch.delenv("AGENT_STUB", raising=False)
+
+    with _fake_sdk(final_response="done") as (LLM_cls, Agent_cls, _, _gfr):
+        entrypoint.run_agent(_spec(), str(tmp_path), _noop_tracer())
+
+    # Agent must have been called exactly once
+    Agent_cls.assert_called_once()
+    call_kwargs = Agent_cls.call_args.kwargs
+
+    # agent_context=None → no skills injected (no-op path)
+    assert call_kwargs.get("agent_context") is None
+
+    # The preset tools and condenser are still wired in
+    assert "llm" in call_kwargs
+    assert "tools" in call_kwargs
+    assert "condenser" in call_kwargs
+
+
+def test_installed_skills_flow_through_to_agent_context(monkeypatch, tmp_path):
+    """End-to-end: when installed skills are present they flow through
+    resolve_skills → AgentContext(skills=..., load_public_skills=False)
+    → Agent(agent_context=...).  This proves the #32 wire is live.
+
+    We inject fake skills via the skills module's _loader seam and assert
+    that AgentContext was constructed with those skills and that Agent
+    received it.
+    """
+    from collections import namedtuple
+
+    monkeypatch.delenv("AGENT_STUB", raising=False)
+
+    FakeSkill = namedtuple("FakeSkill", ["name", "content"])
+    fake_skill = FakeSkill("test-skill", "skill content")
+
+    # All assertions happen *inside* the _fake_sdk context so the mocked
+    # AgentContext class is still accessible.
+    with _fake_sdk(final_response="done") as (LLM_cls, Agent_cls, _, _gfr):
+        # Override the skills module loader to return one fake skill
+        import skills as _skills_mod
+
+        original_loader = _skills_mod._default_loader
+        _skills_mod._default_loader = lambda installed_dir: [fake_skill]
+        try:
+            entrypoint.run_agent(_spec(), str(tmp_path), _noop_tracer())
+        finally:
+            _skills_mod._default_loader = original_loader
+
+        # Fetch AgentContext_cls from sys.modules (still live inside the ctx mgr)
+        import sys
+
+        AgentContext_cls = sys.modules["openhands.sdk"].AgentContext
+
+        # AgentContext was called with skills=[fake_skill] and load_public_skills=False
+        AgentContext_cls.assert_called_once()
+        ctx_kwargs = AgentContext_cls.call_args.kwargs
+        assert ctx_kwargs.get("skills") == [fake_skill]
+        assert ctx_kwargs.get("load_public_skills") is False
+
+        # Agent received the constructed AgentContext (not None)
+        Agent_cls.assert_called_once()
+        agent_ctx_arg = Agent_cls.call_args.kwargs.get("agent_context")
+        assert agent_ctx_arg is AgentContext_cls.return_value

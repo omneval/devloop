@@ -85,7 +85,8 @@ def _fake_sdk(conversation_cls=None, responses: list[str] | None = None):
     sdk_sub = types.ModuleType("openhands.sdk")
 
     LLM_cls = MagicMock(name="LLM")
-    get_default_agent = MagicMock(name="get_default_agent")
+    Agent_cls = MagicMock(name="Agent")
+    AgentContext_cls = MagicMock(name="AgentContext")
     conv_cls = conversation_cls or _FakeConversation
 
     get_final_response = MagicMock(
@@ -93,23 +94,38 @@ def _fake_sdk(conversation_cls=None, responses: list[str] | None = None):
     )
 
     sdk_sub.LLM = LLM_cls
+    sdk_sub.Agent = Agent_cls
+    sdk_sub.AgentContext = AgentContext_cls
     sdk_sub.LocalConversation = conv_cls
     sdk_sub.get_agent_final_response = get_final_response
 
     conv_mod = types.ModuleType("openhands.sdk.conversation")
     conv_mod.get_agent_final_response = get_final_response
 
-    # The agent is built via openhands.tools.preset.default.get_default_agent
+    # build_agent imports get_default_tools / get_default_condenser from preset
+    get_default_tools = MagicMock(name="get_default_tools", return_value=[])
+    get_default_condenser = MagicMock(name="get_default_condenser")
     tools_mod = types.ModuleType("openhands.tools")
     preset_mod = types.ModuleType("openhands.tools.preset")
     preset_default_mod = types.ModuleType("openhands.tools.preset.default")
-    preset_default_mod.get_default_agent = get_default_agent
+    preset_default_mod.get_default_tools = get_default_tools
+    preset_default_mod.get_default_condenser = get_default_condenser
+
+    # skills.py's default loader imports load_installed_skills from this path;
+    # return an empty list so the no-skills path is exercised.
+    skills_installed_mod = types.ModuleType("openhands.sdk.skills.installed")
+    skills_installed_mod.load_installed_skills = MagicMock(
+        name="load_installed_skills", return_value=[]
+    )
+    sdk_skills_mod = types.ModuleType("openhands.sdk.skills")
 
     old = {}
     keys = (
         "openhands",
         "openhands.sdk",
         "openhands.sdk.conversation",
+        "openhands.sdk.skills",
+        "openhands.sdk.skills.installed",
         "openhands.tools",
         "openhands.tools.preset",
         "openhands.tools.preset.default",
@@ -120,12 +136,14 @@ def _fake_sdk(conversation_cls=None, responses: list[str] | None = None):
     sys.modules["openhands"] = sdk
     sys.modules["openhands.sdk"] = sdk_sub
     sys.modules["openhands.sdk.conversation"] = conv_mod
+    sys.modules["openhands.sdk.skills"] = sdk_skills_mod
+    sys.modules["openhands.sdk.skills.installed"] = skills_installed_mod
     sys.modules["openhands.tools"] = tools_mod
     sys.modules["openhands.tools.preset"] = preset_mod
     sys.modules["openhands.tools.preset.default"] = preset_default_mod
 
     try:
-        yield LLM_cls, get_default_agent, conv_cls, get_final_response
+        yield LLM_cls, Agent_cls, conv_cls, get_final_response
     finally:
         for key, val in old.items():
             if val is None:

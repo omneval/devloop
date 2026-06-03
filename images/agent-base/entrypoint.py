@@ -489,6 +489,36 @@ def _review_pr_body(issue_number: int, summary: str, reviewer: str) -> str:
 
 
 # --------------------------------------------------------------------------- #
+# Skill allowlist parsing (issue #36)
+# --------------------------------------------------------------------------- #
+def _load_skills_allowlist(phase: str) -> dict | None:
+    """Build the per-phase allowlist from ``AGENT_SKILLS_ENABLED``.
+
+    ``AGENT_SKILLS_ENABLED`` is set by the Temporal Orchestration Worker's
+    ``render_job`` for the active phase only — extracted from the
+    ``AGENT_SKILLS_BY_PHASE`` JSON map delivered by the Helm chart.
+
+    Three-way semantics (mirrors the Helm → worker → Job chain):
+    - Env var absent   → returns ``None``           → all skills (default)
+    - Env var = ``""`` → returns ``{phase: []}``    → no skills
+    - Env var = names  → returns ``{phase: [names]}``
+
+    The ``None``-sentinel is the backward-compat guarantee for existing
+    deployments that were deployed before ``skillsByPhase`` was introduced:
+    ``os.environ.get`` returns ``None`` (not ``""``) when the var is absent.
+    """
+    raw = os.environ.get("AGENT_SKILLS_ENABLED")  # None when absent (not "")
+    if raw is None:
+        # Env var not set → phase absent from the by-phase map → all skills
+        return None
+    if not raw.strip():
+        # Env var set but empty → phase had [] → no skills
+        return {phase: []}
+    names = [n.strip() for n in raw.split(",") if n.strip()]
+    return {phase: names}
+
+
+# --------------------------------------------------------------------------- #
 # Agent runner (the single seam mocked by the integration test)
 # --------------------------------------------------------------------------- #
 @dataclass
@@ -498,15 +528,61 @@ class AgentOutcome:
     structured: dict | None = None  # review/diagnosis JSON
 
 
+def build_agent(llm, cli_mode: bool = True, agent_context=None):
+    """Construct an Agent using the default preset (issue #32, ADR-0007).
+
+    Replicates ``get_default_agent(llm, cli_mode)`` — wiring terminal,
+    file_editor, task_tracker tools and the LLM-summarising condenser — and
+    adds ``agent_context`` to the ``Agent(...)`` constructor so installed
+    skills are injected when provided.
+
+    ``agent_context=None`` is the no-op path: the agent is built exactly as
+    before issue #32, so existing behaviour is preserved when no skills are
+    loaded.
+
+    WHY hand-rolled instead of ``get_default_agent``?
+    ``get_default_agent`` does not accept ``agent_context`` — there is no
+    supported path to skills injection through it.  See ADR-0007.
+
+    OVERRIDE SEAM: derived images can replace this function (``_base.build_agent
+    = my_build_agent``) to inject custom tools, a different condenser, or a
+    modified ``AgentContext`` without touching the rest of the entrypoint.
+    See ``images/agent-base/SKILLS.md`` for an example.
+
+    DO NOT replace this with a ``get_default_agent`` call — that would silently
+    drop skills support.
+    """
+    from openhands.sdk import Agent
+    from openhands.tools.preset.default import get_default_condenser, get_default_tools
+
+    tools = get_default_tools(enable_browser=not cli_mode)
+    condenser = get_default_condenser(
+        llm=llm.model_copy(update={"usage_id": "condenser"})
+    )
+    return Agent(
+        llm=llm,
+        tools=tools,
+        system_prompt_kwargs={"cli_mode": cli_mode},
+        condenser=condenser,
+        agent_context=agent_context,
+    )
+
+
 def run_agent(spec: TaskSpec, workdir: str, tracer) -> AgentOutcome:
     """Drive an OpenHands LocalConversation over the cloned workspace.
 
     Stub mode (AGENT_STUB=1) returns a fixed success without invoking the model
     — used to prove the dispatch→poll→ConfigMap round-trip (issue #18).
 
-    Real mode uses the openhands-ai 1.7.0 API:
+    Real mode uses the openhands-sdk API:
         LLM(model, base_url, api_key)
-        → Agent(llm=llm)
+        → _load_skills_allowlist(phase)                ← reads AGENT_SKILLS_ENABLED
+        → resolve_skills(phase, allowlist)             ← skills.py seam (#32, #36)
+        → AgentContext(skills=..., load_public_skills=False) when skills present
+        → build_agent(llm=llm, cli_mode=True, agent_context=ctx)
+          (hand-rolled preset: terminal + file_editor + task_tracker tools;
+          cli_mode drops the Chromium-only browser tool; agent_context carries
+          installed skills — None when none are installed, no-op path)
         → LocalConversation(agent=agent, workspace=workdir)
         → send_message → run → get_agent_final_response(state.events)
 
@@ -520,9 +596,56 @@ def run_agent(spec: TaskSpec, workdir: str, tracer) -> AgentOutcome:
 
     # Lazy import so the module stays importable without the SDK installed
     # (existing integration tests mock run_agent directly).
-    from openhands.sdk import LLM, LocalConversation
+    from openhands.sdk import AgentContext, LLM, LocalConversation
     from openhands.sdk.conversation import get_agent_final_response
-    from openhands.tools.preset.default import get_default_agent
+
+    # ------------------------------------------------------------------ #
+    # Skill resolution (issues #32, #35, #36)
+    # Build the per-phase allowlist from AGENT_SKILLS_ENABLED (set by
+    # render_job for the active phase) and pass it to resolve_skills.
+    # Wrapped in a span so skill-loading health is observable in omneval.
+    # Best-effort: if the loader raises the phase is never blocked.
+    # ------------------------------------------------------------------ #
+    import json as _json
+
+    import skills as _skills_mod
+
+    _selection_mode = os.environ.get("AGENT_SKILLS_SELECTION_MODE", "triggers")
+    _allowlist = _load_skills_allowlist(spec.phase)
+
+    resolved: list = []
+    skipped: list[dict] = []
+    with tracer.start_as_current_span("skills.load") as _skills_span:
+        try:
+            resolved, skipped = _skills_mod.resolve_skills(spec.phase, _allowlist)
+        except Exception as _exc:  # noqa: BLE001 — skill errors must not block the phase
+            log.warning("skills resolution failed (continuing without skills): %s", _exc)
+            skipped = [{"name": "", "reason": f"loader error: {_exc}"}]
+
+        if skipped:
+            log.warning("run_agent: skipped skills: %s", skipped)
+
+        # Emit OTLP attributes on the skills.load span.  OTel only accepts
+        # primitive attribute values; the details list is JSON-encoded.
+        if _skills_span is not None:
+            _skills_span.set_attribute("skills.loaded", len(resolved))
+            _skills_span.set_attribute("skills.skipped", len(skipped))
+            _skills_span.set_attribute("skills.selection_mode", _selection_mode)
+            if skipped:
+                _skills_span.set_attribute(
+                    "skills.skipped_details", _json.dumps(skipped)
+                )
+
+    # Format a one-line notice for any skipped skills (issue #35).  Empty
+    # string when no skills were skipped — no change to the phase summary.
+    _skip_notice = _skills_mod.format_skipped_notice(skipped)
+
+    # Construct AgentContext only when skills are available.  Empty → None →
+    # agent behaves as before issue #32 (no-op path).  load_public_skills=False
+    # prevents the agent from fetching public skills off GitHub at Job runtime.
+    agent_context = (
+        AgentContext(skills=resolved, load_public_skills=False) if resolved else None
+    )
 
     message = build_agent_message(spec)
     try:
@@ -532,27 +655,24 @@ def run_agent(spec: TaskSpec, workdir: str, tracer) -> AgentOutcome:
                 base_url=os.getenv("AGENT_LLM_BASE_URL", "http://192.168.68.104/v1"),
                 api_key=os.getenv("AGENT_LLM_API_KEY", "local"),
             )
-            # Build the agent WITH its execution tools. A bare ``Agent(llm=llm)``
-            # ships only Think/Finish — no terminal, file editor, or task tracker
-            # — so every phase silently produced empty output (the planner "found
-            # no issues", the implementer made no commits). ``get_default_agent``
-            # wires in terminal + file_editor + task_tracker; ``cli_mode=True``
-            # drops the browser tool, which needs Chromium (not in the image).
-            agent = get_default_agent(llm=llm, cli_mode=True)
+            agent = build_agent(llm=llm, cli_mode=True, agent_context=agent_context)
             conversation = LocalConversation(agent=agent, workspace=workdir)
             conversation.send_message(message)
             conversation.run()
             text = get_agent_final_response(conversation.state.events)
     except Exception as exc:  # noqa: BLE001
         log.exception("run_agent failed: %s", exc)
-        return AgentOutcome(
-            summary=f"agent error: {exc}",
-            files_changed=False,
-        )
+        summary = f"agent error: {exc}"
+        if _skip_notice:
+            summary = f"{summary}\n\n{_skip_notice}"
+        return AgentOutcome(summary=summary, files_changed=False)
 
     if not text:
         log.warning("run_agent: empty final response — agent produced no output")
-        return AgentOutcome(summary="agent produced no output", files_changed=False)
+        summary = "agent produced no output"
+        if _skip_notice:
+            summary = f"{summary}\n\n{_skip_notice}"
+        return AgentOutcome(summary=summary, files_changed=False)
 
     # ------------------------------------------------------------------ #
     # Mid-run human-question round-trip (issue #36)
