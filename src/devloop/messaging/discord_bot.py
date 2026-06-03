@@ -71,6 +71,13 @@ def channel_id(name: str) -> int:
 
 
 # --------------------------------------------------------------------------- #
+# Shared thread store instance
+# --------------------------------------------------------------------------- #
+
+_thread_store = ConfigMapThreadStore(configmap_name="discord-bot-threads")
+
+
+# --------------------------------------------------------------------------- #
 # BotClient — Discord gateway client
 # --------------------------------------------------------------------------- #
 
@@ -151,13 +158,6 @@ class BotClient(discord.Client):
 
 
 # --------------------------------------------------------------------------- #
-# Shared thread store instance
-# --------------------------------------------------------------------------- #
-
-_thread_store = ConfigMapThreadStore(configmap_name="discord-bot-threads")
-
-
-# --------------------------------------------------------------------------- #
 # DiscordActivities — Temporal activity wrapper
 # --------------------------------------------------------------------------- #
 
@@ -165,8 +165,8 @@ _thread_store = ConfigMapThreadStore(configmap_name="discord-bot-threads")
 class DiscordActivities:
     """Wraps a ``BotClient`` as Temporal-compatible async activities.
 
-    Inherits the data contract types from the core ``MessagingActivities``
-    wrapper but uses Discord-specific async I/O.
+    Uses the same input/output data contracts as ``MessagingActivities`` but
+    provides its own async implementations tailored to Discord's API.
     """
 
     def __init__(self, bot: BotClient) -> None:
@@ -174,32 +174,45 @@ class DiscordActivities:
         self._threads: dict[str, str] = {}
 
     async def send_message(self, inp: SendMessageInput) -> SendMessageOutput:
-        thread = await self._bot.open_thread(
-            inp.channel, inp.thread_name, inp.message
-        )
-        thread_id = str(thread.id)
-        self._threads[inp.workflow_id] = thread_id
-        _thread_store.put(inp.workflow_id, thread_id)
+        # Reuse existing thread for this workflow, or open a new one
+        thread_id = self._threads.get(inp.workflow_id)
+        if thread_id is None:
+            thread_id = _thread_store.get_thread(inp.workflow_id)
+            self._threads[inp.workflow_id] = thread_id
+
+        if thread_id is not None:
+            await self._bot.post_to_thread(thread_id, inp.message)
+        else:
+            thread = await self._bot.open_thread(
+                inp.channel, inp.thread_name, inp.message
+            )
+            thread_id = str(thread.id)
+            self._threads[inp.workflow_id] = thread_id
+            _thread_store.put(inp.workflow_id, thread_id)
+
         return SendMessageOutput(thread_id=thread_id)
 
     async def send_notification(self, inp: SendNotificationInput) -> None:
         thread_id = self._threads.get(inp.workflow_id)
         if thread_id is None:
             thread_id = _thread_store.get_thread(inp.workflow_id)
-        if thread_id is None:
-            raise KeyError(
-                f"No thread for workflow_id={inp.workflow_id!r} — "
-                "call send_message first"
+
+        if thread_id is not None:
+            await self._bot.post_to_thread(thread_id, inp.message)
+        else:
+            # Fallback: open a new thread for notifications with no prior thread
+            thread = await self._bot.open_thread(
+                "alerts", inp.workflow_id, inp.message
             )
-        await self._bot.post_to_thread(thread_id, inp.message)
+            thread_id = str(thread.id)
+            self._threads[inp.workflow_id] = thread_id
+            _thread_store.put(inp.workflow_id, thread_id)
 
     async def archive_thread(self, inp: ArchiveThreadInput) -> None:
         thread_id = self._threads.pop(inp.workflow_id, None)
         if thread_id is None:
             thread_id = _thread_store.get_thread(inp.workflow_id)
         if thread_id is None:
-            raise KeyError(
-                f"No thread for workflow_id={inp.workflow_id!r}"
-            )
+            return
         await self._bot.archive_thread(thread_id)
         _thread_store.delete(inp.workflow_id)

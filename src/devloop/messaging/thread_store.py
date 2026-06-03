@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 
 from kubernetes import client as k8s_client
 
@@ -96,7 +95,6 @@ class ConfigMapThreadStore:
 
     def get_channel(self, thread_id: str) -> str | None:
         """Return the channel for *thread_id*, or ``None``."""
-        _, t2w = self._read_configmap(_v1())
         try:
             cm = _v1().read_namespaced_config_map(self._name, self._namespace)
             channels_raw = cm.data.get("channels", "{}")

@@ -19,6 +19,7 @@ import os
 
 from slack_bolt import App as SlackApp
 from slack_bolt.adapter.socket_mode import SocketModeHandler
+from temporalio import activity
 from temporalio.client import Client
 
 from devloop.messaging.core import (
@@ -186,31 +187,29 @@ def create_bot(
     slack_bot_token: str,
     slack_app_token: str,
     temporal_client: Client,
-) -> tuple[BotClient, SlackApp, SocketModeHandler]:
-    """Create and configure a Slack bot with Socket Mode.
+) -> tuple[BotClient, SocketModeHandler]:
+    """Create a Slack bot and return (BotClient, SocketModeHandler).
 
-    Returns the BotClient, the raw bolt app, and the SocketModeHandler.
+    Registers event handlers on the bot internally.
     """
     app = SlackApp(token=slack_bot_token)
     bot = BotClient(app, temporal_client)
     bot.register_event_handlers()
     handler = SocketModeHandler(app, slack_app_token)
-    return bot, app, handler
+    return bot, handler
 
 
-def _create_bot_app(
+def create_bot_with_app(
     slack_bot_token: str,
     slack_app_token: str,
     temporal_client: Client,
-) -> tuple[BotClient, SocketModeHandler]:
-    """Create a Slack bot and return (BotClient, SocketModeHandler).
+) -> tuple[BotClient, SlackApp, SocketModeHandler]:
+    """Create a Slack bot and return BotClient, raw bolt app, and handler.
 
-    Convenience wrapper that drops the raw app from the return value.
+    Use this variant when you need access to the underlying bolt app.
     """
-    bot, _app, handler = create_bot(
-        slack_bot_token, slack_app_token, temporal_client
-    )
-    return bot, handler
+    bot, handler = create_bot(slack_bot_token, slack_app_token, temporal_client)
+    return bot, bot._app, handler
 
 
 # --------------------------------------------------------------------------- #
