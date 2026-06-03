@@ -372,3 +372,24 @@ def test_render_job_does_not_set_otel_service_name_from_env(monkeypatch):
 
     # Must be the phase, not the worker's own service name
     assert env["OTEL_SERVICE_NAME"] == "execute"
+
+
+# --------------------------------------------------------------------------- #
+# AGENTS_NAMESPACE (issue #33) — Job manifest and create call use same namespace
+# --------------------------------------------------------------------------- #
+
+@pytest.mark.asyncio
+async def test_dispatch_creates_job_in_agents_namespace(monkeypatch):
+    """The namespace in the Job manifest metadata and the create_namespaced_job
+    call must both match cluster.NAMESPACE — no divergence between render and
+    submit."""
+    batch = FakeBatch([(1, None)])
+    core = FakeCore([{"status": "complete", "branch": "b"}])
+    _patch(monkeypatch, batch, core)
+
+    await ActivityEnvironment().run(k8s_jobs.dispatch_agent_job, _dispatch_input())
+
+    assert batch.created, "a Job must have been submitted"
+    ns_used, manifest = batch.created[0]
+    assert ns_used == k8s_jobs.NAMESPACE
+    assert manifest["metadata"]["namespace"] == k8s_jobs.NAMESPACE

@@ -40,6 +40,8 @@ spec:
           env:
             - name: TEMPORAL_HOST
               value: {{ .Values.temporalHost | quote }}
+            - name: AGENTS_NAMESPACE
+              value: {{ .Values.agentsNamespace | default .Release.Namespace | quote }}
             - name: TASK_QUEUE
               value: {{ .Values.temporalWorker.taskQueue | quote }}
             - name: HEALTH_PORT

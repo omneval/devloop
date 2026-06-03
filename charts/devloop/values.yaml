@@ -3,6 +3,13 @@
 # Example: "temporal-frontend.agents.svc:7233"
 temporalHost: ""
 
+# Namespace where Agent Execution Jobs (and their output ConfigMaps) are created.
+# Defaults to the Helm release namespace (.Release.Namespace) so that a standard
+# install lands everything in the same namespace.  Advanced operators can override
+# this to isolate agent workloads in a dedicated namespace (note: the worker's
+# ServiceAccount must have Job and ConfigMap RBAC in the target namespace).
+agentsNamespace: ""
+
 # ---------------------------------------------------------------------------
 # Temporal Orchestration Worker
 # ---------------------------------------------------------------------------

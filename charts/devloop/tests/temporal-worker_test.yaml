@@ -54,6 +54,33 @@ tests:
             name: ORCHESTRATION_QUEUE
             value: homelab-orchestration
 
+  - it: defaults AGENTS_NAMESPACE to the release namespace
+    template: templates/temporal-worker-deployment.yaml
+    release:
+      namespace: my-agents-ns
+    set:
+      temporalHost: "temporal-frontend.agents.svc:7233"
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: AGENTS_NAMESPACE
+            value: "my-agents-ns"
+
+  - it: allows overriding AGENTS_NAMESPACE via agentsNamespace value
+    template: templates/temporal-worker-deployment.yaml
+    release:
+      namespace: my-agents-ns
+    set:
+      temporalHost: "temporal-frontend.agents.svc:7233"
+      agentsNamespace: "agent-jobs"
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: AGENTS_NAMESPACE
+            value: "agent-jobs"
+
   - it: exposes webhook and health ports on the service
     template: templates/temporal-worker-service.yaml
     set:
