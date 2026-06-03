@@ -1,8 +1,10 @@
 """Kubernetes Job dispatch for Agent Execution Jobs (issue #18).
 
 A single Temporal activity, ``dispatch_agent_job``, renders a ``batch/v1`` Job
-from a Project Registry entry, creates it in the ``agents`` namespace, polls it
-to a terminal state, and reads the output ConfigMap the Job writes.
+from a Project Registry entry, creates it in the namespace given by
+``AGENTS_NAMESPACE`` (defaulting to the Helm release namespace via the chart,
+or ``"agents"`` in local/dev runs without a chart), polls it to a terminal
+state, and reads the output ConfigMap the Job writes.
 
 Design notes
 ------------

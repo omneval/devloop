@@ -5,6 +5,8 @@ handling, and base64 decode are exercised without a cluster.
 """
 
 import base64
+import importlib
+import os
 import types
 
 import pytest
@@ -82,3 +84,33 @@ def test_data_helper_tolerates_dict_and_object():
     assert cluster._data({"data": {"a": 1}}) == {"a": 1}
     assert cluster._data(_ns({"a": 1})) == {"a": 1}
     assert cluster._data(_ns(None)) == {}
+
+
+# --------------------------------------------------------------------------- #
+# AGENTS_NAMESPACE (issue #33) — env var respected at module import time
+# --------------------------------------------------------------------------- #
+
+@pytest.fixture
+def _reload_cluster():
+    """Reload the cluster module before and after the test to ensure NAMESPACE
+    reflects a fresh env-var read each time and later tests are not polluted."""
+    importlib.reload(cluster)
+    yield
+    importlib.reload(cluster)
+
+
+def test_agents_namespace_defaults_to_agents(_reload_cluster):
+    """Without AGENTS_NAMESPACE set, NAMESPACE falls back to the literal 'agents'
+    so local/dev runs without a chart still work."""
+    os.environ.pop("AGENTS_NAMESPACE", None)
+    importlib.reload(cluster)
+    assert cluster.NAMESPACE == "agents"
+
+
+def test_agents_namespace_env_var_is_respected(_reload_cluster):
+    """When AGENTS_NAMESPACE is set, cluster.NAMESPACE must reflect that value so
+    Jobs land in the operator-chosen namespace, not the hard-coded fallback."""
+    os.environ["AGENTS_NAMESPACE"] = "my-agents-ns"
+    importlib.reload(cluster)
+    assert cluster.NAMESPACE == "my-agents-ns"
+    os.environ.pop("AGENTS_NAMESPACE", None)
