@@ -1,17 +1,17 @@
-name: Publish Discord Bot Image
+name: Publish Slack Bot Image
 
-# Builds and publishes ghcr.io/omneval/devloop-discord-bot — the Discord <-> Temporal
+# Builds and publishes ghcr.io/omneval/devloop-slack-bot — the Slack <-> Temporal
 # bridge for Phase Gates and changelog posts.
 #
 # Triggers (continuous / main only):
 #   - workflow_run after "CI" succeeds on main → sha-<short>-<epoch> + latest tags
-#   - pull_request                             → build + test only (no push)
+#   - pull_request                             → build only (no push)
 #
 # Depending on CI (rather than push to main directly) ensures the image is never
 # pushed against a broken devloop package. Release (semver) builds run in
 # release.yml; this workflow has no tag trigger so the two never race.
 #
-# The image installs omneval-devloop[discord] from PyPI. Continuous builds
+# The image installs omneval-devloop[slack] from PyPI. Continuous builds
 # install the latest published release. Release builds (release.yml) pin the
 # SDK to the tag version and wait for PyPI before building.
 
@@ -22,12 +22,12 @@ on:
   pull_request:
 
 concurrency:
-  group: publish-discord-bot-${{ github.ref }}
+  group: publish-slack-bot-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
   build_and_push:
-    name: Build and push discord-bot to GHCR
+    name: Build and push slack-bot to GHCR
     if: >-
       github.event_name == 'pull_request' ||
       (github.event_name == 'workflow_run' &&
@@ -38,7 +38,7 @@ jobs:
       contents: read
     uses: ./.github/workflows/build-image.yml
     with:
-      image_name: devloop-discord-bot
-      docker_context: './images/discord-bot'
-      dockerfile: './images/discord-bot/Dockerfile'
+      image_name: devloop-slack-bot
+      docker_context: './images/slack-bot'
+      dockerfile: './images/slack-bot/Dockerfile'
     secrets: inherit

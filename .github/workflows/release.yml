@@ -4,9 +4,10 @@ name: Release
 # release as one job DAG, so ordering is structural (needs:) instead of a race
 # between independent workflows:
 #
-#   test ─┬─> pypi ─> sdk-images (agent-base, temporal-worker)   [pinned SDK]
+#   test ─┬─> pypi ─> sdk-images (agent-base, temporal-worker,   [pinned SDK]
+#         │                       discord-bot, slack-bot)
 #         ├─> chart                                              [parallel]
-#         └─> images (discord-bot, poller)                       [parallel, no SDK]
+#         └─> images (poller)                                    [parallel, no SDK]
 #
 # The git tag is the single source of truth: hatch-vcs derives the SDK version
 # from it (e.g. v0.0.2 -> 0.0.2), the PyPI release carries that version, the
@@ -140,9 +141,6 @@ jobs:
     strategy:
       matrix:
         include:
-          - image_name: devloop-discord-bot
-            docker_context: './images/discord-bot'
-            dockerfile: './images/discord-bot/Dockerfile'
           - image_name: devloop-poller
             docker_context: '.'
             dockerfile: './images/poller/Dockerfile'
@@ -170,6 +168,12 @@ jobs:
           - image_name: devloop-temporal-worker
             docker_context: './images/temporal-worker'
             dockerfile: './images/temporal-worker/Dockerfile'
+          - image_name: devloop-discord-bot
+            docker_context: './images/discord-bot'
+            dockerfile: './images/discord-bot/Dockerfile'
+          - image_name: devloop-slack-bot
+            docker_context: './images/slack-bot'
+            dockerfile: './images/slack-bot/Dockerfile'
     uses: ./.github/workflows/build-image.yml
     with:
       image_name: ${{ matrix.image_name }}

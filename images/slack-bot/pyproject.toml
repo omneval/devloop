@@ -3,9 +3,7 @@ name = "slack-bot"
 version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = [
-    "slack-bolt>=1.18",
-    "temporalio==1.27.2",
-    "kubernetes==32.0.1",
+    "omneval-devloop[slack]",
 ]
 
 [dependency-groups]
@@ -14,10 +12,9 @@ dev = [
     "pytest-asyncio>=0.24",
 ]
 
-# Flat module layout (main.py, activities.py, …). The image installs runtime
-# dependencies with `uv pip install --system --no-cache .` and COPYs the modules
-# in separately, so the build must not try to auto-discover/package them — an
-# empty py-modules list makes `pip install .` resolve dependencies only.
+# No first-party package in this image — it runs main.py which imports from
+# the installed omneval-devloop[slack] SDK. The build resolves dependencies
+# only; py-modules = [] prevents setuptools from auto-discovering modules.
 [build-system]
 requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
