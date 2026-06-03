@@ -489,6 +489,36 @@ def _review_pr_body(issue_number: int, summary: str, reviewer: str) -> str:
 
 
 # --------------------------------------------------------------------------- #
+# Skill allowlist parsing (issue #36)
+# --------------------------------------------------------------------------- #
+def _load_skills_allowlist(phase: str) -> dict | None:
+    """Build the per-phase allowlist from ``AGENT_SKILLS_ENABLED``.
+
+    ``AGENT_SKILLS_ENABLED`` is set by the Temporal Orchestration Worker's
+    ``render_job`` for the active phase only — extracted from the
+    ``AGENT_SKILLS_BY_PHASE`` JSON map delivered by the Helm chart.
+
+    Three-way semantics (mirrors the Helm → worker → Job chain):
+    - Env var absent   → returns ``None``           → all skills (default)
+    - Env var = ``""`` → returns ``{phase: []}``    → no skills
+    - Env var = names  → returns ``{phase: [names]}``
+
+    The ``None``-sentinel is the backward-compat guarantee for existing
+    deployments that were deployed before ``skillsByPhase`` was introduced:
+    ``os.environ.get`` returns ``None`` (not ``""``) when the var is absent.
+    """
+    raw = os.environ.get("AGENT_SKILLS_ENABLED")  # None when absent (not "")
+    if raw is None:
+        # Env var not set → phase absent from the by-phase map → all skills
+        return None
+    if not raw.strip():
+        # Env var set but empty → phase had [] → no skills
+        return {phase: []}
+    names = [n.strip() for n in raw.split(",") if n.strip()]
+    return {phase: names}
+
+
+# --------------------------------------------------------------------------- #
 # Agent runner (the single seam mocked by the integration test)
 # --------------------------------------------------------------------------- #
 @dataclass
@@ -532,9 +562,10 @@ def run_agent(spec: TaskSpec, workdir: str, tracer) -> AgentOutcome:
     Stub mode (AGENT_STUB=1) returns a fixed success without invoking the model
     — used to prove the dispatch→poll→ConfigMap round-trip (issue #18).
 
-    Real mode uses the openhands-sdk 1.24.0 API:
+    Real mode uses the openhands-sdk API:
         LLM(model, base_url, api_key)
-        → resolve_skills(phase, allowlist=None)   ← skills.py seam (#32)
+        → _load_skills_allowlist(phase)                ← reads AGENT_SKILLS_ENABLED
+        → resolve_skills(phase, allowlist)             ← skills.py seam (#32, #36)
         → AgentContext(skills=..., load_public_skills=False) when skills present
         → build_agent(llm=llm, cli_mode=True, agent_context=ctx)
           (hand-rolled preset: terminal + file_editor + task_tracker tools;
@@ -556,13 +587,46 @@ def run_agent(spec: TaskSpec, workdir: str, tracer) -> AgentOutcome:
     from openhands.sdk import AgentContext, LLM, LocalConversation
     from openhands.sdk.conversation import get_agent_final_response
 
-    # Resolve installed skills for this phase.  allowlist=None means all
-    # installed skills are allowed; per-phase filtering is the skills.py seam.
+    # ------------------------------------------------------------------ #
+    # Skill resolution (issues #32, #35, #36)
+    # Build the per-phase allowlist from AGENT_SKILLS_ENABLED (set by
+    # render_job for the active phase) and pass it to resolve_skills.
+    # Wrapped in a span so skill-loading health is observable in omneval.
+    # Best-effort: if the loader raises the phase is never blocked.
+    # ------------------------------------------------------------------ #
+    import json as _json
+
     import skills as _skills_mod
 
-    resolved, skipped = _skills_mod.resolve_skills(spec.phase, allowlist=None)
-    if skipped:
-        log.info("run_agent: skipped skills %s", skipped)
+    _selection_mode = os.environ.get("AGENT_SKILLS_SELECTION_MODE", "triggers")
+    _allowlist = _load_skills_allowlist(spec.phase)
+
+    resolved: list = []
+    skipped: list[dict] = []
+    with tracer.start_as_current_span("skills.load") as _skills_span:
+        try:
+            resolved, skipped = _skills_mod.resolve_skills(spec.phase, _allowlist)
+        except Exception as _exc:  # noqa: BLE001 — skill errors must not block the phase
+            log.warning("skills resolution failed (continuing without skills): %s", _exc)
+            skipped = [{"name": "", "reason": f"loader error: {_exc}"}]
+
+        if skipped:
+            log.warning("run_agent: skipped skills: %s", skipped)
+
+        # Emit OTLP attributes on the skills.load span.  OTel only accepts
+        # primitive attribute values; the details list is JSON-encoded.
+        if _skills_span is not None:
+            _skills_span.set_attribute("skills.loaded", len(resolved))
+            _skills_span.set_attribute("skills.skipped", len(skipped))
+            _skills_span.set_attribute("skills.selection_mode", _selection_mode)
+            if skipped:
+                _skills_span.set_attribute(
+                    "skills.skipped_details", _json.dumps(skipped)
+                )
+
+    # Format a one-line notice for any skipped skills (issue #35).  Empty
+    # string when no skills were skipped — no change to the phase summary.
+    _skip_notice = _skills_mod.format_skipped_notice(skipped)
 
     # Construct AgentContext only when skills are available.  Empty → None →
     # agent behaves as before issue #32 (no-op path).  load_public_skills=False
@@ -586,14 +650,17 @@ def run_agent(spec: TaskSpec, workdir: str, tracer) -> AgentOutcome:
             text = get_agent_final_response(conversation.state.events)
     except Exception as exc:  # noqa: BLE001
         log.exception("run_agent failed: %s", exc)
-        return AgentOutcome(
-            summary=f"agent error: {exc}",
-            files_changed=False,
-        )
+        summary = f"agent error: {exc}"
+        if _skip_notice:
+            summary = f"{summary}\n\n{_skip_notice}"
+        return AgentOutcome(summary=summary, files_changed=False)
 
     if not text:
         log.warning("run_agent: empty final response — agent produced no output")
-        return AgentOutcome(summary="agent produced no output", files_changed=False)
+        summary = "agent produced no output"
+        if _skip_notice:
+            summary = f"{summary}\n\n{_skip_notice}"
+        return AgentOutcome(summary=summary, files_changed=False)
 
     # ------------------------------------------------------------------ #
     # Mid-run human-question round-trip (issue #36)

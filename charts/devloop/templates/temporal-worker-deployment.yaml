@@ -50,6 +50,12 @@ spec:
               value: {{ .Values.temporalWorker.webhookPort | quote }}
             - name: PROJECTS_FILE
               value: {{ .Values.temporalWorker.projectsFile | quote }}
+            {{- if .Values.skillsByPhase }}
+            - name: AGENT_SKILLS_BY_PHASE
+              value: {{ .Values.skillsByPhase | toJson | quote }}
+            {{- end }}
+            - name: AGENT_SKILLS_SELECTION_MODE
+              value: {{ .Values.skillsSelectionMode | default "triggers" | quote }}
             {{- with .Values.temporalWorker.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}

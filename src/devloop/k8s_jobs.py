@@ -158,6 +158,40 @@ def render_job(d: DispatchInput, job_name: str) -> dict:
         if val:
             env.append({"name": var, "value": val})
 
+    # Per-phase skill enablement (issue #36).
+    # AGENT_SKILLS_BY_PHASE is a JSON-encoded {phase: [names]} map set on the
+    # worker by the Helm chart.  We extract the names for the active phase and
+    # pass them as a comma-separated AGENT_SKILLS_ENABLED to the Job so the
+    # entrypoint can build its per-phase allowlist.
+    #
+    # Three-way semantics preserved through the env transport:
+    #   phase absent from map → omit AGENT_SKILLS_ENABLED → all skills (default)
+    #   phase = []            → AGENT_SKILLS_ENABLED=""   → no skills
+    #   phase = [a,b]         → AGENT_SKILLS_ENABLED="a,b"
+    _skills_by_phase_raw = os.environ.get("AGENT_SKILLS_BY_PHASE", "")
+    if _skills_by_phase_raw:
+        try:
+            _skills_by_phase: dict = json.loads(_skills_by_phase_raw)
+        except (json.JSONDecodeError, ValueError):
+            log.warning(
+                "AGENT_SKILLS_BY_PHASE is not valid JSON — ignoring: %r",
+                _skills_by_phase_raw,
+            )
+            _skills_by_phase = {}
+        if spec.phase in _skills_by_phase:
+            phase_names = _skills_by_phase[spec.phase]
+            env.append(
+                {
+                    "name": "AGENT_SKILLS_ENABLED",
+                    "value": ",".join(phase_names) if phase_names else "",
+                }
+            )
+
+    # Forward the selection mode (triggers/advanced) so the entrypoint can
+    # pass it through to resolve_skills.  Always set — defaults to "triggers".
+    _selection_mode = os.environ.get("AGENT_SKILLS_SELECTION_MODE", "triggers")
+    env.append({"name": "AGENT_SKILLS_SELECTION_MODE", "value": _selection_mode})
+
     # Reviewer the merge phase tags on the PR it opens (assignee + @-mention).
     # Sourced from the registry; absent for non-registry (alert-response) jobs.
     try:

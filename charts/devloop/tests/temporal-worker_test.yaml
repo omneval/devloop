@@ -99,3 +99,54 @@ tests:
             port: 8088
             targetPort: webhook
             protocol: TCP
+
+  - it: renders AGENT_SKILLS_BY_PHASE as JSON when skillsByPhase is set
+    template: templates/temporal-worker-deployment.yaml
+    set:
+      temporalHost: "temporal-frontend.agents.svc:7233"
+      skillsByPhase:
+        plan: []
+        execute:
+          - tdd
+          - code-review
+        review:
+          - code-review
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: AGENT_SKILLS_BY_PHASE
+            value: '{"execute":["tdd","code-review"],"plan":[],"review":["code-review"]}'
+
+  - it: omits AGENT_SKILLS_BY_PHASE when skillsByPhase is empty (default)
+    template: templates/temporal-worker-deployment.yaml
+    set:
+      temporalHost: "temporal-frontend.agents.svc:7233"
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: AGENT_SKILLS_BY_PHASE
+
+  - it: renders AGENT_SKILLS_SELECTION_MODE from skillsSelectionMode value
+    template: templates/temporal-worker-deployment.yaml
+    set:
+      temporalHost: "temporal-frontend.agents.svc:7233"
+      skillsSelectionMode: "advanced"
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: AGENT_SKILLS_SELECTION_MODE
+            value: "advanced"
+
+  - it: defaults AGENT_SKILLS_SELECTION_MODE to triggers when not set
+    template: templates/temporal-worker-deployment.yaml
+    set:
+      temporalHost: "temporal-frontend.agents.svc:7233"
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: AGENT_SKILLS_SELECTION_MODE
+            value: "triggers"

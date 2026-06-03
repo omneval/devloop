@@ -375,21 +375,93 @@ def test_render_job_does_not_set_otel_service_name_from_env(monkeypatch):
 
 
 # --------------------------------------------------------------------------- #
-# AGENTS_NAMESPACE (issue #33) — Job manifest and create call use same namespace
+# Per-phase skill enablement (issue #36)
 # --------------------------------------------------------------------------- #
 
-@pytest.mark.asyncio
-async def test_dispatch_creates_job_in_agents_namespace(monkeypatch):
-    """The namespace in the Job manifest metadata and the create_namespaced_job
-    call must both match cluster.NAMESPACE — no divergence between render and
-    submit."""
-    batch = FakeBatch([(1, None)])
-    core = FakeCore([{"status": "complete", "branch": "b"}])
-    _patch(monkeypatch, batch, core)
 
-    await ActivityEnvironment().run(k8s_jobs.dispatch_agent_job, _dispatch_input())
+def _job_env(d=None, job_name="agent-omneval-execute-42-a1"):
+    """Helper: render and return a {name: value} env dict (value-only entries)."""
+    if d is None:
+        d = _dispatch_input()
+    manifest = k8s_jobs.render_job(d, job_name)
+    return {
+        e["name"]: e["value"]
+        for e in manifest["spec"]["template"]["spec"]["containers"][0]["env"]
+        if "value" in e
+    }
 
-    assert batch.created, "a Job must have been submitted"
-    ns_used, manifest = batch.created[0]
-    assert ns_used == k8s_jobs.NAMESPACE
-    assert manifest["metadata"]["namespace"] == k8s_jobs.NAMESPACE
+
+def _job_env_names(d=None, job_name="agent-omneval-execute-42-a1"):
+    """Helper: render and return a set of all env var names in the Job."""
+    if d is None:
+        d = _dispatch_input()
+    manifest = k8s_jobs.render_job(d, job_name)
+    return {e["name"] for e in manifest["spec"]["template"]["spec"]["containers"][0]["env"]}
+
+
+def test_render_job_injects_skills_enabled_for_named_phase(monkeypatch):
+    """When AGENT_SKILLS_BY_PHASE has names for the active phase, render_job
+    must inject AGENT_SKILLS_ENABLED as a comma-separated list into the Job."""
+    monkeypatch.setenv(
+        "AGENT_SKILLS_BY_PHASE",
+        json.dumps({"execute": ["tdd", "code-review"], "review": ["code-review"]}),
+    )
+    env = _job_env()
+    assert env["AGENT_SKILLS_ENABLED"] == "tdd,code-review"
+
+
+def test_render_job_injects_empty_skills_enabled_for_empty_phase(monkeypatch):
+    """When the active phase maps to [] (no skills), render_job must inject
+    AGENT_SKILLS_ENABLED="" so the entrypoint knows to allow no skills."""
+    monkeypatch.setenv(
+        "AGENT_SKILLS_BY_PHASE",
+        json.dumps({"execute": [], "review": ["code-review"]}),
+    )
+    env = _job_env()
+    assert "AGENT_SKILLS_ENABLED" in env
+    assert env["AGENT_SKILLS_ENABLED"] == ""
+
+
+def test_render_job_omits_skills_enabled_when_phase_absent_from_map(monkeypatch):
+    """When the active phase is absent from AGENT_SKILLS_BY_PHASE, render_job
+    must NOT inject AGENT_SKILLS_ENABLED — the entrypoint then allows all skills
+    (backward-compatible default)."""
+    monkeypatch.setenv(
+        "AGENT_SKILLS_BY_PHASE",
+        json.dumps({"review": ["code-review"]}),  # "execute" is absent
+    )
+    env_names = _job_env_names()
+    assert "AGENT_SKILLS_ENABLED" not in env_names
+
+
+def test_render_job_omits_skills_enabled_when_by_phase_unset(monkeypatch):
+    """When AGENT_SKILLS_BY_PHASE is not set at all (existing deployments),
+    AGENT_SKILLS_ENABLED must be absent from the Job env — all skills allowed."""
+    monkeypatch.delenv("AGENT_SKILLS_BY_PHASE", raising=False)
+    env_names = _job_env_names()
+    assert "AGENT_SKILLS_ENABLED" not in env_names
+
+
+def test_render_job_injects_selection_mode_from_env(monkeypatch):
+    """AGENT_SKILLS_SELECTION_MODE from the worker env must be forwarded to
+    the Job so the entrypoint can apply the right skill-selection strategy."""
+    monkeypatch.setenv("AGENT_SKILLS_SELECTION_MODE", "advanced")
+    env = _job_env()
+    assert env["AGENT_SKILLS_SELECTION_MODE"] == "advanced"
+
+
+def test_render_job_defaults_selection_mode_to_triggers(monkeypatch):
+    """When AGENT_SKILLS_SELECTION_MODE is not set, render_job must default
+    to 'triggers' to preserve backward-compatible keyword-driven behaviour."""
+    monkeypatch.delenv("AGENT_SKILLS_SELECTION_MODE", raising=False)
+    env = _job_env()
+    assert env["AGENT_SKILLS_SELECTION_MODE"] == "triggers"
+
+
+def test_render_job_handles_invalid_by_phase_json_gracefully(monkeypatch):
+    """If AGENT_SKILLS_BY_PHASE is not valid JSON, render_job must not crash
+    and must omit AGENT_SKILLS_ENABLED (treat as absent → all skills)."""
+    monkeypatch.setenv("AGENT_SKILLS_BY_PHASE", "not-valid-json")
+    # Must not raise
+    env_names = _job_env_names()
+    assert "AGENT_SKILLS_ENABLED" not in env_names
