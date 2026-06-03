@@ -146,7 +146,10 @@ def test_allowlist_name_not_installed_is_ignored():
 
 
 def test_unnamed_skill_is_skipped_and_reported():
-    """A skill with an empty name is skipped and its directory name reported."""
+    """A skill with an empty name (e.g. injected programmatically) is skipped
+    and reported.  The real openhands-sdk loader always assigns the directory
+    name so empty-name entries won't arise from disk, but resolve_skills guards
+    against any caller-provided or future-loader object with a missing name."""
     skills_mod = _import_skills()
     bad = FakeSkill("", "content")
     good = FakeSkill("good-skill", "content")

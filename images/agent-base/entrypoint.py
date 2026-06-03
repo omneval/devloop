@@ -534,10 +534,12 @@ def run_agent(spec: TaskSpec, workdir: str, tracer) -> AgentOutcome:
 
     Real mode uses the openhands-sdk 1.24.0 API:
         LLM(model, base_url, api_key)
-        → build_agent(llm=llm, cli_mode=True, agent_context=None)
+        → resolve_skills(phase, allowlist=None)   ← skills.py seam (#32)
+        → AgentContext(skills=..., load_public_skills=False) when skills present
+        → build_agent(llm=llm, cli_mode=True, agent_context=ctx)
           (hand-rolled preset: terminal + file_editor + task_tracker tools;
           cli_mode drops the Chromium-only browser tool; agent_context carries
-          installed skills when provided — None is the no-op path)
+          installed skills — None when none are installed, no-op path)
         → LocalConversation(agent=agent, workspace=workdir)
         → send_message → run → get_agent_final_response(state.events)
 
@@ -551,8 +553,23 @@ def run_agent(spec: TaskSpec, workdir: str, tracer) -> AgentOutcome:
 
     # Lazy import so the module stays importable without the SDK installed
     # (existing integration tests mock run_agent directly).
-    from openhands.sdk import LLM, LocalConversation
+    from openhands.sdk import AgentContext, LLM, LocalConversation
     from openhands.sdk.conversation import get_agent_final_response
+
+    # Resolve installed skills for this phase.  allowlist=None means all
+    # installed skills are allowed; per-phase filtering is the skills.py seam.
+    import skills as _skills_mod
+
+    resolved, skipped = _skills_mod.resolve_skills(spec.phase, allowlist=None)
+    if skipped:
+        log.info("run_agent: skipped skills %s", skipped)
+
+    # Construct AgentContext only when skills are available.  Empty → None →
+    # agent behaves as before issue #32 (no-op path).  load_public_skills=False
+    # prevents the agent from fetching public skills off GitHub at Job runtime.
+    agent_context = (
+        AgentContext(skills=resolved, load_public_skills=False) if resolved else None
+    )
 
     message = build_agent_message(spec)
     try:
@@ -562,9 +579,7 @@ def run_agent(spec: TaskSpec, workdir: str, tracer) -> AgentOutcome:
                 base_url=os.getenv("AGENT_LLM_BASE_URL", "http://192.168.68.104/v1"),
                 api_key=os.getenv("AGENT_LLM_API_KEY", "local"),
             )
-            # Build the agent WITH its execution tools and skills context.
-            # agent_context=None is the no-op path (no installed skills).
-            agent = build_agent(llm=llm, cli_mode=True, agent_context=None)
+            agent = build_agent(llm=llm, cli_mode=True, agent_context=agent_context)
             conversation = LocalConversation(agent=agent, workspace=workdir)
             conversation.send_message(message)
             conversation.run()

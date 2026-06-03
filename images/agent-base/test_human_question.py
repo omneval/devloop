@@ -111,11 +111,21 @@ def _fake_sdk(conversation_cls=None, responses: list[str] | None = None):
     preset_default_mod.get_default_tools = get_default_tools
     preset_default_mod.get_default_condenser = get_default_condenser
 
+    # skills.py's default loader imports load_installed_skills from this path;
+    # return an empty list so the no-skills path is exercised.
+    skills_installed_mod = types.ModuleType("openhands.sdk.skills.installed")
+    skills_installed_mod.load_installed_skills = MagicMock(
+        name="load_installed_skills", return_value=[]
+    )
+    sdk_skills_mod = types.ModuleType("openhands.sdk.skills")
+
     old = {}
     keys = (
         "openhands",
         "openhands.sdk",
         "openhands.sdk.conversation",
+        "openhands.sdk.skills",
+        "openhands.sdk.skills.installed",
         "openhands.tools",
         "openhands.tools.preset",
         "openhands.tools.preset.default",
@@ -126,6 +136,8 @@ def _fake_sdk(conversation_cls=None, responses: list[str] | None = None):
     sys.modules["openhands"] = sdk
     sys.modules["openhands.sdk"] = sdk_sub
     sys.modules["openhands.sdk.conversation"] = conv_mod
+    sys.modules["openhands.sdk.skills"] = sdk_skills_mod
+    sys.modules["openhands.sdk.skills.installed"] = skills_installed_mod
     sys.modules["openhands.tools"] = tools_mod
     sys.modules["openhands.tools.preset"] = preset_mod
     sys.modules["openhands.tools.preset.default"] = preset_default_mod

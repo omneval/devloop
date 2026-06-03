@@ -116,11 +116,21 @@ def _fake_sdk(
     preset_default_mod.get_default_tools = get_default_tools
     preset_default_mod.get_default_condenser = get_default_condenser
 
+    # skills.py's default loader imports load_installed_skills from this path;
+    # return an empty list so the no-skills path is exercised (existing tests).
+    skills_installed_mod = types.ModuleType("openhands.sdk.skills.installed")
+    skills_installed_mod.load_installed_skills = MagicMock(
+        name="load_installed_skills", return_value=[]
+    )
+    sdk_skills_mod = types.ModuleType("openhands.sdk.skills")
+
     old = {}
     keys = (
         "openhands",
         "openhands.sdk",
         "openhands.sdk.conversation",
+        "openhands.sdk.skills",
+        "openhands.sdk.skills.installed",
         "openhands.tools",
         "openhands.tools.preset",
         "openhands.tools.preset.default",
@@ -131,6 +141,8 @@ def _fake_sdk(
     sys.modules["openhands"] = sdk
     sys.modules["openhands.sdk"] = sdk_sub
     sys.modules["openhands.sdk.conversation"] = conv_mod
+    sys.modules["openhands.sdk.skills"] = sdk_skills_mod
+    sys.modules["openhands.sdk.skills.installed"] = skills_installed_mod
     sys.modules["openhands.tools"] = tools_mod
     sys.modules["openhands.tools.preset"] = preset_mod
     sys.modules["openhands.tools.preset.default"] = preset_default_mod
@@ -755,3 +767,49 @@ def test_build_agent_with_no_agent_context_behaves_as_today(monkeypatch, tmp_pat
     assert "llm" in call_kwargs
     assert "tools" in call_kwargs
     assert "condenser" in call_kwargs
+
+
+def test_installed_skills_flow_through_to_agent_context(monkeypatch, tmp_path):
+    """End-to-end: when installed skills are present they flow through
+    resolve_skills → AgentContext(skills=..., load_public_skills=False)
+    → Agent(agent_context=...).  This proves the #32 wire is live.
+
+    We inject fake skills via the skills module's _loader seam and assert
+    that AgentContext was constructed with those skills and that Agent
+    received it.
+    """
+    from collections import namedtuple
+
+    monkeypatch.delenv("AGENT_STUB", raising=False)
+
+    FakeSkill = namedtuple("FakeSkill", ["name", "content"])
+    fake_skill = FakeSkill("test-skill", "skill content")
+
+    # All assertions happen *inside* the _fake_sdk context so the mocked
+    # AgentContext class is still accessible.
+    with _fake_sdk(final_response="done") as (LLM_cls, Agent_cls, _, _gfr):
+        # Override the skills module loader to return one fake skill
+        import skills as _skills_mod
+
+        original_loader = _skills_mod._default_loader
+        _skills_mod._default_loader = lambda installed_dir: [fake_skill]
+        try:
+            entrypoint.run_agent(_spec(), str(tmp_path), _noop_tracer())
+        finally:
+            _skills_mod._default_loader = original_loader
+
+        # Fetch AgentContext_cls from sys.modules (still live inside the ctx mgr)
+        import sys
+
+        AgentContext_cls = sys.modules["openhands.sdk"].AgentContext
+
+        # AgentContext was called with skills=[fake_skill] and load_public_skills=False
+        AgentContext_cls.assert_called_once()
+        ctx_kwargs = AgentContext_cls.call_args.kwargs
+        assert ctx_kwargs.get("skills") == [fake_skill]
+        assert ctx_kwargs.get("load_public_skills") is False
+
+        # Agent received the constructed AgentContext (not None)
+        Agent_cls.assert_called_once()
+        agent_ctx_arg = Agent_cls.call_args.kwargs.get("agent_context")
+        assert agent_ctx_arg is AgentContext_cls.return_value
