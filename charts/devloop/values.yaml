@@ -134,16 +134,6 @@ poller:
     pullPolicy: IfNotPresent
   # Image pull secrets for a private poller image.
   imagePullSecrets: []
-  # Persist poll state across restarts. Without this the poller re-notifies
-  # every issue on each restart (the state file lives on an emptyDir otherwise).
-  # When enabled, a PVC per poller deployment is created and mounted at
-  # `mountPath`, and STATE_FILE points inside it.
-  persistence:
-    enabled: false
-    storageClassName: ""
-    accessMode: ReadWriteOnce
-    size: 100Mi
-    mountPath: /data
   # Resource limits (applied to all poller instances)
   resources: {}
   #   requests:

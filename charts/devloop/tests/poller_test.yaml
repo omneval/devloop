@@ -1,4 +1,4 @@
-suite: poller deployment and PVC
+suite: poller deployment
 templates:
   - templates/poller-deployment.yaml
 tests:
@@ -22,11 +22,10 @@ tests:
       - hasDocuments:
           count: 0
 
-  - it: creates one Deployment per project (no PVC when persistence is off)
+  - it: creates one Deployment per project
     set:
       temporalHost: "temporal-frontend.agents.svc:7233"
       poller.enabled: true
-      poller.persistence.enabled: false
       poller.projects:
         - repo: "omneval/omneval"
           webhookUrl: "http://x"
@@ -52,14 +51,13 @@ tests:
     set:
       temporalHost: "temporal-frontend.agents.svc:7233"
       poller.enabled: true
-      poller.persistence.enabled: true
       poller.projects:
         - repo: "omneval/omneval"
           webhookUrl: "http://x"
     documentIndex: 0
     asserts:
       - isKind:
-          of: PersistentVolumeClaim
+          of: Deployment
       - equal:
           path: metadata.labels["app.kubernetes.io/project"]
           value: omneval.omneval
@@ -71,38 +69,10 @@ tests:
           path: metadata.labels["app.kubernetes.io/project"]
           pattern: "^[A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?$"
 
-  - it: keeps the PVC and its claimName name in sync with the Deployment
-    set:
-      temporalHost: "temporal-frontend.agents.svc:7233"
-      poller.enabled: true
-      poller.persistence.enabled: true
-      poller.persistence.storageClassName: longhorn
-      poller.persistence.size: 100Mi
-      poller.projects:
-        - repo: "omneval/omneval"
-          webhookUrl: "http://x"
-    asserts:
-      - hasDocuments:
-          count: 2
-      - containsDocument:
-          kind: PersistentVolumeClaim
-          apiVersion: v1
-          name: RELEASE-NAME-poller-omnevalomneval-state
-        documentIndex: 0
-      - equal:
-          path: spec.storageClassName
-          value: longhorn
-        documentIndex: 0
-      - equal:
-          path: spec.template.spec.volumes[0].persistentVolumeClaim.claimName
-          value: RELEASE-NAME-poller-omnevalomneval-state
-        documentIndex: 1
-
   - it: passes the full repo to GITHUB_REPO and defaults the agent label
     set:
       temporalHost: "temporal-frontend.agents.svc:7233"
       poller.enabled: true
-      poller.persistence.enabled: false
       poller.projects:
         - repo: "omneval/omneval"
           webhookUrl: "http://hook"

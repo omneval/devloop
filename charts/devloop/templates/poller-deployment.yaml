@@ -4,26 +4,6 @@
 {{- $sanitizedRepoName := regexReplaceAll "[^a-zA-Z0-9]" .repo "" | lower | trunc 52 -}}
 {{- /* A Kubernetes label value cannot contain "/" (as in owner/name), so derive a valid value. */ -}}
 {{- $projectLabel := .repo | replace "/" "." | trunc 63 | trimSuffix "." -}}
-{{- if $.Values.poller.persistence.enabled }}
----
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: {{ $.Release.Name }}-poller-{{ $sanitizedRepoName }}-state
-  labels:
-    {{- include "devloop.labels" $ | nindent 4 }}
-    app.kubernetes.io/component: poller
-    app.kubernetes.io/project: {{ $projectLabel | quote }}
-spec:
-  accessModes:
-    - {{ $.Values.poller.persistence.accessMode }}
-  {{- if $.Values.poller.persistence.storageClassName }}
-  storageClassName: {{ $.Values.poller.persistence.storageClassName }}
-  {{- end }}
-  resources:
-    requests:
-      storage: {{ $.Values.poller.persistence.size }}
-{{- end }}
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -79,25 +59,10 @@ spec:
               value: {{ $.Values.poller.pollIntervalSeconds | quote }}
             - name: HEALTH_PORT
               value: {{ $.Values.poller.healthPort | quote }}
-            {{- if $.Values.poller.persistence.enabled }}
-            - name: STATE_FILE
-              value: {{ printf "%s/state.json" $.Values.poller.persistence.mountPath | quote }}
-            {{- end }}
-          {{- if $.Values.poller.persistence.enabled }}
-          volumeMounts:
-            - name: state
-              mountPath: {{ $.Values.poller.persistence.mountPath }}
-          {{- end }}
           {{- include "devloop.healthProbes" $ | nindent 10 }}
           {{- if $.Values.poller.resources }}
           resources:
             {{- toYaml $.Values.poller.resources | nindent 12 }}
           {{- end }}
-      {{- if $.Values.poller.persistence.enabled }}
-      volumes:
-        - name: state
-          persistentVolumeClaim:
-            claimName: {{ $.Release.Name }}-poller-{{ $sanitizedRepoName }}-state
-      {{- end }}
 {{- end }}
 {{- end }}
