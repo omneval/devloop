@@ -145,15 +145,12 @@ discordBot:
 poller:
   githubToken: "ghp_your-github-personal-access-token"
   projects:
-    - id: your-project
-      github_url: https://github.com/your-org/your-project
-      default_branch: main
-      agent_image: ghcr.io/your-org/your-project-agent:latest
-      agent_label: agent-ready
-      discord_channel: agent-approvals
-      omneval_ingest_secret: omneval-ingest-your-project
-      github_token_secret: your-project-github-token
+    - repo: "your-org/your-project"
+      label: "agent-ready"
+      webhookUrl: "http://devloop-temporal-worker.agents.svc.cluster.local:8088/webhook/github"
 ```
+
+**How issue triggering works**: devloop uses a polling model rather than a direct GitHub webhook. The `devloop-poller` Deployment periodically queries the GitHub Issues API for issues carrying `label`, then forwards any *new* ones to the Temporal Orchestration Worker's internal webhook endpoint (`webhookUrl`). No public-facing URL or GitHub webhook configuration is required. The poller persists seen issue numbers across restarts so the same issue never triggers twice. One poller Deployment is created per entry in `poller.projects`.
 
 Deploy:
 
@@ -177,11 +174,13 @@ kubectl get pods -n agents
 Expected pods:
 
 ```
-NAME                              READY   STATUS    RESTARTS   AGE
-devloop-discord-bot-xxxxxxxxx     1/1     Running   0          2m
-devloop-poller-xxxxxxxxx          1/1     Running   0          2m
-devloop-temporal-worker-xxxxxxx  1/1     Running   0          2m
+NAME                                        READY   STATUS    RESTARTS   AGE
+devloop-discord-bot-xxxxxxxxx               1/1     Running   0          2m
+devloop-poller-yourorgourproject-xxxxxxxxx  1/1     Running   0          2m
+devloop-temporal-worker-xxxxxxx             1/1     Running   0          2m
 ```
+
+One poller pod is created per entry in `poller.projects`; the pod name is derived from the repository name.
 
 Check logs for each component:
 
@@ -191,7 +190,27 @@ kubectl logs -n agents -l app.kubernetes.io/component=poller --tail=20
 kubectl logs -n agents -l app.kubernetes.io/component=discord-bot --tail=20
 ```
 
-Create an issue in your GitHub repository with the `agent-ready` label. The poller should pick it up within 60 seconds, and the Discord bot should announce the Dev Loop in the configured channel.
+Create an issue in your GitHub repository with the `agent-ready` label. The poller checks GitHub every `pollIntervalSeconds` (default: 300 s / 5 min) and will forward it on the next cycle. The Discord bot should then announce the Dev Loop in the configured channel.
+
+> **Note:** The poller tracks seen issue numbers, so the same issue will not trigger a second run automatically. To restart a failed workflow, open a new issue with the label or start a workflow directly via the Temporal CLI (see below).
+
+## Manually Triggering or Restarting a Dev Loop
+
+The poller only forwards *new* issue numbers it has not seen before, so re-labeling an existing issue will not restart a failed or completed workflow. Use one of these approaches instead:
+
+**Open a new issue** — create a fresh issue with the `agent-ready` label. It has a new number, so the poller will forward it on the next cycle.
+
+**Use the Temporal CLI** — start a workflow directly without going through the poller:
+
+```bash
+temporal workflow start \
+  --workflow-type DevLoopWorkflow \
+  --task-queue homelab-orchestration \
+  --workflow-id devloop-<project-id> \
+  --input '{"project_id": "<project-id>", "agent_label": "agent-ready"}'
+```
+
+Replace `<project-id>` with the value from your Project Registry. Because the old run is in a terminal state (Failed or Completed), starting with the same workflow ID creates a clean new execution.
 
 ## Extending devloop with Custom Workflows
 
@@ -218,8 +237,13 @@ reuse SDK activities for Kubernetes Job dispatch and Discord messaging.
 
 ## Configuration Reference
 
-| Setting               | Description                                              |
-|-----------------------|----------------------------------------------------------|
-| `temporalHost`        | Temporal frontend gRPC address; set in Helm values to point at your Temporal cluster |
-| `GITHUB_TOKEN`        | GitHub PAT with `repo` and `workflow` scopes             |
-| `DISCORD_TOKEN`       | Discord bot token for the approval channel               |
+| Setting                          | Description                                                                                   |
+|----------------------------------|-----------------------------------------------------------------------------------------------|
+| `temporalHost`                   | Temporal frontend gRPC address; set in Helm values to point at your Temporal cluster          |
+| `DISCORD_TOKEN`                  | Discord bot token for the approval channel                                                    |
+| `poller.githubToken`             | GitHub PAT with `repo` read scope used by all poller instances                                |
+| `poller.githubTokenSecret`       | Kubernetes Secret reference for the GitHub token (preferred over plain `githubToken`)         |
+| `poller.pollIntervalSeconds`     | Seconds between GitHub API poll cycles (default: `300`)                                       |
+| `poller.projects[].repo`         | Full GitHub repository name, e.g. `your-org/your-project`                                    |
+| `poller.projects[].label`        | Issue label that triggers the Dev Loop (default: `agent-ready`)                               |
+| `poller.projects[].webhookUrl`   | Internal URL of the Temporal Orchestration Worker webhook endpoint                            |
