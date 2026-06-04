@@ -65,53 +65,8 @@ jobs:
       - name: Wait for the pinned SDK to be downloadable from PyPI
         if: inputs.wait_for_pypi != ''
         run: |
-          pkg_ver='${{ inputs.wait_for_pypi }}'
-          name="${pkg_ver%%==*}"
-          ver="${pkg_ver##*==}"
-          json_url="https://pypi.org/pypi/${name}/${ver}/json"
-          simple_url="https://pypi.org/simple/${name}/"
-          echo "Waiting for ${pkg_ver} to appear in simple index and be downloadable"
-          # Three-gate check that mirrors exactly what uv does at build time:
-          #   1. JSON metadata exists (version registered on PyPI)
-          #   2. Version appears in the simple index — the index uv queries for
-          #      resolution. v0.0.5 failed because gates 1+3 passed but uv's
-          #      resolver hit a CDN edge that hadn't propagated the simple index
-          #      yet, so it only saw 0.0.1-0.0.4 and declared requirements
-          #      unsatisfiable.
-          #   3. Every published file HEADs 200 on files.pythonhosted.org
-          #      (the same CDN uv pulls from). Checking metadata alone let the
-          #      build start before the file was downloadable (see v0.0.3).
-          for i in $(seq 1 40); do
-            # Gate 1: JSON metadata
-            file_urls=$(curl -s "$json_url" | jq -r '.urls[].url')
-            if [ -z "$file_urls" ]; then
-              echo "Attempt $i/40: ${pkg_ver} metadata not on PyPI yet"
-              echo "Retrying in 15s"; sleep 15; continue
-            fi
-            # Gate 2: simple index lists the version (uv resolution gate)
-            if ! curl -s "$simple_url" | grep -q "${ver}"; then
-              echo "Attempt $i/40: ${ver} not in simple index yet"
-              echo "Retrying in 15s"; sleep 15; continue
-            fi
-            # Gate 3: every file is downloadable
-            all_ok=1
-            for fu in $file_urls; do
-              code=$(curl -s -o /dev/null -w '%{http_code}' --head "$fu")
-              if [ "$code" != "200" ]; then
-                all_ok=0
-                echo "Attempt $i/40: ${fu##*/} not downloadable yet (HTTP $code)"
-                break
-              fi
-            done
-            if [ "$all_ok" = "1" ]; then
-              echo "All gates passed for ${pkg_ver} (attempt $i)"
-              exit 0
-            fi
-            echo "Retrying in 15s"
-            sleep 15
-          done
-          echo "ERROR: ${pkg_ver} did not become fully available within ~10 minutes"
-          exit 1
+          pip install --no-cache-dir httpx
+          python scripts/wait_for_pypi.py '${{ inputs.wait_for_pypi }}'
 
       - name: Compute sha-<short>-<epoch> tag
         id: shatag
