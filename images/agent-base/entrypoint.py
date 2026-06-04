@@ -31,6 +31,14 @@ from pathlib import Path
 # definition; renaming a field there propagates to both sides.
 from devloop.shared import KEY_HUMAN_ANSWER, KEY_RESULT, AgentJobResult, TaskSpec
 
+# skills.py is baked beside this entrypoint at /usr/local/bin (the Dockerfile
+# COPYs both there), so this bare import resolves via sys.path[0]. Imported at
+# module top rather than lazily inside run_agent: a lazy import here once hid a
+# missing COPY from every test, shipping a "No module named 'skills'" crash in a
+# release. skills.py's own heavy deps (openhands) stay lazy inside it, so this
+# top-level import is cheap and side-effect-free.
+import skills
+
 log = logging.getLogger("agent-entrypoint")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
@@ -606,10 +614,6 @@ def run_agent(spec: TaskSpec, workdir: str, tracer) -> AgentOutcome:
     # Wrapped in a span so skill-loading health is observable in omneval.
     # Best-effort: if the loader raises the phase is never blocked.
     # ------------------------------------------------------------------ #
-    import json as _json
-
-    import skills as _skills_mod
-
     _selection_mode = os.environ.get("AGENT_SKILLS_SELECTION_MODE", "triggers")
     _allowlist = _load_skills_allowlist(spec.phase)
 
@@ -617,7 +621,7 @@ def run_agent(spec: TaskSpec, workdir: str, tracer) -> AgentOutcome:
     skipped: list[dict] = []
     with tracer.start_as_current_span("skills.load") as _skills_span:
         try:
-            resolved, skipped = _skills_mod.resolve_skills(spec.phase, _allowlist)
+            resolved, skipped = skills.resolve_skills(spec.phase, _allowlist)
         except Exception as _exc:  # noqa: BLE001 — skill errors must not block the phase
             log.warning(
                 "skills resolution failed (continuing without skills): %s", _exc
@@ -635,12 +639,12 @@ def run_agent(spec: TaskSpec, workdir: str, tracer) -> AgentOutcome:
             _skills_span.set_attribute("skills.selection_mode", _selection_mode)
             if skipped:
                 _skills_span.set_attribute(
-                    "skills.skipped_details", _json.dumps(skipped)
+                    "skills.skipped_details", json.dumps(skipped)
                 )
 
     # Format a one-line notice for any skipped skills (issue #35).  Empty
     # string when no skills were skipped — no change to the phase summary.
-    _skip_notice = _skills_mod.format_skipped_notice(skipped)
+    _skip_notice = skills.format_skipped_notice(skipped)
 
     # Construct AgentContext only when skills are available.  Empty → None →
     # agent behaves as before issue #32 (no-op path).  load_public_skills=False

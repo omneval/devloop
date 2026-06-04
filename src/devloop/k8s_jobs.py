@@ -24,6 +24,7 @@ Design notes
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -345,8 +346,6 @@ async def dispatch_agent_job(d: DispatchInput) -> AgentJobResult:
     # get distinct Jobs/ConfigMaps. Stable across retries (same workflow run).
     discriminator = ""
     if not d.issue_number:
-        import hashlib
-
         discriminator = hashlib.sha1(activity.info().workflow_id.encode()).hexdigest()[
             :8
         ]

@@ -67,6 +67,13 @@ RUN if [ -n "$SDK_VERSION" ]; then \
 # runtime; this is the only application code baked into the image.
 COPY entrypoint.py /usr/local/bin/agent-entrypoint.py
 
+# Skills resolution module (issues #32/#34/#35/#36). The entrypoint runs as
+# `python /usr/local/bin/agent-entrypoint.py`, so /usr/local/bin is sys.path[0]
+# and entrypoint.py's bare `import skills` resolves to this file. It MUST sit in
+# the same dir as the entrypoint — without it every Agent Job crashes at import
+# with "No module named 'skills'".
+COPY skills.py /usr/local/bin/skills.py
+
 # Phase prompt templates (plan / implement / review / merge), rendered per phase
 # by the entrypoint. Bundled here so every project shares the same agent prompts.
 COPY prompts/ /usr/local/share/agent-prompts/

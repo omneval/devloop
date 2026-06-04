@@ -123,6 +123,13 @@ _ENTRYPOINT_PATH = (
 
 def _load_entrypoint():
     """Import agents/images/base/entrypoint.py by path (different tree from temporal-worker)."""
+    # Put the entrypoint's directory on sys.path so its sibling `import skills`
+    # resolves — mirroring the container, where `python /usr/local/bin/agent-
+    # entrypoint.py` makes that dir sys.path[0]. Without this the by-path load
+    # can't see skills.py and ModuleNotFoundError surfaces here, not in prod.
+    base_dir = str(_ENTRYPOINT_PATH.parent)
+    if base_dir not in sys.path:
+        sys.path.insert(0, base_dir)
     spec = importlib.util.spec_from_file_location("entrypoint", _ENTRYPOINT_PATH)
     mod = importlib.util.module_from_spec(spec)
     # Don't pollute sys.modules permanently — use a unique key so each reload is fresh.
