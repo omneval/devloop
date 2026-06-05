@@ -57,24 +57,31 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 # --------------------------------------------------------------------------- #
 # Structured output models (issue #53) — lazy-loaded via __getattr__ so the
 # module can import even when ``openai`` / ``pydantic`` are absent
-# (e.g. root venv stub tests).  Handlers call ``_init_structured_models()``
-# before using the bare names PlanOutput / ReviewOutput / DiagnosisOutput.
+# (e.g. root venv stub tests).
 # --------------------------------------------------------------------------- #
 
 _structured_models_cache: dict[str, Any] | None = None
+STRUCTURED_MODEL_NAMES = (
+    "PlanIssue",
+    "PlanOutput",
+    "InlineComment",
+    "ReviewOutput",
+    "RecommendedAction",
+    "DiagnosisOutput",
+)
 
 
 def _init_structured_models() -> dict[str, Any]:
     """Build Pydantic model classes on first call. Safe to call multiple times.
 
-    Returns a mapping of model name → class so handlers can update their local
-    namespace for bare-name references.
+    Populates module __dict__ with the model classes so bare-name references
+    (PlanOutput, ReviewOutput, …) resolve at runtime.
     """
     global _structured_models_cache
     if _structured_models_cache is not None:
         return _structured_models_cache
 
-    from openai import OpenAI as _OpenAIClass
+    from openai import OpenAI
     from pydantic import BaseModel as _BaseModelClass
 
     class PlanIssue(_BaseModelClass):
@@ -125,9 +132,8 @@ def _init_structured_models() -> dict[str, Any]:
         "ReviewOutput": ReviewOutput,
         "RecommendedAction": RecommendedAction,
         "DiagnosisOutput": DiagnosisOutput,
-        "_OpenAI": _OpenAIClass,
+        "_OpenAI": OpenAI,
     }
-    # Populate module __dict__ so bare names in handler functions resolve
     import sys as _sys
 
     _mod = _sys.modules[__name__]
@@ -139,17 +145,9 @@ def _init_structured_models() -> dict[str, Any]:
 
 def __getattr__(name: str) -> Any:
     """PEP 562 module-level lazy import for structured output models."""
-    if name in (
-        "PlanIssue",
-        "PlanOutput",
-        "InlineComment",
-        "ReviewOutput",
-        "RecommendedAction",
-        "DiagnosisOutput",
-    ):
+    if name in STRUCTURED_MODEL_NAMES:
         models = _init_structured_models()
         val = models[name]
-        # Cache on the module so subsequent bare references work
         import sys
 
         sys.modules[__name__].__dict__[name] = val
@@ -159,8 +157,9 @@ def __getattr__(name: str) -> Any:
 
 def _get_llm_client() -> Any:
     """Return an OpenAI client configured from AGENT_* env vars."""
-    models = _init_structured_models()
-    OpenAI = models["_OpenAI"]
+    _init_structured_models()  # ensures openai/pydantic imports succeed
+    from openai import OpenAI
+
     return OpenAI(
         api_key=os.environ.get("AGENT_LLM_API_KEY", "none"),
         base_url=os.environ.get("AGENT_LLM_BASE_URL"),
@@ -1055,7 +1054,6 @@ def handle_plan(spec: TaskSpec, tracer) -> dict:
     The planner reads the open issues (via ``gh`` in the prompt) and the real
     codebase, builds a dependency graph, and lists the unblocked issues.
     """
-    _init_structured_models()
     workdir = os.getenv("WORKDIR", "/workspace/repo")
     base = os.environ.get("DEFAULT_BRANCH", "main")
     with tracer.start_as_current_span("clone"):
@@ -1145,7 +1143,6 @@ def handle_review(spec: TaskSpec, tracer) -> dict:
     """Review phase: the reviewer prompt refines the branch in place (clarity,
     consistency, standards) and commits. Any refinements are pushed back to the
     branch; functionality is preserved."""
-    _init_structured_models()
     workdir = os.getenv("WORKDIR", "/workspace/repo")
     with tracer.start_as_current_span("clone"):
         clone_repo(os.environ["GITHUB_URL"], spec.branch, workdir)
@@ -1240,7 +1237,6 @@ def handle_diagnosis(spec: TaskSpec, tracer) -> dict:
     workflow's remediation phase can allowlist-check and (autonomously or after a
     Discord gate) run them. Falls back to a label-only diagnosis with no actions
     if the model produced nothing parseable."""
-    _init_structured_models()
     alert = spec.extra.get("alert", {}) or {}
     outcome = run_agent(spec, os.getenv("WORKDIR", "/tmp"), tracer)
     structured = outcome.structured or {}
