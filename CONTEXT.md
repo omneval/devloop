@@ -5,7 +5,7 @@ An open-source framework that packages the Dev Loop engine so any team can run a
 ## Language
 
 **Dev Loop**:
-The multi-phase autonomous workflow for maintaining and improving an enrolled codebase. Phases run in order: Plan → Phase Gate → Execute → Review → Phase Gate → Merge → Summarization. Triggered by the `agent-ready` label being applied to a GitHub issue. One issue is processed per round; the loop repeats until no unblocked issues remain.
+The multi-phase autonomous workflow for maintaining and improving an enrolled codebase. Phases run in order: Plan → Phase Gate → Execute → Remediation → Review → Fix Pass (if needed) → Merge Gate → Merge → Summarization. Triggered by the `agent-ready` label being applied to a GitHub issue. One issue is processed per round; the loop repeats until no unblocked issues remain.
 _Avoid_: agent pipeline, CI loop, autonomous CI
 
 **Phase Gate**:
@@ -77,12 +77,30 @@ The bound on how long a [Phase Gate](#phase-gate) waits for human input before t
 _Avoid_: gate deadline, approval timeout, gate TTL
 
 **Per-phase enablement**:
-Operator-controlled allowlist of skill names available in each Dev Loop phase (plan, execute, review, merge, diagnosis). Configured via the `skillsByPhase` Helm value and propagated to each Agent Execution Job as `AGENT_SKILLS_ENABLED`. Three-way semantics: phase key absent means all installed skills are available; `[]` means no skills for that phase; a name list means exactly those skills are loaded.
+Operator-controlled allowlist of skill names available in each Dev Loop phase (plan, execute, review, merge, diagnosis, remediation, fix_pass). Configured via the `skillsByPhase` Helm value and propagated to each Agent Execution Job as `AGENT_SKILLS_ENABLED`. Three-way semantics: phase key absent means all installed skills are available; `[]` means no skills for that phase; a name list means exactly those skills are loaded.
 _Avoid_: skill allowlist, skill whitelist, phase skill filter
+
+**Remediation phase**:
+The Dev Loop phase (`Phase.REMEDIATION`) that runs after Execute and before Review. Uses `gh pr checks` to determine whether any CI checks are failing on the PR; if so, an Agent Execution Job clones the issue branch and makes one attempt to fix them. On failure (`commits == 0` or `status != complete`), the issue is parked: Discord notification, move on to the next round. Presents the human with a CI-green PR before the Merge gate. `Phase.REMEDIATION` is already defined in `shared.py`; the handler in `_HANDLERS` is not yet implemented. Distinct from the Fix Pass — Remediation targets CI check failures, Fix Pass targets reviewer findings.
+_Avoid_: CI fix phase, check fix agent, CI remediation agent
+
+**Structured phase output**:
+The mechanism by which Dev Loop phases produce their structured conclusions. Because Agent Execution Jobs run OpenHands `LocalConversation` — a multi-step tool-use loop that makes many LLM calls internally — `response_format` cannot be applied to the loop itself. Instead, after `conversation.run()`, a second direct LLM call is made against the same endpoint using `response_format` and a Pydantic `BaseModel` to extract the structured conclusion from the agent's raw summary text. This replaces the fragile `<tag>`-based extraction (`_extract_plan`, `_extract_review`, `_extract_diagnosis`). **Consumer constraint**: the model endpoint (configured via `AGENT_MODEL` / `AGENT_LLM_BASE_URL`) must support `response_format` with JSON schema — any OpenAI-compatible endpoint with guided generation (vLLM with `--guided-decoding-backend`, Ollama, hosted OpenAI/Anthropic) satisfies this. Endpoints that do not support `response_format` will cause the extraction call to fail.
+_Avoid_: tag parsing, regex extraction, structured output, JSON extraction
+
+**Review verdict**:
+The three-state outcome the Review phase emits after analysing the diff and posting PR comments: `lgtm` (no changes needed, proceed to Merge gate), `needs_fixes` (agent-fixable issues found, trigger the Review Fix Pass), or `needs_human` (changes require human judgement, park the issue and notify Discord). Encoded in `AgentJobResult.review` alongside the existing `summary` and `inline_comments` fields.
+_Avoid_: review result, review status, review decision
+
+**Fix Pass**:
+The Dev Loop phase (`Phase.FIX_PASS`) triggered when the Review phase returns a `needs_fixes` verdict. An Agent Execution Job clones the issue branch, retrieves all existing PR comments (review summary, inline comments, CI failure notes) via `gh pr view --comments`, and attempts to resolve every outstanding issue in one shot. A failed attempt is defined as: `commits == 0` or `status != complete`. On failure, the issue is parked identically to the `needs_human` path — Discord notification, move on to the next issue.
+_Avoid_: post-review fix agent, second review, fix iteration, Review Fix Pass
 
 ---
 
 ## Conventions
+
+**Model endpoint requirement**: The `AGENT_LLM_BASE_URL` endpoint must support `response_format` with JSON schema (OpenAI structured outputs). Any OpenAI-compatible endpoint with guided generation satisfies this: vLLM (`--guided-decoding-backend outlines` or `lm-format-enforcer`), Ollama, hosted OpenAI, hosted Anthropic (via the `openai`-compatible shim). Endpoints that reject `response_format` will cause structured phase output extraction to fail. Document this requirement when onboarding a new model endpoint.
 
 **Python tooling**: Always use [uv](https://github.com/astral-sh/uv) for Python dependency management. Initialise packages with `uv init`. Define dependencies in `pyproject.toml`; do not use `requirements.txt`. Commit `uv.lock`. In Dockerfiles, copy uv from the official image and install with `uv pip install --system --no-cache .`:
 
@@ -106,3 +124,5 @@ Publish packages to PyPI with `uv build` + `uv publish` (OIDC trusted publisher 
 - **ADR-0006** (from `home-server`): Dev Loop core is extracted as the `omneval-devloop` Python package rather than a plugin/extension mechanism, giving consumers a stable, testable API surface with version mismatches caught at install time.
 - **ADR-0007**: `get_default_agent` is replaced with hand-rolled `Agent(...)` construction (`build_agent` in `entrypoint.py`) to gain the `agent_context` parameter needed for Agent Skills injection. The function is also the override seam for consumers who need custom tools.
 - **ADR-0008**: Agent Skills use a convergence directory with stage-and-install for ConfigMap delivery. Mounting the ConfigMap directly at the convergence directory would hide baked skills; instead the ConfigMap is mounted at a staging path and the entrypoint installs into the convergence directory at pod start.
+- **ADR-0009** _(pending)_: The poller's permanent seen-set means re-labeling an issue cannot re-trigger the Dev Loop. For V1, issues parked by the `needs_human` Review verdict are handled manually by a human on GitHub. **Argo Events is the target architecture for automated re-triggering** (a PR comment from a human reviewer would fire a targeted Remediation workflow run). This ADR should be written and the Argo Events integration scoped as soon as the Remediation and Review changes land.
+- **ADR-0010**: Structured phase output uses a post-processing LLM extraction call rather than `<tag>`-based regex parsing. OpenHands `LocalConversation` drives a multi-step tool-use loop; `response_format` cannot be applied to a loop, only to a single API call. After the loop finishes, a second direct call with `response_format` and a Pydantic `BaseModel` extracts the structured conclusion. Trade-off: one extra LLM call per phase (plan, review, diagnosis) in exchange for eliminating fragile tag/regex parsers and gaining Pydantic validation. This introduces a hard consumer requirement: the model endpoint must support `response_format` with JSON schema.
