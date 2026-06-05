@@ -52,14 +52,10 @@ TEMPORAL_HOST = os.getenv("TEMPORAL_HOST", "localhost:7233")
 OMNEVAL_OTLP_ENDPOINT = os.getenv(
     "OMNEVAL_OTLP_ENDPOINT", "http://omneval-ingest.omneval.svc.cluster.local:8000"
 )
-OPENAI_BASE_URL = os.getenv("AGENT_OPENAI_BASE_URL", "http://192.168.68.104/v1")
 AGENT_BASE_IMAGE = os.getenv(
     "AGENT_BASE_IMAGE", "ghcr.io/omneval/devloop-agent-base:latest"
 )
 
-# Defaults; overridable via DispatchInput for tests.
-DEFAULT_CPU = os.getenv("AGENT_JOB_CPU", "2")
-DEFAULT_MEMORY = os.getenv("AGENT_JOB_MEMORY", "4Gi")
 JOB_ACTIVE_DEADLINE = int(os.getenv("AGENT_JOB_ACTIVE_DEADLINE", "7200"))
 
 
@@ -108,6 +104,17 @@ def _resolve_job_refs(d: DispatchInput):
     return image, omneval_secret, github_url, default_branch, github_token_secret
 
 
+def _job_resources() -> dict:
+    cpu_request = os.environ.get("AGENT_JOB_CPU", "2")
+    memory_request = os.environ.get("AGENT_JOB_MEMORY", "4Gi")
+    cpu_limit = os.environ.get("AGENT_JOB_CPU_LIMIT")
+    memory_limit = os.environ.get("AGENT_JOB_MEMORY_LIMIT", memory_request)
+    limits: dict = {"memory": memory_limit}
+    if cpu_limit:
+        limits["cpu"] = cpu_limit
+    return {"requests": {"cpu": cpu_request, "memory": memory_request}, "limits": limits}
+
+
 def render_job(d: DispatchInput, job_name: str) -> dict:
     """Render the ``batch/v1`` Job manifest for an Agent Execution Job."""
     image, omneval_secret, github_url, default_branch, github_token_secret = (
@@ -124,7 +131,6 @@ def render_job(d: DispatchInput, job_name: str) -> dict:
         {"name": "DEFAULT_BRANCH", "value": default_branch},
         {"name": "TEMPORAL_HOST", "value": TEMPORAL_HOST},
         {"name": "OUTPUT_CONFIGMAP", "value": job_name},
-        {"name": "OPENAI_BASE_URL", "value": OPENAI_BASE_URL},
         # OTLP / omneval tracing
         {"name": "OTEL_EXPORTER_OTLP_PROTOCOL", "value": "http/protobuf"},
         {
@@ -259,13 +265,7 @@ def render_job(d: DispatchInput, job_name: str) -> dict:
                             "image": image,
                             "command": ["python", "/usr/local/bin/agent-entrypoint.py"],
                             "env": env,
-                            "resources": {
-                                "requests": {
-                                    "cpu": DEFAULT_CPU,
-                                    "memory": DEFAULT_MEMORY,
-                                },
-                                "limits": {"memory": DEFAULT_MEMORY},
-                            },
+                            "resources": _job_resources(),
                         }
                     ],
                 },

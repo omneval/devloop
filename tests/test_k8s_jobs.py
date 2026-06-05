@@ -357,6 +357,17 @@ def test_render_job_passes_otlp_overrides_from_env(monkeypatch):
     assert env["OTEL_EXPORTER_OTLP_HEADERS"]["value"] == "x-api-key=custom-key"
 
 
+def test_render_job_does_not_inject_openai_base_url():
+    """OPENAI_BASE_URL must not appear in the job manifest — it was a dead
+    injection that no consumer read; AGENT_LLM_BASE_URL is the canonical var."""
+    d = _dispatch_input()
+    manifest = k8s_jobs.render_job(d, "agent-omneval-execute-42-a1")
+    env_names = {
+        e["name"] for e in manifest["spec"]["template"]["spec"]["containers"][0]["env"]
+    }
+    assert "OPENAI_BASE_URL" not in env_names
+
+
 def test_render_job_does_not_set_otel_service_name_from_env(monkeypatch):
     """OTEL_SERVICE_NAME must be set by the Job manifest to spec.phase, NOT
     inherited from the worker env — the entrypoint tags spans per-phase."""
@@ -458,6 +469,46 @@ def test_render_job_defaults_selection_mode_to_triggers(monkeypatch):
     monkeypatch.delenv("AGENT_SKILLS_SELECTION_MODE", raising=False)
     env = _job_env()
     assert env["AGENT_SKILLS_SELECTION_MODE"] == "triggers"
+
+
+def test_render_job_applies_cpu_and_memory_limits_from_env(monkeypatch):
+    """AGENT_JOB_CPU_LIMIT and AGENT_JOB_MEMORY_LIMIT, when set, must appear in
+    the Job container's resource limits so the agent pod is properly bounded."""
+    monkeypatch.setenv("AGENT_JOB_CPU_LIMIT", "1")
+    monkeypatch.setenv("AGENT_JOB_MEMORY_LIMIT", "3Gi")
+
+    d = _dispatch_input()
+    manifest = k8s_jobs.render_job(d, "agent-omneval-execute-42-a1")
+    resources = manifest["spec"]["template"]["spec"]["containers"][0]["resources"]
+
+    assert resources["limits"]["cpu"] == "1"
+    assert resources["limits"]["memory"] == "3Gi"
+
+
+def test_render_job_omits_cpu_limit_when_unset(monkeypatch):
+    """When AGENT_JOB_CPU_LIMIT is absent the Job must have no cpu limit — a CPU
+    limit on a bursty agent process would cause throttling under peak LLM calls."""
+    monkeypatch.delenv("AGENT_JOB_CPU_LIMIT", raising=False)
+    monkeypatch.delenv("AGENT_JOB_MEMORY_LIMIT", raising=False)
+
+    d = _dispatch_input()
+    manifest = k8s_jobs.render_job(d, "agent-omneval-execute-42-a1")
+    resources = manifest["spec"]["template"]["spec"]["containers"][0]["resources"]
+
+    assert "cpu" not in resources["limits"]
+
+
+def test_render_job_memory_limit_defaults_to_request_when_unset(monkeypatch):
+    """When AGENT_JOB_MEMORY_LIMIT is absent, the memory limit must fall back to
+    the memory request so the pod has a bounded memory envelope."""
+    monkeypatch.setenv("AGENT_JOB_MEMORY", "2Gi")
+    monkeypatch.delenv("AGENT_JOB_MEMORY_LIMIT", raising=False)
+
+    d = _dispatch_input()
+    manifest = k8s_jobs.render_job(d, "agent-omneval-execute-42-a1")
+    resources = manifest["spec"]["template"]["spec"]["containers"][0]["resources"]
+
+    assert resources["limits"]["memory"] == "2Gi"
 
 
 def test_render_job_handles_invalid_by_phase_json_gracefully(monkeypatch):

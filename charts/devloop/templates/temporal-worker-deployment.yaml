@@ -62,8 +62,20 @@ spec:
               value: {{ .Values.temporalWorker.taskQueue | quote }}
             - name: AGENT_JOB_SERVICE_ACCOUNT
               value: {{ include "devloop.agentJob.serviceAccountName" . | quote }}
-            {{- with .Values.temporalWorker.agentJob.llm.openaiBaseUrl }}
-            - name: AGENT_OPENAI_BASE_URL
+            {{- with .Values.temporalWorker.agentJob.resources.requests.cpu }}
+            - name: AGENT_JOB_CPU
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.temporalWorker.agentJob.resources.requests.memory }}
+            - name: AGENT_JOB_MEMORY
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.temporalWorker.agentJob.resources.limits.cpu }}
+            - name: AGENT_JOB_CPU_LIMIT
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.temporalWorker.agentJob.resources.limits.memory }}
+            - name: AGENT_JOB_MEMORY_LIMIT
               value: {{ . | quote }}
             {{- end }}
             {{- with .Values.temporalWorker.agentJob.llm.model }}

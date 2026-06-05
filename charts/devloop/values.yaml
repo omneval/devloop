@@ -62,9 +62,19 @@ temporalWorker:
       create: true
       name: ""       # defaults to <release>-agent-job
       annotations: {}
+    # Resource requests and limits for each spawned Agent Execution Job pod.
+    # Mirrors the standard Kubernetes resources structure. Omit a section (or
+    # leave values empty) to fall back to the application defaults
+    # (requests: cpu "2", memory "4Gi"; no CPU limit; memory limit = request).
+    resources:
+      requests:
+        cpu: "500m"      # AGENT_JOB_CPU          — e.g. "500m"
+        memory: "500Mi"   # AGENT_JOB_MEMORY        — e.g. "2Gi"
+      limits:
+        cpu: "1"      # AGENT_JOB_CPU_LIMIT     — e.g. "1"; omit for no CPU limit
+        memory: "2Gi"   # AGENT_JOB_MEMORY_LIMIT  — e.g. "2Gi"
     # LLM connection details forwarded to every Agent Execution Job.
     llm:
-      openaiBaseUrl: ""   # AGENT_OPENAI_BASE_URL — OpenAI-compatible API base URL
       model: ""           # AGENT_MODEL — e.g. "openai/gpt-4o"
       baseUrl: ""         # AGENT_LLM_BASE_URL — LiteLLM-style base URL
       apiKey: ""          # AGENT_LLM_API_KEY — prefer apiKeySecret for production
