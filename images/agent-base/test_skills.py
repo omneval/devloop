@@ -37,7 +37,6 @@ def _import_skills():
     # changes are picked up without needing a fresh import.
     if "skills" not in sys.modules:
         return importlib.import_module("skills")
-    import importlib
 
     return sys.modules["skills"]
 
@@ -267,8 +266,6 @@ def test_agent_skills_dir_env_overrides_default(monkeypatch, tmp_path):
 # ============================================================================
 # Filesystem tests: real SKILL.md files → load_installed_skills → resolve_skills
 # ============================================================================
-# These tests exercise the actual openhands-sdk 1.24.0 loader against temp
-# directories, verifying the end-to-end baked-skills path works on disk.
 
 
 def test_resolve_skills_loads_real_skill_from_disk(monkeypatch, tmp_path):
