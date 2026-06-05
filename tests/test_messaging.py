@@ -536,3 +536,119 @@ def test_v1_falls_back_to_kubeconfig_on_configexception(monkeypatch):
 
     assert _ts_module._v1() is sentinel
     assert calls == ["kube"]
+
+
+# --------------------------------------------------------------------------- #
+# TelegramActivities: protocol conformance and activity decorators
+# --------------------------------------------------------------------------- #
+
+
+def _make_telegram_activities():
+    """Import TelegramActivities with python-telegram-bot stubbed out.
+
+    Returns the class with platform packages mocked so tests can run without
+    the Telegram SDK installed.
+    """
+    import sys
+    from unittest.mock import MagicMock, patch
+
+    mocks = {
+        "telegram": MagicMock(),
+        "telegram.ext": MagicMock(),
+        "telegram.error": MagicMock(),
+    }
+    with patch.dict(sys.modules, mocks):
+        sys.modules.pop("devloop.messaging.telegram_bot", None)
+        from devloop.messaging.telegram_bot import TelegramActivities
+
+        sys.modules.pop("devloop.messaging.telegram_bot", None)
+    return TelegramActivities
+
+
+def test_telegram_activities_have_activity_defn():
+    """TelegramActivities methods must carry @activity.defn so Temporal's Worker
+    can register them.  Without the decorator the worker raises at startup."""
+    TelegramActivities = _make_telegram_activities()
+    from unittest.mock import MagicMock
+
+    bot = MagicMock()
+    acts = TelegramActivities(bot)
+
+    for method_name in ("send_message", "send_notification", "archive_thread"):
+        method = getattr(acts, method_name)
+        assert hasattr(method, "__temporal_activity_definition"), (
+            f"TelegramActivities.{method_name} is missing @activity.defn"
+        )
+
+
+def test_telegram_activities_writes_thread_store_on_send_message():
+    """After send_message, _thread_store must contain the workflow→thread mapping
+    so that handle_message can route replies and pod restarts don't lose threads."""
+    from unittest.mock import AsyncMock, MagicMock
+    from devloop.messaging.core import SendMessageInput
+
+    TelegramActivities = _make_telegram_activities()
+
+    bot = MagicMock()
+    bot.open_thread = AsyncMock(return_value="12345")
+    bot.post_to_thread = AsyncMock()
+
+    store = MagicMock()
+    store.get_thread.return_value = None
+
+    acts = TelegramActivities(bot, thread_store=store)
+    asyncio = __import__("asyncio")
+    loop = asyncio.new_event_loop()
+    try:
+        loop.run_until_complete(
+            acts.send_message(
+                SendMessageInput(
+                    workflow_id="wf-tg-001",
+                    message="plan ready",
+                    channel="approvals",
+                    thread_name="test-plan",
+                )
+            )
+        )
+    finally:
+        loop.close()
+
+    store.put.assert_called_once_with("wf-tg-001", "12345")
+
+
+def test_telegram_activities_archive_deletes_from_store():
+    """archive_thread must remove the mapping from _thread_store."""
+    from unittest.mock import AsyncMock, MagicMock
+    from devloop.messaging.core import ArchiveThreadInput, SendMessageInput
+
+    TelegramActivities = _make_telegram_activities()
+
+    bot = MagicMock()
+    bot.open_thread = AsyncMock(return_value="67890")
+    bot.post_to_thread = AsyncMock()
+    bot.archive_thread = AsyncMock()
+
+    store = MagicMock()
+    store.get_thread.return_value = None
+
+    acts = TelegramActivities(bot, thread_store=store)
+    asyncio = __import__("asyncio")
+    loop = asyncio.new_event_loop()
+    try:
+        loop.run_until_complete(
+            acts.send_message(
+                SendMessageInput(
+                    workflow_id="wf-tg-002",
+                    message="hi",
+                    channel="approvals",
+                    thread_name="",
+                )
+            )
+        )
+        loop.run_until_complete(
+            acts.archive_thread(ArchiveThreadInput(workflow_id="wf-tg-002"))
+        )
+    finally:
+        loop.close()
+
+    store.delete.assert_called_once_with("wf-tg-002")
