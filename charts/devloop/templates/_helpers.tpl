@@ -18,6 +18,35 @@ app.kubernetes.io/part-of: devloop
 {{- end }}
 
 {{/*
+Effective ServiceAccount name for each component. When serviceAccount.name is
+set by the operator the explicit value wins; otherwise the name is derived from
+the release name so that multiple installs in the same namespace don't collide.
+*/}}
+{{- define "devloop.temporalWorker.serviceAccountName" -}}
+{{- if .Values.temporalWorker.serviceAccount.name -}}
+{{- .Values.temporalWorker.serviceAccount.name -}}
+{{- else -}}
+{{- printf "%s-temporal-worker" .Release.Name -}}
+{{- end -}}
+{{- end }}
+
+{{- define "devloop.discordBot.serviceAccountName" -}}
+{{- if .Values.discordBot.serviceAccount.name -}}
+{{- .Values.discordBot.serviceAccount.name -}}
+{{- else -}}
+{{- printf "%s-discord-bot" .Release.Name -}}
+{{- end -}}
+{{- end }}
+
+{{- define "devloop.agentJob.serviceAccountName" -}}
+{{- if .Values.temporalWorker.agentJob.serviceAccount.name -}}
+{{- .Values.temporalWorker.agentJob.serviceAccount.name -}}
+{{- else -}}
+{{- printf "%s-agent-job" .Release.Name -}}
+{{- end -}}
+{{- end }}
+
+{{/*
 Common health probes (used by all components).
 */}}
 {{- define "devloop.healthProbes" -}}

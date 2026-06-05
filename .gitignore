@@ -220,3 +220,6 @@ __marimo__/
 
 # helm unittest debug files
 .debug/
+
+.DS_Store
+**/.DS_store

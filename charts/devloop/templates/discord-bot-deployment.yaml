@@ -19,9 +19,7 @@ spec:
         app.kubernetes.io/component: discord-bot
         app.kubernetes.io/instance: {{ .Release.Name }}
     spec:
-      {{- if .Values.discordBot.serviceAccountName }}
-      serviceAccountName: {{ .Values.discordBot.serviceAccountName }}
-      {{- end }}
+      serviceAccountName: {{ include "devloop.discordBot.serviceAccountName" . }}
       {{- with .Values.discordBot.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
@@ -57,6 +55,18 @@ spec:
               value: {{ .Values.discordBot.taskQueue | quote }}
             - name: HEALTH_PORT
               value: {{ .Values.discordBot.healthPort | quote }}
+            - name: K8S_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: CONFIGMAP_NAME
+              value: {{ .Values.discordBot.threadMapConfigMap | quote }}
+            - name: DISCORD_CHANNEL_APPROVALS
+              value: {{ .Values.discordBot.channels.approvals | quote }}
+            - name: DISCORD_CHANNEL_ALERTS
+              value: {{ .Values.discordBot.channels.alerts | quote }}
+            - name: DISCORD_CHANNEL_CHANGELOG
+              value: {{ .Values.discordBot.channels.changelog | quote }}
             {{- with .Values.discordBot.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}

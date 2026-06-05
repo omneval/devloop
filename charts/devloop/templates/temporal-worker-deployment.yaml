@@ -19,9 +19,7 @@ spec:
         app.kubernetes.io/component: temporal-worker
         app.kubernetes.io/instance: {{ .Release.Name }}
     spec:
-      {{- if .Values.temporalWorker.serviceAccountName }}
-      serviceAccountName: {{ .Values.temporalWorker.serviceAccountName }}
-      {{- end }}
+      serviceAccountName: {{ include "devloop.temporalWorker.serviceAccountName" . }}
       {{- with .Values.temporalWorker.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
@@ -60,6 +58,32 @@ spec:
             {{- end }}
             - name: AGENT_SKILLS_SELECTION_MODE
               value: {{ .Values.skillsSelectionMode | default "triggers" | quote }}
+            - name: ORCHESTRATION_QUEUE
+              value: {{ .Values.temporalWorker.taskQueue | quote }}
+            - name: AGENT_JOB_SERVICE_ACCOUNT
+              value: {{ include "devloop.agentJob.serviceAccountName" . | quote }}
+            {{- with .Values.temporalWorker.agentJob.llm.openaiBaseUrl }}
+            - name: AGENT_OPENAI_BASE_URL
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.temporalWorker.agentJob.llm.model }}
+            - name: AGENT_MODEL
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.temporalWorker.agentJob.llm.baseUrl }}
+            - name: AGENT_LLM_BASE_URL
+              value: {{ . | quote }}
+            {{- end }}
+            {{- if .Values.temporalWorker.agentJob.llm.apiKeySecret.name }}
+            - name: AGENT_LLM_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.temporalWorker.agentJob.llm.apiKeySecret.name }}
+                  key: {{ .Values.temporalWorker.agentJob.llm.apiKeySecret.key }}
+            {{- else if .Values.temporalWorker.agentJob.llm.apiKey }}
+            - name: AGENT_LLM_API_KEY
+              value: {{ .Values.temporalWorker.agentJob.llm.apiKey | quote }}
+            {{- end }}
             {{- with .Values.temporalWorker.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}

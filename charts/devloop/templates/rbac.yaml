@@ -1,0 +1,109 @@
+{{- if .Values.temporalWorker.serviceAccount.create }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "devloop.temporalWorker.serviceAccountName" . }}
+  labels:
+    {{- include "devloop.labels" . | nindent 4 }}
+    app.kubernetes.io/component: temporal-worker
+rules:
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["create", "get", "list", "watch", "delete"]
+  - apiGroups: ["batch"]
+    resources: ["jobs/status"]
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["create", "get", "list", "watch", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["pods", "pods/log"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "devloop.temporalWorker.serviceAccountName" . }}
+  labels:
+    {{- include "devloop.labels" . | nindent 4 }}
+    app.kubernetes.io/component: temporal-worker
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "devloop.temporalWorker.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  kind: Role
+  name: {{ include "devloop.temporalWorker.serviceAccountName" . }}
+  apiGroup: rbac.authorization.k8s.io
+{{- end }}
+{{- if .Values.discordBot.serviceAccount.create }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "devloop.discordBot.serviceAccountName" . }}
+  labels:
+    {{- include "devloop.labels" . | nindent 4 }}
+    app.kubernetes.io/component: discord-bot
+rules:
+  # create has no resourceNames restriction — the resource does not exist yet
+  # on the first write, so Kubernetes cannot match by name at admission time.
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["create"]
+  # get/update/patch are scoped to the thread-map ConfigMap only.
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: [{{ .Values.discordBot.threadMapConfigMap | quote }}]
+    verbs: ["get", "update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "devloop.discordBot.serviceAccountName" . }}
+  labels:
+    {{- include "devloop.labels" . | nindent 4 }}
+    app.kubernetes.io/component: discord-bot
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "devloop.discordBot.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  kind: Role
+  name: {{ include "devloop.discordBot.serviceAccountName" . }}
+  apiGroup: rbac.authorization.k8s.io
+{{- end }}
+{{- if .Values.temporalWorker.agentJob.serviceAccount.create }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "devloop.agentJob.serviceAccountName" . }}
+  labels:
+    {{- include "devloop.labels" . | nindent 4 }}
+    app.kubernetes.io/component: agent-job
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["create", "get", "update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "devloop.agentJob.serviceAccountName" . }}
+  labels:
+    {{- include "devloop.labels" . | nindent 4 }}
+    app.kubernetes.io/component: agent-job
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "devloop.agentJob.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  kind: Role
+  name: {{ include "devloop.agentJob.serviceAccountName" . }}
+  apiGroup: rbac.authorization.k8s.io
+{{- end }}

@@ -41,18 +41,40 @@ temporalWorker:
     repository: ghcr.io/omneval/devloop-temporal-worker
     tag: "latest"
     pullPolicy: IfNotPresent
-  # Name of a pre-existing ServiceAccount to run the pod as (e.g. one bound to a
-  # Role that can create Agent Execution Jobs). Empty uses the namespace default.
-  serviceAccountName: ""
+  # ServiceAccount for the temporal-worker pod.
+  # When create: true, the chart creates the SA, a Role with the permissions
+  # required to spawn Agent Execution Jobs (batch/jobs, configmaps, pods/log,
+  # secrets), and a RoleBinding in the release namespace.
+  serviceAccount:
+    create: true
+    name: ""         # defaults to <release>-temporal-worker
+    annotations: {}
   # Image pull secrets (e.g. when the worker image lives in a private registry).
   imagePullSecrets: []
   #   - name: regcred
+  # Agent Execution Job configuration — settings for the Kubernetes Jobs the
+  # worker spawns for each Dev Loop phase.
+  agentJob:
+    # ServiceAccount assigned to each spawned Agent Execution Job pod.
+    # When create: true, the chart creates the SA, a Role (configmaps
+    # create/get/update/patch), and a RoleBinding in the release namespace.
+    serviceAccount:
+      create: true
+      name: ""       # defaults to <release>-agent-job
+      annotations: {}
+    # LLM connection details forwarded to every Agent Execution Job.
+    llm:
+      openaiBaseUrl: ""   # AGENT_OPENAI_BASE_URL — OpenAI-compatible API base URL
+      model: ""           # AGENT_MODEL — e.g. "openai/gpt-4o"
+      baseUrl: ""         # AGENT_LLM_BASE_URL — LiteLLM-style base URL
+      apiKey: ""          # AGENT_LLM_API_KEY — prefer apiKeySecret for production
+      # apiKeySecret: { name: "llm-credentials", key: "api-key" }
+      apiKeySecret: {}
   # Extra environment variables appended verbatim to the container. Use this for
-  # consumer-specific config (alternate task queues, custom workflow settings,
-  # agent LLM endpoints, etc.). Entries are standard core/v1 EnvVar objects.
+  # consumer-specific config (custom workflow settings, etc.).
+  # ORCHESTRATION_QUEUE, AGENT_JOB_SERVICE_ACCOUNT, and AGENT_*_LLM_* vars are
+  # now first-class values above — they no longer need to go here.
   extraEnv: []
-  #   - name: ORCHESTRATION_QUEUE
-  #     value: "homelab-orchestration"
   #   - name: AGENT_MODEL
   #     value: "openai/my-model"
   # Resource limits for the worker container
@@ -63,8 +85,9 @@ temporalWorker:
   #   limits:
   #     cpu: 500m
   #     memory: 512Mi
-  # Task queue name
-  taskQueue: "homelab-orchestration"
+  # Task queue name. The webhook and the worker both read ORCHESTRATION_QUEUE
+  # from this value — keep them in sync by only changing it here.
+  taskQueue: "devloop-orchestration"
   # Health probe port
   healthPort: 8080
   # Webhook receiver port
@@ -102,16 +125,28 @@ discordBot:
   # Optional Discord application ID, sourced from a Secret the same way.
   # applicationIdSecret: { name: "discord-bot", key: "APPLICATION_ID" }
   applicationIdSecret: {}
-  # Name of a pre-existing ServiceAccount (e.g. one allowed to read/write the
-  # thread-map ConfigMap). Empty uses the namespace default.
-  serviceAccountName: ""
+  # ServiceAccount for the discord-bot pod.
+  # When create: true, the chart creates the SA, a Role allowing the bot to
+  # create and update the thread-map ConfigMap, and a RoleBinding.
+  serviceAccount:
+    create: true
+    name: ""         # defaults to <release>-discord-bot
+    annotations: {}
   # Image pull secrets for a private bot image.
   imagePullSecrets: []
-  # Extra environment variables appended verbatim (e.g. channel IDs,
-  # K8S_NAMESPACE, CONFIGMAP_NAME). Standard core/v1 EnvVar objects.
+  # Name of the pre-existing ConfigMap used to persist workflow↔thread mappings.
+  # The chart injects this as CONFIGMAP_NAME and K8S_NAMESPACE automatically so
+  # operators no longer need extraEnv for either.
+  threadMapConfigMap: "discord-bot-threads"
+  # Discord channel IDs for each notification category.
+  # Run: discord channel → "Copy ID" (Developer Mode must be enabled).
+  channels:
+    approvals: ""    # DISCORD_CHANNEL_APPROVALS — where plan/merge gates are posted
+    alerts: ""       # DISCORD_CHANNEL_ALERTS    — where alert notifications land
+    changelog: ""    # DISCORD_CHANNEL_CHANGELOG — where summaries are posted
+  # Extra environment variables appended verbatim (e.g. non-standard channel names).
+  # Channel IDs are now first-class values above — they no longer need extraEnv.
   extraEnv: []
-  #   - name: DISCORD_CHANNEL_APPROVALS
-  #     value: "123456789"
   # Resource limits
   resources: {}
   #   requests:

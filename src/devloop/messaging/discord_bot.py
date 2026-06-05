@@ -74,7 +74,21 @@ def channel_id(name: str) -> int:
 # Shared thread store instance
 # --------------------------------------------------------------------------- #
 
-_thread_store = ConfigMapThreadStore(configmap_name="discord-bot-threads")
+
+def _make_thread_store() -> ConfigMapThreadStore:
+    """Build the module-level thread store from environment variables.
+
+    Reads CONFIGMAP_NAME (default: discord-bot-threads) and K8S_NAMESPACE
+    (default: agents) so the Helm chart can inject the right values without
+    requiring operators to override via extraEnv.
+    """
+    return ConfigMapThreadStore(
+        configmap_name=os.getenv("CONFIGMAP_NAME", "discord-bot-threads"),
+        namespace=os.getenv("K8S_NAMESPACE", "agents"),
+    )
+
+
+_thread_store = _make_thread_store()
 
 
 # --------------------------------------------------------------------------- #

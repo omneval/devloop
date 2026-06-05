@@ -36,14 +36,14 @@ tests:
             name: TEMPORAL_HOST
             value: "temporal-frontend.agents.svc:7233"
 
-  - it: appends extraEnv verbatim and sets the service account
+  - it: appends extraEnv verbatim and sets the service account via serviceAccount.name
     template: templates/temporal-worker-deployment.yaml
     set:
       temporalHost: "temporal-frontend.agents.svc:7233"
-      temporalWorker.serviceAccountName: orchestration-worker
+      temporalWorker.serviceAccount.name: orchestration-worker
       temporalWorker.extraEnv:
-        - name: ORCHESTRATION_QUEUE
-          value: homelab-orchestration
+        - name: EXTRA_VAR
+          value: extra-value
     asserts:
       - equal:
           path: spec.template.spec.serviceAccountName
@@ -51,8 +51,8 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: ORCHESTRATION_QUEUE
-            value: homelab-orchestration
+            name: EXTRA_VAR
+            value: extra-value
 
   - it: defaults AGENTS_NAMESPACE to the release namespace
     template: templates/temporal-worker-deployment.yaml
@@ -184,3 +184,93 @@ tests:
           content:
             name: AGENT_SKILLS_SELECTION_MODE
             value: "triggers"
+
+  - it: injects ORCHESTRATION_QUEUE matching taskQueue so webhook and worker use the same queue
+    template: templates/temporal-worker-deployment.yaml
+    set:
+      temporalHost: "temporal-frontend.agents.svc:7233"
+      temporalWorker.taskQueue: "homelab-orchestration"
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: ORCHESTRATION_QUEUE
+            value: "homelab-orchestration"
+
+  - it: injects AGENT_JOB_SERVICE_ACCOUNT from temporalWorker.agentJob.serviceAccount.name
+    template: templates/temporal-worker-deployment.yaml
+    set:
+      temporalHost: "temporal-frontend.agents.svc:7233"
+      temporalWorker.agentJob.serviceAccount.name: "my-agent-sa"
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: AGENT_JOB_SERVICE_ACCOUNT
+            value: "my-agent-sa"
+
+  - it: sets serviceAccountName to the default (release-name-temporal-worker)
+    template: templates/temporal-worker-deployment.yaml
+    set:
+      temporalHost: "temporal-frontend.agents.svc:7233"
+    asserts:
+      - equal:
+          path: spec.template.spec.serviceAccountName
+          value: RELEASE-NAME-temporal-worker
+
+  - it: AGENT_JOB_SERVICE_ACCOUNT defaults to release-name-agent-job when no name is set
+    template: templates/temporal-worker-deployment.yaml
+    set:
+      temporalHost: "temporal-frontend.agents.svc:7233"
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: AGENT_JOB_SERVICE_ACCOUNT
+            value: "RELEASE-NAME-agent-job"
+
+  - it: taskQueue defaults to devloop-orchestration
+    template: templates/temporal-worker-deployment.yaml
+    set:
+      temporalHost: "temporal-frontend.agents.svc:7233"
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: TASK_QUEUE
+            value: "devloop-orchestration"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: ORCHESTRATION_QUEUE
+            value: "devloop-orchestration"
+
+  - it: injects LLM connection env vars from temporalWorker.agentJob.llm
+    template: templates/temporal-worker-deployment.yaml
+    set:
+      temporalHost: "temporal-frontend.agents.svc:7233"
+      temporalWorker.agentJob.llm.openaiBaseUrl: "http://my-llm/v1"
+      temporalWorker.agentJob.llm.model: "openai/my-model"
+      temporalWorker.agentJob.llm.baseUrl: "http://my-llm/v1"
+      temporalWorker.agentJob.llm.apiKey: "sk-local"
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: AGENT_OPENAI_BASE_URL
+            value: "http://my-llm/v1"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: AGENT_MODEL
+            value: "openai/my-model"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: AGENT_LLM_BASE_URL
+            value: "http://my-llm/v1"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: AGENT_LLM_API_KEY
+            value: "sk-local"

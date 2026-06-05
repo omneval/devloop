@@ -517,6 +517,7 @@ def test_v1_loads_incluster_config_from_kubernetes_config_module(monkeypatch):
     assert called.get("incluster") is True
 
 
+
 def test_v1_falls_back_to_kubeconfig_on_configexception(monkeypatch):
     sentinel = object()
     calls = []
