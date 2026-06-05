@@ -46,17 +46,17 @@ jobs:
       contents: read
     steps:
       - name: Check out the repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           # For workflow_run, build the exact commit whose CI just passed.
           ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || '' }}
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Log in to GHCR
         if: github.event_name != 'pull_request'
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -74,7 +74,7 @@ jobs:
 
       - name: Extract metadata (tags, labels) for Docker
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: ghcr.io/omneval/${{ inputs.image_name }}
           # sha/latest track the rolling main line (workflow_run after CI, or a
@@ -87,7 +87,7 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
 
       - name: Build and push ${{ inputs.image_name }} image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: ${{ inputs.docker_context }}
           file: ${{ inputs.dockerfile }}
