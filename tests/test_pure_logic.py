@@ -2,6 +2,7 @@
 classification, and summary dedup (issues #20, #22, #23, #24, #26)."""
 
 import pytest
+from unittest.mock import MagicMock, patch
 
 from devloop import dev_loop_logic as dl
 from devloop.summarize_activities import build_prompt, should_summarize
@@ -51,3 +52,31 @@ def test_build_prompt_mentions_commits_and_issues():
     p = build_prompt(["fix bug", "add feature"], [{"number": 7, "title": "Crash"}])
     assert "fix bug" in p and "#7 Crash" in p
     assert "plain-english" in p.lower()
+
+
+# ---- summarize_activities LLM endpoint (#consolidate-llm-base-url) --------- #
+
+
+def test_llm_summary_uses_agent_llm_base_url(monkeypatch):
+    """_llm_summary must POST to AGENT_LLM_BASE_URL, not AGENT_OPENAI_BASE_URL."""
+    import devloop.summarize_activities as sa
+
+    monkeypatch.setenv("AGENT_LLM_BASE_URL", "http://custom-llm.local/v1")
+    # Reload the module so the module-level variable picks up the new env value.
+    import importlib
+    importlib.reload(sa)
+
+    fake_response = MagicMock()
+    fake_response.raise_for_status = MagicMock()
+    fake_response.json.return_value = {
+        "choices": [{"message": {"content": "summary text"}}]
+    }
+
+    with patch("httpx.post", return_value=fake_response) as mock_post:
+        result = sa._llm_summary("test prompt")
+
+    called_url = mock_post.call_args[0][0]
+    assert called_url.startswith("http://custom-llm.local/v1"), (
+        f"Expected AGENT_LLM_BASE_URL to control the endpoint, got {called_url!r}"
+    )
+    assert result == "summary text"

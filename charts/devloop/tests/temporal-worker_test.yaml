@@ -245,20 +245,76 @@ tests:
             name: ORCHESTRATION_QUEUE
             value: "devloop-orchestration"
 
-  - it: injects LLM connection env vars from temporalWorker.agentJob.llm
+  - it: injects AGENT_JOB_CPU and AGENT_JOB_MEMORY from agentJob.resources.requests
     template: templates/temporal-worker-deployment.yaml
     set:
       temporalHost: "temporal-frontend.agents.svc:7233"
-      temporalWorker.agentJob.llm.openaiBaseUrl: "http://my-llm/v1"
-      temporalWorker.agentJob.llm.model: "openai/my-model"
-      temporalWorker.agentJob.llm.baseUrl: "http://my-llm/v1"
-      temporalWorker.agentJob.llm.apiKey: "sk-local"
+      temporalWorker.agentJob.resources.requests.cpu: "500m"
+      temporalWorker.agentJob.resources.requests.memory: "2Gi"
     asserts:
       - contains:
           path: spec.template.spec.containers[0].env
           content:
+            name: AGENT_JOB_CPU
+            value: "500m"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: AGENT_JOB_MEMORY
+            value: "2Gi"
+
+  - it: injects AGENT_JOB_CPU_LIMIT and AGENT_JOB_MEMORY_LIMIT from agentJob.resources.limits
+    template: templates/temporal-worker-deployment.yaml
+    set:
+      temporalHost: "temporal-frontend.agents.svc:7233"
+      temporalWorker.agentJob.resources.limits.cpu: "1"
+      temporalWorker.agentJob.resources.limits.memory: "2Gi"
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: AGENT_JOB_CPU_LIMIT
+            value: "1"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: AGENT_JOB_MEMORY_LIMIT
+            value: "2Gi"
+
+  - it: omits all AGENT_JOB resource env vars when agentJob.resources is not set
+    template: templates/temporal-worker-deployment.yaml
+    set:
+      temporalHost: "temporal-frontend.agents.svc:7233"
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: AGENT_JOB_CPU
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: AGENT_JOB_MEMORY
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: AGENT_JOB_CPU_LIMIT
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: AGENT_JOB_MEMORY_LIMIT
+
+  - it: injects LLM connection env vars from temporalWorker.agentJob.llm
+    template: templates/temporal-worker-deployment.yaml
+    set:
+      temporalHost: "temporal-frontend.agents.svc:7233"
+      temporalWorker.agentJob.llm.model: "openai/my-model"
+      temporalWorker.agentJob.llm.baseUrl: "http://my-llm/v1"
+      temporalWorker.agentJob.llm.apiKey: "sk-local"
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
             name: AGENT_OPENAI_BASE_URL
-            value: "http://my-llm/v1"
       - contains:
           path: spec.template.spec.containers[0].env
           content:

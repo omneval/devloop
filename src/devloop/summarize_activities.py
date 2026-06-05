@@ -21,7 +21,7 @@ from .summarization import SummarizeInput, SummarizeResult
 log = logging.getLogger(__name__)
 
 STATE_CONFIGMAP = os.getenv("SUMMARY_STATE_CONFIGMAP", "dev-loop-summary-state")
-OPENAI_BASE_URL = os.getenv("AGENT_OPENAI_BASE_URL", "http://192.168.68.104/v1")
+LLM_BASE_URL = os.getenv("AGENT_LLM_BASE_URL", "http://192.168.68.104/v1")
 SUMMARY_MODEL = os.getenv("SUMMARY_MODEL", "qwen3-27b")
 
 
@@ -100,7 +100,7 @@ def _llm_summary(prompt: str) -> str:
     import httpx
 
     resp = httpx.post(
-        f"{OPENAI_BASE_URL}/chat/completions",
+        f"{LLM_BASE_URL}/chat/completions",
         json={
             "model": SUMMARY_MODEL,
             "messages": [{"role": "user", "content": prompt}],
