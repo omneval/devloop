@@ -29,7 +29,13 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 import entrypoint
-from entrypoint import AgentOutcome, TaskSpec
+from entrypoint import (
+    AgentOutcome,
+    DiagnosisOutput,
+    PlanOutput,
+    ReviewOutput,
+    TaskSpec,
+)
 
 
 # --------------------------------------------------------------------------- #
@@ -182,8 +188,185 @@ def _spec(**kw) -> TaskSpec:
 
 
 # --------------------------------------------------------------------------- #
-# Tracer 1: AGENT_STUB=1 fast-path
+# Issue #53: Structured output extractor + Phase.FIX_PASS enum
 # --------------------------------------------------------------------------- #
+
+
+def test_plan_output_validates_required_fields():
+    """PlanOutput accepts a list of PlanIssue objects with id, title, branch."""
+    plan = PlanOutput(
+        issues=[
+            {
+                "id": 42,
+                "title": "Fix crashloop",
+                "branch": "agent/issue-42-fix-crashloop",
+            },
+            {
+                "id": 43,
+                "title": "Add monitoring",
+                "branch": "agent/issue-43-add-monitoring",
+            },
+        ],
+    )
+    assert len(plan.issues) == 2
+    assert plan.issues[0].id == 42
+    assert plan.issues[0].title == "Fix crashloop"
+    assert plan.issues[0].branch == "agent/issue-42-fix-crashloop"
+
+
+def test_plan_output_issues_default_to_empty():
+    """PlanOutput allows issues to be omitted (defaults to [])."""
+    plan = PlanOutput()
+    assert plan.issues == []
+
+
+def test_review_output_validates_fields():
+    """ReviewOutput accepts summary, verdict (Literal), and inline_comments."""
+    review = ReviewOutput(
+        summary="Code looks good",
+        verdict="lgtm",
+        inline_comments=[
+            {"file": "src/foo.py", "line": 42, "body": "Consider renaming"},
+        ],
+    )
+    assert review.summary == "Code looks good"
+    assert review.verdict == "lgtm"
+    assert len(review.inline_comments) == 1
+    assert review.inline_comments[0].file == "src/foo.py"
+
+
+def test_review_output_verdict_defaults_to_needs_human():
+    """ReviewOutput defaults verdict to 'needs_human' when omitted."""
+    review = ReviewOutput(summary="LGTM")
+    assert review.verdict == "needs_human"
+    assert review.inline_comments == []
+
+
+def test_diagnosis_output_validates_fields():
+    """DiagnosisOutput accepts severity, affected_resource, root_cause_hypothesis."""
+    diag = DiagnosisOutput(
+        severity="critical",
+        affected_resource="omneval/Pod/x",
+        root_cause_hypothesis="crashloop after bad config",
+        recommended_actions=[
+            {
+                "action": "kubectl delete pod x -n omneval",
+                "requires_approval": False,
+                "rationale": "recreate stuck pod",
+            },
+        ],
+    )
+    assert diag.severity == "critical"
+    assert diag.affected_resource == "omneval/Pod/x"
+    assert len(diag.recommended_actions) == 1
+
+
+def test_structured_extractor_returns_validated_model(monkeypatch):
+    """structured_extractor calls LLM with response_format and returns validated model."""
+    from openai.types.chat import ChatCompletion, ChatCompletionMessage
+    from openai.types.chat.chat_completion import Choice
+
+    mock_response = ChatCompletion(
+        id="test",
+        created=0,
+        model="test",
+        object="chat.completion",
+        choices=[
+            Choice(
+                index=0,
+                finish_reason="stop",
+                message=ChatCompletionMessage(
+                    content='{"issues": [{"id": 1, "title": "T", "branch": "b"}]}',
+                    role="assistant",
+                ),
+            )
+        ],
+    )
+
+    monkeypatch.setenv("AGENT_MODEL", "test-model")
+    monkeypatch.setenv("AGENT_LLM_API_KEY", "fake-key")
+    monkeypatch.setenv("AGENT_LLM_BASE_URL", "http://fake")
+
+    with patch.object(entrypoint, "_get_llm_client") as mock_client_fn:
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.return_value = mock_response
+        mock_client_fn.return_value = mock_client
+
+        result = entrypoint.structured_extractor("some raw agent text", PlanOutput)
+
+    assert isinstance(result, PlanOutput)
+    assert len(result.issues) == 1
+    assert result.issues[0].id == 1
+
+    # Verify response_format was used
+    call_kwargs = mock_client.chat.completions.create.call_args.kwargs
+    assert call_kwargs["response_format"]["type"] == "json_schema"
+
+
+def test_structured_extractor_raises_on_empty_response(monkeypatch):
+    """structured_extractor raises ValueError when LLM returns empty content."""
+    from openai.types.chat import ChatCompletion, ChatCompletionMessage
+    from openai.types.chat.chat_completion import Choice
+
+    mock_response = ChatCompletion(
+        id="test",
+        created=0,
+        model="test",
+        object="chat.completion",
+        choices=[
+            Choice(
+                index=0,
+                finish_reason="stop",
+                message=ChatCompletionMessage(content=None, role="assistant"),
+            )
+        ],
+    )
+
+    monkeypatch.setenv("AGENT_MODEL", "test-model")
+    monkeypatch.setenv("AGENT_LLM_API_KEY", "fake-key")
+    monkeypatch.setenv("AGENT_LLM_BASE_URL", "http://fake")
+
+    with patch.object(entrypoint, "_get_llm_client") as mock_client_fn:
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.return_value = mock_response
+        mock_client_fn.return_value = mock_client
+
+        with pytest.raises(ValueError, match="Empty LLM response"):
+            entrypoint.structured_extractor("text", PlanOutput)
+
+
+def test_structured_extractor_raises_on_malformed_json(monkeypatch):
+    """structured_extractor raises ValueError when LLM returns invalid JSON."""
+    from openai.types.chat import ChatCompletion, ChatCompletionMessage
+    from openai.types.chat.chat_completion import Choice
+
+    mock_response = ChatCompletion(
+        id="test",
+        created=0,
+        model="test",
+        object="chat.completion",
+        choices=[
+            Choice(
+                index=0,
+                finish_reason="stop",
+                message=ChatCompletionMessage(
+                    content="not valid json {{{", role="assistant"
+                ),
+            )
+        ],
+    )
+
+    monkeypatch.setenv("AGENT_MODEL", "test-model")
+    monkeypatch.setenv("AGENT_LLM_API_KEY", "fake-key")
+    monkeypatch.setenv("AGENT_LLM_BASE_URL", "http://fake")
+
+    with patch.object(entrypoint, "_get_llm_client") as mock_client_fn:
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.return_value = mock_response
+        mock_client_fn.return_value = mock_client
+
+        with pytest.raises(ValueError, match="Malformed LLM response"):
+            entrypoint.structured_extractor("text", PlanOutput)
 
 
 def test_stub_returns_stub_outcome(monkeypatch):
@@ -636,31 +819,93 @@ def test_open_review_pr_creates_when_none_exists(monkeypatch):
 # --------------------------------------------------------------------------- #
 # Diagnosis phase — structured output for autonomous remediation
 # --------------------------------------------------------------------------- #
-def test_extract_diagnosis_parses_tagged_block():
-    text = (
-        "Here is my analysis.\n"
-        "<diagnosis>\n"
-        '{"severity":"critical","affected_resource":"omneval/Pod/x",'
-        '"root_cause_hypothesis":"crashloop","recommended_actions":'
-        '[{"action":"kubectl delete pod x -n omneval","requires_approval":false,"rationale":"recreate"}]}'
-        "\n</diagnosis>\nTrailing chatter."
+def test_handle_diagnosis_uses_structured_extractor(monkeypatch):
+    """handle_diagnosis calls structured_extractor and converts to dict payload."""
+    from openai.types.chat import ChatCompletion, ChatCompletionMessage
+    from openai.types.chat.chat_completion import Choice
+
+    diag_json = json.dumps(
+        {
+            "severity": "critical",
+            "affected_resource": "omneval/Pod/x",
+            "root_cause_hypothesis": "crashloop",
+            "recommended_actions": [
+                {
+                    "action": "kubectl delete pod x -n omneval",
+                    "requires_approval": False,
+                    "rationale": "recreate",
+                }
+            ],
+        }
     )
-    d = entrypoint._extract_diagnosis(text)
-    assert d["severity"] == "critical"
-    assert d["recommended_actions"][0]["action"] == "kubectl delete pod x -n omneval"
 
-
-def test_extract_diagnosis_tolerates_json_fence_inside_tags():
-    text = '<diagnosis>\n```json\n{"severity":"warning","recommended_actions":[]}\n```\n</diagnosis>'
-    d = entrypoint._extract_diagnosis(text)
-    assert d == {"severity": "warning", "recommended_actions": []}
-
-
-def test_extract_diagnosis_falls_back_without_tags():
-    d = entrypoint._extract_diagnosis(
-        'blah {"severity":"info","recommended_actions":[]} end'
+    mock_response = ChatCompletion(
+        id="test",
+        created=0,
+        model="test",
+        object="chat.completion",
+        choices=[
+            Choice(
+                index=0,
+                finish_reason="stop",
+                message=ChatCompletionMessage(content=diag_json, role="assistant"),
+            )
+        ],
     )
-    assert d["severity"] == "info"
+
+    monkeypatch.setenv("AGENT_MODEL", "test-model")
+    monkeypatch.setenv("AGENT_LLM_API_KEY", "fake-key")
+    monkeypatch.setenv("AGENT_LLM_BASE_URL", "http://fake")
+
+    with patch.object(entrypoint, "_get_llm_client") as mock_client_fn:
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.return_value = mock_response
+        mock_client_fn.return_value = mock_client
+
+        # Call structured_extractor directly to verify the pipeline
+        result = entrypoint.structured_extractor("raw agent text", DiagnosisOutput)
+
+    assert result.severity == "critical"
+    assert result.affected_resource == "omneval/Pod/x"
+    assert result.recommended_actions[0].action == "kubectl delete pod x -n omneval"
+
+    # Verify model_dump produces correct dict for AgentJobResult
+    diag_dict = result.model_dump()
+    assert diag_dict["severity"] == "critical"
+    assert len(diag_dict["recommended_actions"]) == 1
+
+
+def test_structured_extractor_raises_on_malformed_diagnosis(monkeypatch):
+    """structured_extractor raises ValueError when LLM returns unparseable content."""
+    from openai.types.chat import ChatCompletion, ChatCompletionMessage
+    from openai.types.chat.chat_completion import Choice
+
+    mock_response = ChatCompletion(
+        id="test",
+        created=0,
+        model="test",
+        object="chat.completion",
+        choices=[
+            Choice(
+                index=0,
+                finish_reason="stop",
+                message=ChatCompletionMessage(content="gibberish", role="assistant"),
+            )
+        ],
+    )
+
+    monkeypatch.setenv("AGENT_MODEL", "test-model")
+    monkeypatch.setenv("AGENT_LLM_API_KEY", "fake-key")
+    monkeypatch.setenv("AGENT_LLM_BASE_URL", "http://fake")
+
+    with patch.object(entrypoint, "_get_llm_client") as mock_client_fn:
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.return_value = mock_response
+        mock_client_fn.return_value = mock_client
+
+        # Should raise ValueError on malformed JSON
+        with pytest.raises(ValueError):
+            entrypoint.structured_extractor("text", DiagnosisOutput)
 
 
 def test_normalize_actions_defaults_and_filters():

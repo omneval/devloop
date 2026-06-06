@@ -25,6 +25,10 @@ import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
+
+from openai import OpenAI as _OpenAI
+from pydantic import BaseModel as _BaseModel
 
 # The Agent Job ↔ worker protocol (TaskSpec, AgentJobResult, ConfigMap keys) is
 # owned by the installed omneval-devloop package so both images share one
@@ -41,6 +45,99 @@ import skills
 
 log = logging.getLogger("agent-entrypoint")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+
+
+# --------------------------------------------------------------------------- #
+# Structured output models (issue #53)
+# --------------------------------------------------------------------------- #
+
+
+class PlanIssue(_BaseModel):
+    id: int
+    title: str
+    branch: str
+
+
+class PlanOutput(_BaseModel):
+    issues: list[PlanIssue] = []
+
+
+class InlineComment(_BaseModel):
+    file: str
+    line: int
+    body: str
+
+
+class ReviewOutput(_BaseModel):
+    summary: str
+    verdict: Literal["lgtm", "needs_fixes", "needs_human"] = "needs_human"
+    inline_comments: list[InlineComment] = []
+
+
+class RecommendedAction(_BaseModel):
+    action: str
+    requires_approval: bool = False
+    rationale: str = ""
+
+
+class DiagnosisOutput(_BaseModel):
+    severity: str
+    affected_resource: str
+    root_cause_hypothesis: str
+    recommended_actions: list[RecommendedAction] = []
+
+
+def _get_llm_client() -> _OpenAI:
+    return _OpenAI(
+        api_key=os.environ.get("AGENT_LLM_API_KEY", "none"),
+        base_url=os.environ.get("AGENT_LLM_BASE_URL"),
+    )
+
+
+def structured_extractor(text: str, model_cls: type[_BaseModel]) -> _BaseModel:
+    """Extract structured output from *text* using a single LLM call with
+    ``response_format`` backed by a Pydantic model.
+
+    Raises ``ValueError`` with a clear message if the LLM response is malformed
+    or cannot be parsed into *model_cls*.
+    """
+    client = _get_llm_client()
+    model = os.environ.get("AGENT_MODEL", "qwen3-27b")
+    schema = model_cls.model_json_schema()
+    try:
+        response = client.chat.completions.create(
+            model=model,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "Extract the structured data from the following text. "
+                        "Return only valid JSON matching the requested schema."
+                    ),
+                },
+                {"role": "user", "content": text},
+            ],
+            response_format={
+                "type": "json_schema",
+                "json_schema": {"name": model_cls.__name__, "schema": schema},
+            },
+        )
+    except Exception as exc:
+        raise ValueError(
+            f"LLM call failed during structured extraction: {exc}"
+        ) from exc
+
+    content = response.choices[0].message.content
+    if not content:
+        raise ValueError(
+            f"Empty LLM response during extraction of {model_cls.__name__}"
+        )
+    try:
+        return model_cls.model_validate_json(content)
+    except Exception as exc:
+        raise ValueError(
+            f"Malformed LLM response for {model_cls.__name__}: {exc}"
+        ) from exc
 
 
 # --------------------------------------------------------------------------- #
@@ -721,7 +818,11 @@ def run_agent(spec: TaskSpec, workdir: str, tracer) -> AgentOutcome:
         if best_guess_note:
             text = f"{text}\n\n{best_guess_note}" if text else best_guess_note
 
-    structured = _extract_diagnosis(text) if spec.phase == "diagnosis" else None
+    if spec.phase == "diagnosis":
+        diag = structured_extractor(text, DiagnosisOutput)
+        structured = diag.model_dump()
+    else:
+        structured = None
     return AgentOutcome(summary=text, structured=structured)
 
 
@@ -824,75 +925,6 @@ def build_agent_message(spec: TaskSpec) -> str:
     return spec.instructions
 
 
-_PLAN_RE = re.compile(r"<plan>([\s\S]*?)</plan>", re.IGNORECASE)
-
-
-def _extract_plan(text: str) -> dict | None:
-    """Parse the ``<plan>{...}</plan>`` block emitted by the planner prompt."""
-    m = _PLAN_RE.search(text or "")
-    if not m:
-        return None
-    try:
-        return json.loads(m.group(1).strip())
-    except json.JSONDecodeError:
-        return None
-
-
-def _extract_json(text: str) -> dict | None:
-    try:
-        start = text.index("{")
-        end = text.rindex("}") + 1
-        return json.loads(text[start:end])
-    except (ValueError, json.JSONDecodeError):
-        return None
-
-
-_DIAG_RE = re.compile(r"<diagnosis>([\s\S]*?)</diagnosis>", re.IGNORECASE)
-
-
-def _extract_diagnosis(text: str) -> dict | None:
-    """Parse the ``<diagnosis>{...}</diagnosis>`` block the diagnosis prompt emits.
-
-    Tolerant of a ```` ```json ```` fence inside the tags and of the model
-    omitting the tags entirely (falls back to the first/last-brace JSON scan).
-    Returns None if no JSON is recoverable."""
-    m = _DIAG_RE.search(text or "")
-    inner = m.group(1) if m else (text or "")
-    inner = inner.strip()
-    if inner.startswith("```"):
-        # drop a leading ```json / ``` fence and any trailing fence
-        inner = re.sub(r"^```[a-zA-Z]*\n?", "", inner)
-        inner = re.sub(r"\n?```$", "", inner.strip())
-    try:
-        return json.loads(inner.strip())
-    except json.JSONDecodeError:
-        return _extract_json(inner)
-
-
-_REVIEW_RE = re.compile(r"<review>([\s\S]*?)</review>", re.IGNORECASE)
-
-
-def _extract_review(text: str) -> dict | None:
-    """Parse the ``<review>{...}</review>`` block the reviewer prompt emits:
-    ``{"summary": str, "inline_comments": [{"file","line","body"}]}``.
-
-    Only matches an explicit ``<review>`` block (unlike diagnosis, which falls
-    back to a brace scan) — the reviewer's free-text narration would otherwise be
-    misparsed as findings. Tolerant of a ```` ```json ```` fence inside the tags.
-    Returns None when no block is present or no JSON is recoverable."""
-    m = _REVIEW_RE.search(text or "")
-    if not m:
-        return None
-    inner = m.group(1).strip()
-    if inner.startswith("```"):
-        inner = re.sub(r"^```[a-zA-Z]*\n?", "", inner)
-        inner = re.sub(r"\n?```$", "", inner.strip())
-    try:
-        return json.loads(inner.strip())
-    except json.JSONDecodeError:
-        return _extract_json(inner)
-
-
 def _normalize_actions(actions) -> list[dict]:
     """Coerce the model's recommended_actions into ``[{action, requires_approval,
     rationale}]`` with a string command and a bool gate.
@@ -953,7 +985,8 @@ def handle_plan(spec: TaskSpec, tracer) -> dict:
     with tracer.start_as_current_span("clone"):
         clone_repo(os.environ["GITHUB_URL"], base, workdir)
     outcome = run_agent(spec, workdir, tracer)
-    plan = _extract_plan(outcome.summary) or {"issues": []}
+    plan_model = structured_extractor(outcome.summary, PlanOutput)
+    plan = plan_model.model_dump()
     plan.setdefault("issues", [])
     return AgentJobResult(
         status="complete", plan=plan, summary=outcome.summary
@@ -1052,12 +1085,14 @@ def handle_review(spec: TaskSpec, tracer) -> dict:
     if refinements:
         with tracer.start_as_current_span("push"):
             push_branch(workdir, spec.branch, force=True)
+    review_model = structured_extractor(outcome.summary, ReviewOutput)
+    review = review_model.model_dump()
     return AgentJobResult(
         status="complete",
         issue_number=spec.issue_number,
         branch=spec.branch,
         commits=refinements,
-        review=_extract_review(outcome.summary),
+        review=review,
         summary=outcome.summary,
     ).to_payload()
 

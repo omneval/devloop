@@ -5,7 +5,17 @@ import pytest
 from unittest.mock import MagicMock, patch
 
 from devloop import dev_loop_logic as dl
+from devloop import Phase
 from devloop.summarize_activities import build_prompt, should_summarize
+
+
+# ---- Phase enum (#53) ---------------------------------------------------- #
+
+
+def test_phase_fix_pass_value():
+    """Phase.FIX_PASS must equal 'fix_pass'."""
+    assert Phase.FIX_PASS == "fix_pass"
+    assert Phase.FIX_PASS.value == "fix_pass"
 
 
 # ---- approval / merge parsing (#20, #23) --------------------------------- #

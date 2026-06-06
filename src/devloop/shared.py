@@ -38,6 +38,7 @@ class Phase(str, Enum):
     REVIEW = "review"
     MERGE = "merge"
     DIAGNOSIS = "diagnosis"
+    FIX_PASS = "fix_pass"
     REMEDIATION = "remediation"
     SUMMARIZE = "summarize"
 

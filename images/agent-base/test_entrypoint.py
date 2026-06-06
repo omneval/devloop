@@ -94,7 +94,11 @@ def test_execute_pushes_branch_and_writes_output(origin, tmp_path, monkeypatch):
 
 
 def test_plan_phase_parses_plan_block(origin, tmp_path, monkeypatch):
-    """Plan phase clones, runs the planner, and returns the <plan> it emits."""
+    """Plan phase clones, runs the planner, and returns the plan via structured_extractor."""
+    from openai.types.chat import ChatCompletion, ChatCompletionMessage
+    from openai.types.chat.chat_completion import Choice
+    from unittest.mock import MagicMock, patch
+
     workdir = tmp_path / "repo"
     out_file = tmp_path / "out.json"
 
@@ -102,28 +106,52 @@ def test_plan_phase_parses_plan_block(origin, tmp_path, monkeypatch):
 
     def fake_run_agent(spec, wd, tracer):
         return entrypoint.AgentOutcome(
-            summary=f"Here is the plan.\n<plan>\n{plan_json}\n</plan>\n",
+            summary=f"Here is the plan.\n{plan_json}\n",
         )
 
     monkeypatch.setattr(entrypoint, "run_agent", fake_run_agent)
-    monkeypatch.setenv(
-        "TASK_SPEC",
-        json.dumps(
-            {
-                "phase": "plan",
-                "project_id": "omneval",
-                "extra": {"agent_label": "agent-ready", "feedback": ""},
-            }
-        ),
-    )
-    monkeypatch.setenv("GITHUB_URL", str(origin))
-    monkeypatch.setenv("DEFAULT_BRANCH", "main")
-    monkeypatch.setenv("WORKDIR", str(workdir))
-    monkeypatch.setenv("OUTPUT_CONFIGMAP", "agent-omneval-plan-a1")
-    monkeypatch.setenv("OUTPUT_FILE", str(out_file))
-    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    monkeypatch.setenv("AGENT_MODEL", "test-model")
+    monkeypatch.setenv("AGENT_LLM_API_KEY", "fake-key")
+    monkeypatch.setenv("AGENT_LLM_BASE_URL", "http://fake")
 
-    assert entrypoint.main() == 0
+    mock_response = ChatCompletion(
+        id="test",
+        created=0,
+        model="test",
+        object="chat.completion",
+        choices=[
+            Choice(
+                index=0,
+                finish_reason="stop",
+                message=ChatCompletionMessage(content=plan_json, role="assistant"),
+            )
+        ],
+    )
+
+    with patch.object(entrypoint, "_get_llm_client") as mock_client_fn:
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.return_value = mock_response
+        mock_client_fn.return_value = mock_client
+
+        monkeypatch.setenv(
+            "TASK_SPEC",
+            json.dumps(
+                {
+                    "phase": "plan",
+                    "project_id": "omneval",
+                    "extra": {"agent_label": "agent-ready", "feedback": ""},
+                }
+            ),
+        )
+        monkeypatch.setenv("GITHUB_URL", str(origin))
+        monkeypatch.setenv("DEFAULT_BRANCH", "main")
+        monkeypatch.setenv("WORKDIR", str(workdir))
+        monkeypatch.setenv("OUTPUT_CONFIGMAP", "agent-omneval-plan-a1")
+        monkeypatch.setenv("OUTPUT_FILE", str(out_file))
+        monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+
+        assert entrypoint.main() == 0
+
     payload = json.loads(out_file.read_text())
     assert payload["status"] == "complete"
     assert payload["plan"]["issues"][0]["branch"] == "agent/issue-1"
@@ -147,32 +175,94 @@ def test_build_agent_message_renders_bundled_prompt(monkeypatch):
     assert "{{" not in msg  # every placeholder substituted or stripped
 
 
-def test_extract_plan_handles_missing_block():
-    assert entrypoint._extract_plan("no plan here") is None
-    assert entrypoint._extract_plan('<plan>{"issues": []}</plan>') == {"issues": []}
+def test_structured_extractor_plan_via_llm(monkeypatch):
+    """structured_extractor extracts PlanOutput from LLM response with response_format."""
+    from openai.types.chat import ChatCompletion, ChatCompletionMessage
+    from openai.types.chat.chat_completion import Choice
 
+    from entrypoint import PlanOutput
 
-def test_extract_review_parses_block():
-    text = (
-        "Some narration the reviewer wrote.\n"
-        "<review>\n"
-        '{"summary": "looks good", '
-        '"inline_comments": [{"file": "a.py", "line": 3, "body": "nit"}]}\n'
-        "</review>\n"
+    plan_json = json.dumps(
+        {"issues": [{"id": 42, "title": "Fix auth", "branch": "agent/issue-42"}]}
     )
-    review = entrypoint._extract_review(text)
-    assert review["summary"] == "looks good"
-    assert review["inline_comments"][0]["line"] == 3
+    mock_response = ChatCompletion(
+        id="test",
+        created=0,
+        model="test",
+        object="chat.completion",
+        choices=[
+            Choice(
+                index=0,
+                finish_reason="stop",
+                message=ChatCompletionMessage(content=plan_json, role="assistant"),
+            )
+        ],
+    )
+
+    monkeypatch.setenv("AGENT_MODEL", "test-model")
+    monkeypatch.setenv("AGENT_LLM_API_KEY", "fake-key")
+    monkeypatch.setenv("AGENT_LLM_BASE_URL", "http://fake")
+
+    from unittest.mock import MagicMock, patch
+
+    with patch.object(entrypoint, "_get_llm_client") as mock_client_fn:
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.return_value = mock_response
+        mock_client_fn.return_value = mock_client
+
+        result = entrypoint.structured_extractor("agent output text", PlanOutput)
+
+    assert isinstance(result, PlanOutput)
+    assert len(result.issues) == 1
+    assert result.issues[0].id == 42
+    assert result.issues[0].title == "Fix auth"
 
 
-def test_extract_review_tolerates_json_fence():
-    text = '<review>```json\n{"summary": "ok", "inline_comments": []}\n```</review>'
-    assert entrypoint._extract_review(text) == {"summary": "ok", "inline_comments": []}
+def test_structured_extractor_review_via_llm(monkeypatch):
+    """structured_extractor extracts ReviewOutput including verdict and inline_comments."""
+    from openai.types.chat import ChatCompletion, ChatCompletionMessage
+    from openai.types.chat.chat_completion import Choice
 
+    from entrypoint import ReviewOutput
 
-def test_extract_review_missing_block_is_none():
-    # Free-text narration must NOT be misparsed as findings.
-    assert entrypoint._extract_review("I reviewed it and it's fine.") is None
+    review_json = json.dumps(
+        {
+            "summary": "looks good",
+            "verdict": "lgtm",
+            "inline_comments": [{"file": "a.py", "line": 3, "body": "nit"}],
+        }
+    )
+    mock_response = ChatCompletion(
+        id="test",
+        created=0,
+        model="test",
+        object="chat.completion",
+        choices=[
+            Choice(
+                index=0,
+                finish_reason="stop",
+                message=ChatCompletionMessage(content=review_json, role="assistant"),
+            )
+        ],
+    )
+
+    monkeypatch.setenv("AGENT_MODEL", "test-model")
+    monkeypatch.setenv("AGENT_LLM_API_KEY", "fake-key")
+    monkeypatch.setenv("AGENT_LLM_BASE_URL", "http://fake")
+
+    from unittest.mock import MagicMock, patch
+
+    with patch.object(entrypoint, "_get_llm_client") as mock_client_fn:
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.return_value = mock_response
+        mock_client_fn.return_value = mock_client
+
+        result = entrypoint.structured_extractor("review text", ReviewOutput)
+
+    assert isinstance(result, ReviewOutput)
+    assert result.summary == "looks good"
+    assert result.verdict == "lgtm"
+    assert result.inline_comments[0].line == 3
 
 
 def test_unknown_phase_writes_failure(tmp_path, monkeypatch):
