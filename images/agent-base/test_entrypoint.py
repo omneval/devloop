@@ -228,7 +228,7 @@ def test_structured_extractor_review_via_llm(monkeypatch):
     review_json = json.dumps(
         {
             "summary": "looks good",
-            "verdict": "approve",
+            "verdict": "lgtm",
             "inline_comments": [{"file": "a.py", "line": 3, "body": "nit"}],
         }
     )
@@ -261,7 +261,7 @@ def test_structured_extractor_review_via_llm(monkeypatch):
 
     assert isinstance(result, ReviewOutput)
     assert result.summary == "looks good"
-    assert result.verdict == "approve"
+    assert result.verdict == "lgtm"
     assert result.inline_comments[0].line == 3
 
 

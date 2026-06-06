@@ -25,17 +25,10 @@ import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Literal
 
-if TYPE_CHECKING:
-    # These classes are created lazily at runtime by _init_structured_models().
-    # Stubs here satisfy static analysis (ruff F821) and IDE autocomplete.
-    from pydantic import BaseModel as PlanIssue
-    from pydantic import BaseModel as PlanOutput
-    from pydantic import BaseModel as InlineComment
-    from pydantic import BaseModel as ReviewOutput
-    from pydantic import BaseModel as RecommendedAction
-    from pydantic import BaseModel as DiagnosisOutput
+from openai import OpenAI as _OpenAI
+from pydantic import BaseModel as _BaseModel
 
 # The Agent Job ↔ worker protocol (TaskSpec, AgentJobResult, ConfigMap keys) is
 # owned by the installed omneval-devloop package so both images share one
@@ -55,126 +48,59 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 
 
 # --------------------------------------------------------------------------- #
-# Structured output models (issue #53) — lazy-loaded via __getattr__ so the
-# module can import even when ``openai`` / ``pydantic`` are absent
-# (e.g. root venv stub tests).
+# Structured output models (issue #53)
 # --------------------------------------------------------------------------- #
 
-_structured_models_cache: dict[str, Any] | None = None
-STRUCTURED_MODEL_NAMES = (
-    "PlanIssue",
-    "PlanOutput",
-    "InlineComment",
-    "ReviewOutput",
-    "RecommendedAction",
-    "DiagnosisOutput",
-)
+
+class PlanIssue(_BaseModel):
+    id: int
+    title: str
+    branch: str
 
 
-def _init_structured_models() -> dict[str, Any]:
-    """Build Pydantic model classes on first call. Safe to call multiple times.
-
-    Populates module __dict__ with the model classes so bare-name references
-    (PlanOutput, ReviewOutput, …) resolve at runtime.
-    """
-    global _structured_models_cache
-    if _structured_models_cache is not None:
-        return _structured_models_cache
-
-    from openai import OpenAI
-    from pydantic import BaseModel as _BaseModelClass
-
-    class PlanIssue(_BaseModelClass):
-        """One issue in a plan output."""
-
-        id: int
-        title: str
-        branch: str
-
-    class PlanOutput(_BaseModelClass):
-        """Structured output for the plan phase."""
-
-        issues: list[PlanIssue] = []
-
-    class InlineComment(_BaseModelClass):
-        """A single inline review comment."""
-
-        file: str
-        line: int
-        body: str
-
-    class ReviewOutput(_BaseModelClass):
-        """Structured output for the review phase."""
-
-        summary: str
-        verdict: str = ""
-        inline_comments: list[InlineComment] = []
-
-    class RecommendedAction(_BaseModelClass):
-        """A single remediation action from the diagnosis phase."""
-
-        action: str
-        requires_approval: bool = False
-        rationale: str = ""
-
-    class DiagnosisOutput(_BaseModelClass):
-        """Structured output for the diagnosis phase."""
-
-        severity: str
-        affected_resource: str
-        root_cause_hypothesis: str
-        recommended_actions: list[RecommendedAction] = []
-
-    _structured_models_cache = {
-        "PlanIssue": PlanIssue,
-        "PlanOutput": PlanOutput,
-        "InlineComment": InlineComment,
-        "ReviewOutput": ReviewOutput,
-        "RecommendedAction": RecommendedAction,
-        "DiagnosisOutput": DiagnosisOutput,
-        "_OpenAI": OpenAI,
-    }
-    import sys as _sys
-
-    _mod = _sys.modules[__name__]
-    for _k, _v in _structured_models_cache.items():
-        if not _k.startswith("_"):
-            _mod.__dict__[_k] = _v
-    return _structured_models_cache
+class PlanOutput(_BaseModel):
+    issues: list[PlanIssue] = []
 
 
-def __getattr__(name: str) -> Any:
-    """PEP 562 module-level lazy import for structured output models."""
-    if name in STRUCTURED_MODEL_NAMES:
-        models = _init_structured_models()
-        val = models[name]
-        import sys
-
-        sys.modules[__name__].__dict__[name] = val
-        return val
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+class InlineComment(_BaseModel):
+    file: str
+    line: int
+    body: str
 
 
-def _get_llm_client() -> Any:
-    """Return an OpenAI client configured from AGENT_* env vars."""
-    _init_structured_models()  # ensures openai/pydantic imports succeed
-    from openai import OpenAI
+class ReviewOutput(_BaseModel):
+    summary: str
+    verdict: Literal["lgtm", "needs_fixes", "needs_human"] = "needs_human"
+    inline_comments: list[InlineComment] = []
 
-    return OpenAI(
+
+class RecommendedAction(_BaseModel):
+    action: str
+    requires_approval: bool = False
+    rationale: str = ""
+
+
+class DiagnosisOutput(_BaseModel):
+    severity: str
+    affected_resource: str
+    root_cause_hypothesis: str
+    recommended_actions: list[RecommendedAction] = []
+
+
+def _get_llm_client() -> _OpenAI:
+    return _OpenAI(
         api_key=os.environ.get("AGENT_LLM_API_KEY", "none"),
         base_url=os.environ.get("AGENT_LLM_BASE_URL"),
     )
 
 
-def structured_extractor(text: str, model_cls: type[Any]) -> Any:
+def structured_extractor(text: str, model_cls: type[_BaseModel]) -> _BaseModel:
     """Extract structured output from *text* using a single LLM call with
     ``response_format`` backed by a Pydantic model.
 
     Raises ``ValueError`` with a clear message if the LLM response is malformed
     or cannot be parsed into *model_cls*.
     """
-    _init_structured_models()
-
     client = _get_llm_client()
     model = os.environ.get("AGENT_MODEL", "qwen3-27b")
     schema = model_cls.model_json_schema()
@@ -191,7 +117,10 @@ def structured_extractor(text: str, model_cls: type[Any]) -> Any:
                 },
                 {"role": "user", "content": text},
             ],
-            response_format={"type": "json_schema", "json_schema": {"schema": schema}},
+            response_format={
+                "type": "json_schema",
+                "json_schema": {"name": model_cls.__name__, "schema": schema},
+            },
         )
     except Exception as exc:
         raise ValueError(
@@ -890,11 +819,8 @@ def run_agent(spec: TaskSpec, workdir: str, tracer) -> AgentOutcome:
             text = f"{text}\n\n{best_guess_note}" if text else best_guess_note
 
     if spec.phase == "diagnosis":
-        try:
-            diag = structured_extractor(text, DiagnosisOutput)
-            structured = diag.model_dump()
-        except ValueError:
-            structured = None
+        diag = structured_extractor(text, DiagnosisOutput)
+        structured = diag.model_dump()
     else:
         structured = None
     return AgentOutcome(summary=text, structured=structured)
@@ -1059,11 +985,8 @@ def handle_plan(spec: TaskSpec, tracer) -> dict:
     with tracer.start_as_current_span("clone"):
         clone_repo(os.environ["GITHUB_URL"], base, workdir)
     outcome = run_agent(spec, workdir, tracer)
-    try:
-        plan_model = structured_extractor(outcome.summary, PlanOutput)
-        plan = plan_model.model_dump()
-    except ValueError:
-        plan = {"issues": []}
+    plan_model = structured_extractor(outcome.summary, PlanOutput)
+    plan = plan_model.model_dump()
     plan.setdefault("issues", [])
     return AgentJobResult(
         status="complete", plan=plan, summary=outcome.summary
@@ -1162,11 +1085,8 @@ def handle_review(spec: TaskSpec, tracer) -> dict:
     if refinements:
         with tracer.start_as_current_span("push"):
             push_branch(workdir, spec.branch, force=True)
-    try:
-        review_model = structured_extractor(outcome.summary, ReviewOutput)
-        review = review_model.model_dump()
-    except ValueError:
-        review = None
+    review_model = structured_extractor(outcome.summary, ReviewOutput)
+    review = review_model.model_dump()
     return AgentJobResult(
         status="complete",
         issue_number=spec.issue_number,

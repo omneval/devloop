@@ -221,24 +221,24 @@ def test_plan_output_issues_default_to_empty():
 
 
 def test_review_output_validates_fields():
-    """ReviewOutput accepts summary, verdict, and inline_comments."""
+    """ReviewOutput accepts summary, verdict (Literal), and inline_comments."""
     review = ReviewOutput(
         summary="Code looks good",
-        verdict="approve",
+        verdict="lgtm",
         inline_comments=[
             {"file": "src/foo.py", "line": 42, "body": "Consider renaming"},
         ],
     )
     assert review.summary == "Code looks good"
-    assert review.verdict == "approve"
+    assert review.verdict == "lgtm"
     assert len(review.inline_comments) == 1
     assert review.inline_comments[0].file == "src/foo.py"
 
 
-def test_review_output_verdict_defaults_to_empty():
-    """ReviewOutput allows verdict and inline_comments to be omitted."""
+def test_review_output_verdict_defaults_to_needs_human():
+    """ReviewOutput defaults verdict to 'needs_human' when omitted."""
     review = ReviewOutput(summary="LGTM")
-    assert review.verdict == ""
+    assert review.verdict == "needs_human"
     assert review.inline_comments == []
 
 
@@ -875,8 +875,8 @@ def test_handle_diagnosis_uses_structured_extractor(monkeypatch):
     assert len(diag_dict["recommended_actions"]) == 1
 
 
-def test_handle_diagnosis_fallback_on_extractor_error(monkeypatch):
-    """handle_diagnosis falls back to empty dict when structured_extractor raises."""
+def test_structured_extractor_raises_on_malformed_diagnosis(monkeypatch):
+    """structured_extractor raises ValueError when LLM returns unparseable content."""
     from openai.types.chat import ChatCompletion, ChatCompletionMessage
     from openai.types.chat.chat_completion import Choice
 
