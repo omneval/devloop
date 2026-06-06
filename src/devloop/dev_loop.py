@@ -389,9 +389,9 @@ class DevLoopWorkflow:
     ) -> None:
         """Post the reviewer's findings to the PR.
 
-        Raises ``RuntimeError`` when findings exist but the PR URL cannot be
-        resolved (unparseable or missing), so the failure surfaces rather than
-        silently dropping review comments.
+        Surfaces a warning notification when findings exist but the PR URL
+        cannot be resolved (unparseable or missing), so the failure is visible
+        rather than silently dropping review comments.
         """
         review = result.review or {}
         summary = review.get("summary", "")
@@ -408,10 +408,11 @@ class DevLoopWorkflow:
         pr_url = exec_result.get("pr_url", "")
         pr_number = logic.pr_number_from_url(pr_url)
         if not pr_number:
-            raise RuntimeError(
-                f"cannot post review findings: pr_url '{pr_url}' "
+            await self._notify(
+                f"⚠️ Failed to post review findings: pr_url '{pr_url}' "
                 f"for project {inp.project_id} is unparseable or missing"
             )
+            return
         await workflow.execute_activity(
             "post_pr_comments",
             PostCommentsInput(inp.project_id, pr_number, summary, inline),

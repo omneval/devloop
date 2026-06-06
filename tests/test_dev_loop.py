@@ -38,6 +38,7 @@ class Mocks:
         default_factory=dict
     )  # (phase, issue) -> AgentJobResult
     execute_commits: int = 1
+    execute_pr_url: str | None = None  # None uses default derived from issue number
     execute_status: str = JobStatus.COMPLETE.value
     review_commits: int = 1
     review_payload: dict | None = None  # AgentJobResult.review the review job returns
@@ -95,14 +96,17 @@ def _make_activities():
                     error="boom",
                 )
             has = M.execute_commits > 0
+            pr_url = (
+                M.execute_pr_url
+                if M.execute_pr_url is not None
+                else (f"https://github.com/omneval/omneval/pull/{issue}" if has else "")
+            )
             return AgentJobResult(
                 status=JobStatus.COMPLETE.value,
                 job_name=f"j{issue}",
                 issue_number=issue,
                 branch=f"agent/issue-{issue}" if has else "",
-                pr_url=f"https://github.com/omneval/omneval/pull/{issue}"
-                if has
-                else "",
+                pr_url=pr_url,
                 commits=M.execute_commits,
                 tests_passed=True,
             )
@@ -459,3 +463,17 @@ async def test_review_no_findings_skips_post(reset_mocks):
     result = await _env_and_run(DevLoopInput("omneval"), ["approve", "approve"])
     assert result.status == "completed"
     assert "post_pr_comments" not in M.dispatched_phases
+
+
+@pytest.mark.asyncio
+async def test_review_unparseable_pr_url_warns(reset_mocks):
+    reset_mocks.plan_rounds = [_one_issue(1)]
+    reset_mocks.review_payload = {"summary": "fix needed", "inline_comments": []}
+    reset_mocks.execute_pr_url = "https://example.com/unparseable"
+    result = await _env_and_run(DevLoopInput("omneval"), ["approve", "approve"])
+    assert result.status == "completed"
+    assert "post_pr_comments" not in M.dispatched_phases
+    assert any(
+        "Failed to post review findings" in n
+        for n in M.notifications
+    )
