@@ -74,6 +74,12 @@ COPY entrypoint.py /usr/local/bin/agent-entrypoint.py
 # with "No module named 'skills'".
 COPY skills.py /usr/local/bin/skills.py
 
+# Baked skills (issue #32). Vendored SKILL.md files are copied into the
+# convergence directory. The entrypoint resolves them at startup via
+# load_installed_skills (openhands-sdk 1.24.0) and injects them into the
+# AgentContext. Derived images can layer additional skills on top of this COPY.
+COPY skills/ /usr/local/share/agent-skills/installed/
+
 # Phase prompt templates (plan / implement / review / merge), rendered per phase
 # by the entrypoint. Bundled here so every project shares the same agent prompts.
 COPY prompts/ /usr/local/share/agent-prompts/
