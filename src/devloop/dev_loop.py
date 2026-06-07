@@ -463,8 +463,13 @@ class DevLoopWorkflow(_WorkflowCommon):
     ) -> None:
         """Request a GitHub PR reviewer and post a notification comment.
 
-        Reads ``pr_reviewer`` from the project's ``ProjectConfig``. When no
-        reviewer is configured the comment still fires but omits the @-mention.
+        Reads ``pr_reviewer`` from the project's ``ProjectConfig`` (via the
+        ``request_github_reviewer`` activity). The notification only claims a
+        reviewer was tagged when the request actually succeeded — when it was
+        skipped (no reviewer configured, no PR to request on) or failed (a
+        GitHub API error), the comment says so honestly instead (issue #88);
+        a confidently-wrong "tagged" claim would mislead the human who's
+        supposed to act on it.
         """
         issue_no = _as_int(issue.get("id"))
         pr_url = exec_result.get("pr_url", "")
@@ -473,8 +478,15 @@ class DevLoopWorkflow(_WorkflowCommon):
         # Resolve the configured reviewer from the project registry.
         # We use the shared _request_reviewer helper (mixin) so the I/O stays
         # in activities, not in the workflow sandbox — the activity resolves
-        # the actual reviewer login from the project registry.
-        await self._request_reviewer(inp.project_id, pr_number)
+        # the actual reviewer login from the project registry and reports
+        # back whether the request actually succeeded.
+        reviewer_result = await self._request_reviewer(inp.project_id, pr_number)
+        if reviewer_result.requested:
+            reviewer_note = "Reviewer has been tagged."
+        elif reviewer_result.reason:
+            reviewer_note = f"No reviewer was requested ({reviewer_result.reason})."
+        else:
+            reviewer_note = "No reviewer was requested."
 
         note = (
             " ⚠️ CI is still failing after exhausting the CI fix attempts —"
@@ -485,5 +497,5 @@ class DevLoopWorkflow(_WorkflowCommon):
         await self._comment(
             inp.project_id,
             issue_no,
-            f"👀 Ready for review — PR: {pr_url}. Reviewer has been tagged.{note}",
+            f"👀 Ready for review — PR: {pr_url}. {reviewer_note}{note}",
         )

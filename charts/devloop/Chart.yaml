@@ -1,6 +1,6 @@
 apiVersion: v2
 name: devloop
-description: Helm chart for deploying the devloop components (Temporal Orchestration Worker, Discord Bot, GitHub Issue Poller)
+description: Helm chart for deploying the devloop Temporal Orchestration Worker
 type: application
 # Placeholder only. The release pipeline (release.yml) packages the chart with
 # --version/--app-version set to the git tag, so the PUBLISHED chart semver always

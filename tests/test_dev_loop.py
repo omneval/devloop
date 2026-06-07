@@ -22,6 +22,7 @@ from devloop.shared import (
     CIChecksResult,
     GithubNotificationInput,
     JobStatus,
+    ReviewerRequestResult,
 )
 
 
@@ -56,6 +57,10 @@ class Mocks:
     open_agent_prs: list = field(default_factory=list)
     # reviewer requests recorded by request_github_reviewer mock
     reviewer_requests: list = field(default_factory=list)
+    # result the request_github_reviewer mock returns (issue #88)
+    reviewer_result: ReviewerRequestResult = field(
+        default_factory=lambda: ReviewerRequestResult(requested=True)
+    )
     # CI poll results returned in order; once exhausted, the last entry repeats.
     # Each entry: CIChecksResult(all_passed=..., failures=[...])
     ci_poll_results: list = field(default_factory=list)
@@ -207,8 +212,9 @@ def _make_activities():
         M.post_comments.append(inp)
 
     @activity.defn(name="request_github_reviewer")
-    async def request_github_reviewer(inp) -> None:
+    async def request_github_reviewer(inp) -> ReviewerRequestResult:
         M.reviewer_requests.append(inp)
+        return M.reviewer_result
 
     @activity.defn(name="poll_ci_checks")
     async def poll_ci_checks(inp) -> CIChecksResult:
@@ -647,6 +653,27 @@ async def test_reviewer_notification_comment_after_review(reset_mocks):
     assert len(M.reviewer_requests) >= 1
 
 
+@pytest.mark.asyncio
+async def test_notify_reviewer_does_not_claim_tagged_when_no_reviewer_configured(reset_mocks):
+    """issue #88: when request_github_reviewer reports it skipped the request
+    (e.g. no pr_reviewer configured for the project), the 'ready for review'
+    comment must not claim a reviewer was tagged — that would mislead the
+    human who's supposed to act on it."""
+    reset_mocks.plan_rounds = [_one_issue(1)]
+    reset_mocks.reviewer_result = ReviewerRequestResult(
+        requested=False, reason="no reviewer is configured for this project"
+    )
+    result = await _env_and_run(DevLoopInput("omneval"), [])
+    assert result.status == "completed"
+
+    ready_comments = [n for n in M.notifications if "ready for review" in n.lower()]
+    assert ready_comments, "expected a 'ready for review' notification comment"
+    comment = ready_comments[0]
+    assert "tagged" not in comment.lower()
+    assert "no reviewer was requested" in comment.lower()
+    assert "no reviewer is configured for this project" in comment.lower()
+
+
 # --------------------------------------------------------------------------- #
 # Phase.CI_FIX loop (#76)
 # --------------------------------------------------------------------------- #
@@ -771,6 +798,34 @@ async def test_ci_fix_loop_exhausts_after_max_iterations(reset_mocks):
 
 
 @pytest.mark.asyncio
+async def test_ci_fix_loop_not_exhausted_when_final_attempt_fixes_ci(reset_mocks):
+    """CI is still red after the second-to-last poll but the final fix attempt
+    turns it green — the loop must re-check before reporting exhausted=True,
+    otherwise the reviewer gets a false "still failing" note on a green PR."""
+    reset_mocks.plan_rounds = [_one_issue(1)]
+    reset_mocks.ci_poll_results = [
+        CIChecksResult(
+            all_passed=False,
+            failures=[CICheckFailure(name="pytest", conclusion="failure")],
+        ),
+        CIChecksResult(
+            all_passed=False,
+            failures=[CICheckFailure(name="pytest", conclusion="failure")],
+        ),
+        CIChecksResult(all_passed=True, failures=[]),
+    ]
+    result = await _env_and_run(
+        DevLoopInput("omneval", ci_fix_max_iterations=2),
+        [],
+    )
+    assert result.status == "completed"
+    # both allotted attempts were dispatched, then a final re-poll found CI green
+    assert M.dispatched_phases.count("ci_fix") == 2
+    assert len(M.ci_polls) == 3
+    assert not any("still failing" in n.lower() for n in M.notifications)
+
+
+@pytest.mark.asyncio
 async def test_ci_fix_loop_dispatches_with_failure_details(reset_mocks):
     """Each ci_fix dispatch carries the current failing check details in
     TaskSpec.extra['ci_check_failures'] and is preceded by a queued comment."""
@@ -793,6 +848,31 @@ async def test_ci_fix_loop_dispatches_with_failure_details(reset_mocks):
     failures = extra["ci_check_failures"]
     assert failures and failures[0]["name"] == "pytest"
     assert failures[0]["summary"] == "3 failed"
+
+
+@pytest.mark.asyncio
+async def test_ci_fix_loop_waits_on_pending_checks_without_dispatching_fix(reset_mocks):
+    """issue #90: checks that are merely still running (no genuine failures
+    yet) must make the loop wait and re-poll — not dispatch a Phase.CI_FIX
+    job or post a fix-attempt comment, and not consume one of the limited
+    ci_fix_max_iterations attempts."""
+    reset_mocks.plan_rounds = [_one_issue(1)]
+    reset_mocks.ci_poll_results = [
+        CIChecksResult(all_passed=False, pending=True, failures=[]),
+        CIChecksResult(all_passed=False, pending=True, failures=[]),
+        CIChecksResult(all_passed=True, pending=False, failures=[]),
+    ]
+    result = await _env_and_run(
+        DevLoopInput("omneval", ci_fix_max_iterations=2),
+        [],
+    )
+    assert result.status == "completed"
+    # no fix attempt was dispatched — CI was merely slow, never genuinely red
+    assert M.dispatched_phases.count("ci_fix") == 0
+    assert len(M.ci_polls) == 3
+    assert not any("ci fix attempt" in n.lower() for n in M.notifications)
+    assert not any("queued — ci fix" in n.lower() for n in M.notifications)
+    assert not any("still failing" in n.lower() for n in M.notifications)
 
 
 @pytest.mark.asyncio

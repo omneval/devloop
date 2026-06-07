@@ -42,14 +42,28 @@ cloudflared tunnel route dns devloop-webhooks webhooks.your-domain.com
 
 **Option B — Cloud load balancer (managed Kubernetes, e.g. EKS / GKE / AKS):**
 
+The chart's `devloop-temporal-worker` Service is a fixed `ClusterIP` (it isn't
+exposed externally by the chart). Create your own `LoadBalancer` Service in
+the same namespace that selects the worker's pods and forwards to the webhook
+port, then point a DNS record at the resulting external address/hostname:
+
 ```yaml
-# Add to devloop-values.yaml — exposes the temporal-worker webhook port via a
-# cloud-provisioned LoadBalancer. Use annotations for your cloud provider's LB
-# class, then point a DNS record at the resulting external address/hostname.
-temporalWorker:
-  service:
-    type: LoadBalancer
-    webhookPort: 8088
+# devloop-temporal-worker-lb.yaml — apply alongside the chart release
+apiVersion: v1
+kind: Service
+metadata:
+  name: devloop-temporal-worker-lb
+  namespace: agents
+  annotations: {} # add your cloud provider's LB-class annotations here
+spec:
+  type: LoadBalancer
+  selector:
+    app.kubernetes.io/component: temporal-worker
+    app.kubernetes.io/instance: devloop
+  ports:
+    - name: webhook
+      port: 443
+      targetPort: 8088
 ```
 
 **Option C — ngrok (local testing / evaluation only):**

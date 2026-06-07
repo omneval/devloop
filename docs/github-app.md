@@ -38,7 +38,7 @@ to create it in one step.
 
 Configure exactly these **Repository permissions** — this is the same
 permission set the PAT path documents in
-[Getting Started Step 3](getting-started.md#step-3-set-up-the-devloop-bot-github-account),
+[Getting Started Step 3](getting-started.md#step-3-set-up-github-authentication-for-devloop-bot),
 mapped onto GitHub App permission names:
 
 | Permission      | Access         | Why devloop needs it                                                            |
@@ -121,9 +121,16 @@ The chart forwards these as `GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY` (sourced
 from the Secret via `secretKeyRef`), and `GITHUB_APP_INSTALLATION_ID` on the
 temporal-worker container. When `GITHUB_APP_ID` and `GITHUB_APP_PRIVATE_KEY`
 are both present, `github_ops.py` mints and uses short-lived installation
-tokens automatically — no other configuration changes are required, and
-existing `github_token_secret` entries in the project registry are simply
-ignored for token resolution (they remain valid as a fallback; see below).
+tokens automatically — no other configuration changes are required.
+
+The choice between GitHub App auth and PAT auth is made **once, at
+configuration-detection time**, based solely on whether `GITHUB_APP_ID` and
+`GITHUB_APP_PRIVATE_KEY` are set — there is no runtime fallback to the PAT if
+App-token minting fails (e.g. a wrong `installationId` produces a 404 on every
+call). Existing `github_token_secret` entries in the project registry are
+simply not consulted once GitHub App auth is configured; see
+[Backward Compatibility](#backward-compatibility) for when the PAT path is
+used instead.
 
 ## How Token Generation Works
 
@@ -149,5 +156,5 @@ GitHub App auth is **opt-in**: devloop only switches to it when *both*
 `GITHUB_APP_ID` and `GITHUB_APP_PRIVATE_KEY` are set on the worker. If either
 is absent, devloop falls back to the existing per-project PAT path
 (`GITHUB_TOKEN` resolved from each project's `github_token_secret`), exactly
-as documented in [Getting Started Step 3](getting-started.md#step-3-set-up-the-devloop-bot-github-account).
+as documented in [Getting Started Step 3](getting-started.md#step-3-set-up-github-authentication-for-devloop-bot).
 Existing PAT-based deployments require **no changes** to keep working.

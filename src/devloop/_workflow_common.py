@@ -26,12 +26,18 @@ from .shared import (
     Phase,
     PollCIChecksInput,
     RequestReviewerInput,
+    ReviewerRequestResult,
     TaskSpec,
 )
 
 _RETRY = RetryPolicy(maximum_attempts=3)
 _ACTIVITY_TIMEOUT = timedelta(hours=2)
 _GITHUB_COMMENT_TIMEOUT = timedelta(seconds=60)
+
+# Bounded backoff for "CI still pending" re-polls within a single ci_fix
+# attempt slot — caps how long _ci_fix_loop waits on a CI run that never
+# resolves before it gives up rather than looping forever (issue #90).
+_CI_PENDING_POLL_LIMIT = 12
 
 
 class _WorkflowCommon:
@@ -90,22 +96,29 @@ class _WorkflowCommon:
     ) -> bool:
         """Retry CI fixes up to ``ci_fix_max_iterations`` times or until green.
 
-        Each iteration polls the PR's CI checks; if they all pass, the loop
-        exits early (``exhausted=False``). Otherwise it dispatches a
-        ``Phase.CI_FIX`` Agent Execution Job — preceded by a "⏳ queued"
-        comment — with the current failing check details in
-        ``TaskSpec.extra["ci_check_failures"]``, then posts a result comment.
+        Each poll either finds CI green (loop exits early, ``exhausted=False``),
+        genuinely failing (dispatches a ``Phase.CI_FIX`` Agent Execution Job —
+        preceded by a "⏳ queued" comment — with the current failing check
+        details in ``TaskSpec.extra["ci_check_failures"]``, then posts a result
+        comment and consumes one of the ``ci_fix_max_iterations`` attempts), or
+        merely *pending* — checks still queued/running with no real failures
+        yet (issue #90). A pending result waits and re-polls with a bounded
+        backoff instead of consuming an attempt — CI being slow isn't CI being
+        red, and dispatching a "fix" for a check that simply hasn't finished
+        yet would burn a limited attempt and risk a spurious commit.
 
-        Returns ``True`` when every iteration is spent without CI going green
-        (``exhausted``), so the caller can carry a "CI still failing" note to
-        the human reviewer.
+        Returns ``True`` when every fix attempt is spent without CI going
+        green (``exhausted``), so the caller can carry a "CI still failing"
+        note to the human reviewer.
         """
         pr_number = logic.pr_number_from_url(exec_result.get("pr_url", ""))
         if pr_number <= 0:
             return False
 
         max_iters = ci_fix_max_iterations
-        for attempt in range(1, max_iters + 1):
+        attempt = 0
+        pending_polls = 0
+        while attempt < max_iters:
             checks = await workflow.execute_activity(
                 "poll_ci_checks",
                 PollCIChecksInput(project_id=project_id, pr_number=pr_number),
@@ -116,6 +129,19 @@ class _WorkflowCommon:
             if checks.all_passed:
                 return False
 
+            if checks.pending and not checks.failures:
+                if pending_polls >= _CI_PENDING_POLL_LIMIT:
+                    # CI never resolved within the bounded backoff — report
+                    # exhaustion without having spent a fix attempt on it.
+                    return True
+                pending_polls += 1
+                await workflow.sleep(
+                    timedelta(seconds=poll_interval_seconds * pending_polls)
+                )
+                continue
+
+            pending_polls = 0
+            attempt += 1
             failures = [
                 {
                     "name": f.name,
@@ -157,24 +183,42 @@ class _WorkflowCommon:
                     f"❌ CI fix attempt {attempt}/{max_iters} failed",
                 )
 
-        return True
+        # The final attempt may have fixed CI — re-check before declaring
+        # exhaustion, otherwise a successful last attempt is misreported as
+        # "still failing" to the human reviewer.
+        final_checks = await workflow.execute_activity(
+            "poll_ci_checks",
+            PollCIChecksInput(project_id=project_id, pr_number=pr_number),
+            result_type=CIChecksResult,
+            start_to_close_timeout=timedelta(minutes=5),
+            retry_policy=_RETRY,
+        )
+        return not final_checks.all_passed
 
     # ---- Reviewer request (#74) ------------------------------------------- #
-    async def _request_reviewer(self, project_id: str, pr_number: int) -> None:
+    async def _request_reviewer(
+        self, project_id: str, pr_number: int
+    ) -> ReviewerRequestResult:
         """Request a GitHub PR reviewer via the project's configured reviewer.
 
         The actual reviewer login is resolved by the activity from the
         project registry — workflows pass an empty string and the activity
         fills it in, keeping the I/O (and the registry lookup) out of the
         sandbox.
+
+        Returns the activity's ``ReviewerRequestResult`` (requested or
+        skipped/failed-with-reason) so callers like ``_notify_reviewer`` can
+        report honestly on whether a reviewer was actually tagged (issue #88)
+        rather than assuming success.
         """
-        await workflow.execute_activity(
+        return await workflow.execute_activity(
             "request_github_reviewer",
             RequestReviewerInput(
                 project_id=project_id,
                 pr_number=pr_number,
                 reviewer="",
             ),
+            result_type=ReviewerRequestResult,
             start_to_close_timeout=_GITHUB_COMMENT_TIMEOUT,
             retry_policy=_RETRY,
         )

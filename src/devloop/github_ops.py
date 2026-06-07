@@ -23,6 +23,7 @@ unchanged.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import re
@@ -44,6 +45,7 @@ from .shared import (
     PollCIChecksInput,
     PostCommentsInput,
     RequestReviewerInput,
+    ReviewerRequestResult,
 )
 
 log = logging.getLogger(__name__)
@@ -61,11 +63,32 @@ _TOKEN_REFRESH_SKEW_SECONDS = 5 * 60
 # and avoids needless POSTs to /access_tokens.
 _installation_token_cache: dict[str, Any] = {"token": None, "expires_at": None}
 
+# Serializes the check-mint-store sequence in ``_get_installation_token``.
+# Without it, concurrent activities can race past the "is the cache still
+# fresh?" check simultaneously, each minting a redundant token, and the
+# two-field cache write isn't atomic — a bad interleaving could leave a token
+# paired with the wrong expiry. The lock plus a double-check after acquiring
+# it ensures only one mint happens per refresh and the pair is always
+# written together.
+_installation_token_lock = asyncio.Lock()
+
 
 def _reset_installation_token_cache() -> None:
     """Test seam: clear the process-wide installation-token cache."""
     _installation_token_cache["token"] = None
     _installation_token_cache["expires_at"] = None
+
+
+def _cached_installation_token_if_fresh() -> str | None:
+    """Return the cached token if it has more than the refresh-skew window
+    left, else ``None``."""
+    cached_token = _installation_token_cache["token"]
+    cached_expiry = _installation_token_cache["expires_at"]
+    if cached_token and cached_expiry is not None:
+        remaining = (cached_expiry - datetime.now(timezone.utc)).total_seconds()
+        if remaining > _TOKEN_REFRESH_SKEW_SECONDS:
+            return cached_token
+    return None
 
 
 # --------------------------------------------------------------------------- #
@@ -78,8 +101,23 @@ def _github_app_configured() -> bool:
     partially-configured app (e.g. ID without a key) is treated as "not
     configured" so devloop falls back to the simpler, still-supported PAT path
     rather than failing outright.
+
+    Once those two are present, ``GITHUB_APP_INSTALLATION_ID`` becomes
+    required too — without it ``_get_installation_token`` would dereference a
+    missing env var and raise an opaque ``KeyError``. We raise a clear,
+    actionable error here, at configuration-detection time, instead.
     """
-    return bool(os.getenv("GITHUB_APP_ID")) and bool(os.getenv("GITHUB_APP_PRIVATE_KEY"))
+    has_id = bool(os.getenv("GITHUB_APP_ID"))
+    has_key = bool(os.getenv("GITHUB_APP_PRIVATE_KEY"))
+    if not (has_id and has_key):
+        return False
+    if not os.getenv("GITHUB_APP_INSTALLATION_ID"):
+        raise RuntimeError(
+            "GitHub App authentication is misconfigured: GITHUB_APP_ID and "
+            "GITHUB_APP_PRIVATE_KEY are set but GITHUB_APP_INSTALLATION_ID is "
+            "missing"
+        )
+    return True
 
 
 def _generate_app_jwt() -> str:
@@ -119,26 +157,11 @@ def _parse_github_timestamp(value: str) -> datetime:
     return datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
 
 
-def _get_installation_token() -> str:
-    """Return a valid installation access token, minting (and caching) a new
-    one when the cached token is missing or within 5 minutes of expiring.
-
-    Flow (GitHub App → installation token, issue #81):
-      1. Sign a JWT with the app's RSA private key (``_generate_app_jwt``).
-      2. ``POST /app/installations/{installation_id}/access_tokens`` using
-         that JWT as the bearer credential.
-      3. Cache the returned token alongside its ``expires_at`` and reuse it
-         until we're within the refresh skew window.
-    """
-    cached_token = _installation_token_cache["token"]
-    cached_expiry = _installation_token_cache["expires_at"]
-    if cached_token and cached_expiry is not None:
-        remaining = (cached_expiry - datetime.now(timezone.utc)).total_seconds()
-        if remaining > _TOKEN_REFRESH_SKEW_SECONDS:
-            return cached_token
-
-    installation_id = os.environ["GITHUB_APP_INSTALLATION_ID"]
-    app_jwt = _generate_app_jwt()
+def _mint_installation_token(installation_id: str, app_jwt: str) -> tuple[str, datetime]:
+    """Blocking HTTP round trip that exchanges an app JWT for an installation
+    access token. Run off the event loop via ``asyncio.to_thread`` — this is
+    the only network I/O in the mint flow, and it's a regular blocking
+    ``httpx.Client`` call."""
     with _app_http_client() as c:
         resp = c.post(
             f"/app/installations/{installation_id}/access_tokens",
@@ -150,25 +173,58 @@ def _get_installation_token() -> str:
         )
         resp.raise_for_status()
         data = resp.json()
-
-    token = data["token"]
-    expires_at = _parse_github_timestamp(data["expires_at"])
-    _installation_token_cache["token"] = token
-    _installation_token_cache["expires_at"] = expires_at
-    log.info(
-        "minted GitHub App installation token (installation %s, expires %s)",
-        installation_id,
-        expires_at.isoformat(),
-    )
-    return token
+    return data["token"], _parse_github_timestamp(data["expires_at"])
 
 
-def _resolve_token(cfg: ProjectConfig) -> str:
+async def _get_installation_token() -> str:
+    """Return a valid installation access token, minting (and caching) a new
+    one when the cached token is missing or within 5 minutes of expiring.
+
+    Flow (GitHub App → installation token, issue #81):
+      1. Sign a JWT with the app's RSA private key (``_generate_app_jwt``).
+      2. ``POST /app/installations/{installation_id}/access_tokens`` using
+         that JWT as the bearer credential — off the event loop, since it's
+         a blocking HTTP round trip (issue #86).
+      3. Cache the returned token alongside its ``expires_at`` and reuse it
+         until we're within the refresh skew window.
+
+    A process-wide ``asyncio.Lock`` serializes the check-mint-store sequence:
+    concurrent callers race the first (lock-free) freshness check, but only
+    one proceeds to mint — the rest block on the lock and, after acquiring
+    it, find the cache already refreshed by the winner and reuse it (issue
+    #86's "double-check" requirement).
+    """
+    cached = _cached_installation_token_if_fresh()
+    if cached is not None:
+        return cached
+
+    async with _installation_token_lock:
+        cached = _cached_installation_token_if_fresh()
+        if cached is not None:
+            return cached
+
+        installation_id = os.environ["GITHUB_APP_INSTALLATION_ID"]
+        app_jwt = _generate_app_jwt()
+        token, expires_at = await asyncio.to_thread(
+            _mint_installation_token, installation_id, app_jwt
+        )
+
+        _installation_token_cache["token"] = token
+        _installation_token_cache["expires_at"] = expires_at
+        log.info(
+            "minted GitHub App installation token (installation %s, expires %s)",
+            installation_id,
+            expires_at.isoformat(),
+        )
+        return token
+
+
+async def _resolve_token(cfg: ProjectConfig) -> str:
     """Resolve the GitHub credential to use for ``cfg``: a GitHub App
     installation token when the app is configured, otherwise the project's
     scoped PAT (existing behavior — fully backward compatible)."""
     if _github_app_configured():
-        return _get_installation_token()
+        return await _get_installation_token()
     return cluster.read_secret_value(cfg.github_token_secret, "GITHUB_TOKEN")
 
 # Agent issue branches are named ``agent/issue-<N>[-slug]`` (see entrypoint.py).
@@ -204,11 +260,36 @@ def _headers(token: str) -> dict[str, str]:
     }
 
 
-def _client(cfg: ProjectConfig):
+async def _client(cfg: ProjectConfig):
     import httpx
 
-    token = _resolve_token(cfg)
+    token = await _resolve_token(cfg)
     return httpx.Client(base_url=GITHUB_API, headers=_headers(token), timeout=30.0)
+
+
+def _log_github_api_failure(action: str, exc: Exception) -> None:
+    """Log a GitHub API failure without raising (issue #87).
+
+    Used by activities that should degrade gracefully on a transient
+    GitHub-side hiccup (expired token, rate limit, missing permission, 404,
+    5xx, connection error) rather than sinking the whole DevLoopWorkflow
+    round — the same posture ``get_pr_diff`` already takes. Logs the status
+    code plus a short excerpt of the response body; never logs headers
+    (which carry the bearer token).
+    """
+    import httpx
+
+    if isinstance(exc, httpx.HTTPStatusError):
+        resp = exc.response
+        excerpt = resp.text[:200].replace("\n", " ")
+        log.warning(
+            "%s: GitHub API returned HTTP %d — %s",
+            action,
+            resp.status_code,
+            excerpt,
+        )
+    else:
+        log.warning("%s: GitHub API request failed — %s", action, exc)
 
 
 # --------------------------------------------------------------------------- #
@@ -248,7 +329,7 @@ async def post_pr_comments(inp: PostCommentsInput) -> None:
 
     cfg = get_project(inp.project_id)
     repo = parse_github_repo(cfg.github_url)
-    with _client(cfg) as c:
+    with await _client(cfg) as c:
         # PR-level summary comment
         c.post(
             f"/repos/{repo}/issues/{inp.pr_number}/comments",
@@ -283,7 +364,7 @@ async def file_issues(inp: FileIssuesInput) -> list[int]:
     cfg = get_project(inp.project_id)
     repo = parse_github_repo(cfg.github_url)
     created: list[int] = []
-    with _client(cfg) as c:
+    with await _client(cfg) as c:
         for issue in inp.issues:
             resp = c.post(
                 f"/repos/{repo}/issues",
@@ -308,14 +389,28 @@ async def post_github_comment(inp: GithubNotificationInput) -> None:
     resolved per project from the project's ``github_token_secret`` Secret,
     so different orgs/owners use different credentials (same pattern as
     ``post_pr_comments``).
+
+    A failed post (expired token, rate limit, issue not found, GitHub 5xx,
+    connection error) is logged and swallowed rather than raised — Temporal
+    would otherwise retry it up to ``_RETRY``'s limit and then fail the whole
+    activity, sinking the round over what's usually a transient GitHub-side
+    hiccup (issue #87, same posture as ``get_pr_diff``).
     """
+    import httpx
+
     cfg = get_project(inp.project_id)
     repo = parse_github_repo(cfg.github_url)
-    with _client(cfg) as c:
-        c.post(
-            f"/repos/{repo}/issues/{inp.issue_number}/comments",
-            json={"body": inp.body},
-        ).raise_for_status()
+    try:
+        with await _client(cfg) as c:
+            c.post(
+                f"/repos/{repo}/issues/{inp.issue_number}/comments",
+                json={"body": inp.body},
+            ).raise_for_status()
+    except httpx.HTTPError as exc:
+        _log_github_api_failure(
+            f"post_github_comment on {repo}#{inp.issue_number}", exc
+        )
+        return
     log.info(
         "posted GitHub comment on %s#%d",
         repo,
@@ -324,39 +419,62 @@ async def post_github_comment(inp: GithubNotificationInput) -> None:
 
 
 @activity.defn
-async def request_github_reviewer(inp: RequestReviewerInput) -> None:
+async def request_github_reviewer(inp: RequestReviewerInput) -> ReviewerRequestResult:
     """Request the project's configured ``pr_reviewer`` as a reviewer on a PR.
 
     Called by DevLoopWorkflow after the review phase. The reviewer is resolved
     from the project registry (``ProjectConfig.pr_reviewer``); the ``reviewer``
     field on the input is used if non-empty, otherwise falls back to the
-    project's configured reviewer. A missing or empty reviewer is silently
-    skipped (not every project configures one).
+    project's configured reviewer. A missing/invalid reviewer or PR number is
+    skipped rather than attempted (not every project configures one).
+
+    Returns a ``ReviewerRequestResult`` describing whether a reviewer was
+    actually requested — and, if not, why (no reviewer configured, no PR to
+    request on, or a GitHub API failure) — so ``_notify_reviewer`` can phrase
+    its notification honestly instead of assuming success (issue #88). A
+    failed request (expired token, missing permission, PR not found, GitHub
+    5xx, connection error) is logged and reported as "failed" rather than
+    raised (issue #87, same posture as ``get_pr_diff``).
     """
+    import httpx
+
     cfg = get_project(inp.project_id)
     reviewer = inp.reviewer or cfg.pr_reviewer
     if not reviewer:
         log.info("no pr_reviewer configured for project %s — skipping", inp.project_id)
-        return
+        return ReviewerRequestResult(
+            requested=False, reason="no reviewer is configured for this project"
+        )
     if inp.pr_number <= 0:
         log.info(
             "request_github_reviewer: invalid pr_number %d for project %s — skipping",
             inp.pr_number,
             inp.project_id,
         )
-        return
+        return ReviewerRequestResult(
+            requested=False, reason="no pull request to request a reviewer on"
+        )
     repo = parse_github_repo(cfg.github_url)
-    with _client(cfg) as c:
-        c.post(
-            f"/repos/{repo}/pulls/{inp.pr_number}/requested_reviewers",
-            json={"reviewers": [reviewer]},
-        ).raise_for_status()
+    try:
+        with await _client(cfg) as c:
+            c.post(
+                f"/repos/{repo}/pulls/{inp.pr_number}/requested_reviewers",
+                json={"reviewers": [reviewer]},
+            ).raise_for_status()
+    except httpx.HTTPError as exc:
+        _log_github_api_failure(
+            f"request_github_reviewer ({reviewer}) on {repo}#{inp.pr_number}", exc
+        )
+        return ReviewerRequestResult(
+            requested=False, reason="GitHub API error requesting a reviewer"
+        )
     log.info(
         "requested %s as reviewer on %s#%d",
         reviewer,
         repo,
         inp.pr_number,
     )
+    return ReviewerRequestResult(requested=True)
 
 
 @activity.defn
@@ -376,7 +494,7 @@ async def get_pr_diff(inp: GetPRDiffInput) -> str:
         return ""
     cfg = get_project(inp.project_id)
     repo = parse_github_repo(cfg.github_url)
-    headers = dict(_headers(_resolve_token(cfg)))
+    headers = dict(_headers(await _resolve_token(cfg)))
     headers["Accept"] = "application/vnd.github.v3.diff"
     import httpx
 
@@ -404,32 +522,47 @@ async def poll_ci_checks(inp: PollCIChecksInput) -> CIChecksResult:
 
     A check run "passes" when its ``status`` is ``completed`` and its
     ``conclusion`` is one of success/neutral/skipped. Anything still in
-    progress or queued is treated as not-yet-passed (so the loop waits rather
-    than dispatching a fix for a check that simply hasn't finished).
+    progress or queued is reported via ``CIChecksResult.pending`` rather than
+    folded into ``failures`` — so ``_ci_fix_loop`` can tell "still
+    running, wait and re-poll" apart from "genuinely red, dispatch a fix"
+    (issue #90) and doesn't burn one of its limited fix attempts on checks
+    that simply haven't finished yet.
+
+    A failed poll (expired token, rate limit, PR not found, GitHub 5xx,
+    connection error) is logged and reported as "pending" — never as
+    "failing" — so a transient GitHub-side hiccup makes the loop wait and
+    re-poll rather than dispatching a spurious fix (issue #87, same posture
+    as ``get_pr_diff``).
     """
+    import httpx
+
     if inp.pr_number <= 0:
-        return CIChecksResult(all_passed=False, failures=[])
+        return CIChecksResult(all_passed=False, pending=False, failures=[])
 
     cfg = get_project(inp.project_id)
     repo = parse_github_repo(cfg.github_url)
-    with _client(cfg) as c:
-        pr = c.get(f"/repos/{repo}/pulls/{inp.pr_number}")
-        pr.raise_for_status()
-        sha = pr.json()["head"]["sha"]
+    try:
+        with await _client(cfg) as c:
+            pr = c.get(f"/repos/{repo}/pulls/{inp.pr_number}")
+            pr.raise_for_status()
+            sha = pr.json()["head"]["sha"]
 
-        runs: list[dict[str, Any]] = []
-        page = 1
-        while True:
-            resp = c.get(
-                f"/repos/{repo}/commits/{sha}/check-runs",
-                params={"per_page": 100, "page": page},
-            )
-            resp.raise_for_status()
-            batch = resp.json().get("check_runs", [])
-            if not batch:
-                break
-            runs.extend(batch)
-            page += 1
+            runs: list[dict[str, Any]] = []
+            page = 1
+            while True:
+                resp = c.get(
+                    f"/repos/{repo}/commits/{sha}/check-runs",
+                    params={"per_page": 100, "page": page},
+                )
+                resp.raise_for_status()
+                batch = resp.json().get("check_runs", [])
+                if not batch:
+                    break
+                runs.extend(batch)
+                page += 1
+    except httpx.HTTPError as exc:
+        _log_github_api_failure(f"poll_ci_checks on {repo}#{inp.pr_number}", exc)
+        return CIChecksResult(all_passed=False, pending=True, failures=[])
 
     failures: list[CICheckFailure] = []
     pending = False
@@ -460,7 +593,11 @@ async def poll_ci_checks(inp: PollCIChecksInput) -> CIChecksResult:
         len(failures),
         all_passed,
     )
-    return CIChecksResult(all_passed=all_passed, failures=failures)
+    return CIChecksResult(
+        all_passed=all_passed,
+        pending=pending and not failures,
+        failures=failures,
+    )
 
 
 @activity.defn
@@ -472,7 +609,7 @@ async def open_agent_pr_issue_numbers(inp: OpenAgentPRsInput) -> list[int]:
     cfg = get_project(inp.project_id)
     repo = parse_github_repo(cfg.github_url)
     pulls: list[dict[str, Any]] = []
-    with _client(cfg) as c:
+    with await _client(cfg) as c:
         page = 1
         while True:
             resp = c.get(

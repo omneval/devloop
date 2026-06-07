@@ -258,9 +258,19 @@ class CICheckFailure:
 
 @dataclass
 class CIChecksResult:
-    """The poll_ci_checks activity's result: pass/fail plus failure details."""
+    """The poll_ci_checks activity's result: pass/fail plus failure details.
+
+    ``pending`` distinguishes "still running — wait and re-poll" from
+    "genuinely failing — dispatch a fix": it's ``True`` only when no check
+    has actually failed yet but at least one is still queued/in-progress (or
+    the poll itself couldn't be completed, e.g. a transient GitHub-side
+    error). ``all_passed`` can be ``False`` while ``pending`` is ``True`` and
+    ``failures`` is empty — that combination means "not done yet", not "red"
+    (issue #90).
+    """
 
     all_passed: bool = False
+    pending: bool = False
     failures: list[CICheckFailure] = field(default_factory=list)
 
 
@@ -274,6 +284,18 @@ class RequestReviewerInput:
     project_id: str
     pr_number: int
     reviewer: str
+
+
+@dataclass
+class ReviewerRequestResult:
+    """Outcome of the request_github_reviewer activity: whether a reviewer
+    was actually requested, and — when not — why (no reviewer configured,
+    no PR to request on, or a GitHub API failure). Lets callers like
+    ``_notify_reviewer`` phrase their notification honestly instead of
+    assuming the request succeeded (issue #88)."""
+
+    requested: bool = False
+    reason: str = ""
 
 
 @dataclass

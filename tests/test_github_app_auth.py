@@ -11,6 +11,7 @@ TDD: written before the implementation; should fail first.
 
 from __future__ import annotations
 
+import asyncio
 import time
 from datetime import datetime, timedelta, timezone
 
@@ -144,6 +145,23 @@ def test_falls_back_to_pat_when_only_private_key_set(monkeypatch):
     assert github_ops._github_app_configured() is False
 
 
+def test_raises_clear_error_when_installation_id_missing(monkeypatch):
+    """issue #89: ID + key without an installation ID must raise a clear,
+    actionable error rather than a raw KeyError surfacing later."""
+    monkeypatch.setenv("GITHUB_APP_ID", "123456")
+    monkeypatch.setenv("GITHUB_APP_PRIVATE_KEY", _PRIVATE_KEY_PEM)
+    monkeypatch.delenv("GITHUB_APP_INSTALLATION_ID", raising=False)
+
+    with pytest.raises(RuntimeError) as exc_info:
+        github_ops._github_app_configured()
+
+    message = str(exc_info.value)
+    assert "GITHUB_APP_INSTALLATION_ID" in message
+    assert "GITHUB_APP_ID" in message
+    assert "GITHUB_APP_PRIVATE_KEY" in message
+    assert not isinstance(exc_info.value, KeyError)
+
+
 # --------------------------------------------------------------------------- #
 # JWT generation
 # --------------------------------------------------------------------------- #
@@ -166,14 +184,14 @@ def test_app_jwt_is_signed_with_private_key_and_has_expected_claims(app_env):
 # --------------------------------------------------------------------------- #
 # Installation token generation + caching
 # --------------------------------------------------------------------------- #
-def test_installation_token_is_fetched_via_post(app_env, monkeypatch):
+async def test_installation_token_is_fetched_via_post(app_env, monkeypatch):
     monkeypatch.setattr(
         github_ops,
         "_app_http_client",
         lambda: FakeAppHTTPClient(),
     )
 
-    token = github_ops._get_installation_token()
+    token = await github_ops._get_installation_token()
 
     assert token == "ghs_fake_installation_token"
     assert len(FakeAppHTTPClient.instances) == 1
@@ -190,15 +208,15 @@ def test_installation_token_is_fetched_via_post(app_env, monkeypatch):
     assert decoded["iss"] == "123456"
 
 
-def test_installation_token_is_cached_between_calls(app_env, monkeypatch):
+async def test_installation_token_is_cached_between_calls(app_env, monkeypatch):
     monkeypatch.setattr(
         github_ops,
         "_app_http_client",
         lambda: FakeAppHTTPClient(),
     )
 
-    first = github_ops._get_installation_token()
-    second = github_ops._get_installation_token()
+    first = await github_ops._get_installation_token()
+    second = await github_ops._get_installation_token()
 
     assert first == second == "ghs_fake_installation_token"
     # Only one POST should have been made — the second call reused the cache.
@@ -206,7 +224,7 @@ def test_installation_token_is_cached_between_calls(app_env, monkeypatch):
     assert len(FakeAppHTTPClient.instances[0].requests) == 1
 
 
-def test_installation_token_is_refreshed_five_minutes_before_expiry(app_env, monkeypatch):
+async def test_installation_token_is_refreshed_five_minutes_before_expiry(app_env, monkeypatch):
     # First token expires in 4 minutes — within the 5-minute refresh window —
     # so the very next call must mint a fresh one rather than reuse the cache.
     soon_expiring = {
@@ -228,15 +246,15 @@ def test_installation_token_is_refreshed_five_minutes_before_expiry(app_env, mon
         lambda: FakeAppHTTPClient(token_response=next(responses)),
     )
 
-    first = github_ops._get_installation_token()
-    second = github_ops._get_installation_token()
+    first = await github_ops._get_installation_token()
+    second = await github_ops._get_installation_token()
 
     assert first == "ghs_almost_expired"
     assert second == "ghs_fresh_token"
     assert len(FakeAppHTTPClient.instances) == 2
 
 
-def test_installation_token_reused_when_comfortably_within_expiry(app_env, monkeypatch):
+async def test_installation_token_reused_when_comfortably_within_expiry(app_env, monkeypatch):
     # Token still has 30 minutes left — well outside the 5-minute refresh
     # window — so it must be reused, not regenerated.
     long_lived = {
@@ -252,16 +270,39 @@ def test_installation_token_reused_when_comfortably_within_expiry(app_env, monke
     )
 
     for _ in range(5):
-        assert github_ops._get_installation_token() == "ghs_long_lived"
+        assert await github_ops._get_installation_token() == "ghs_long_lived"
 
     assert len(FakeAppHTTPClient.instances) == 1
     assert len(FakeAppHTTPClient.instances[0].requests) == 1
 
 
+async def test_concurrent_calls_mint_token_only_once(app_env, monkeypatch):
+    """issue #86: two concurrent _get_installation_token calls against an
+    empty cache must not both mint a fresh token. The lock serializes the
+    check-mint-store sequence — the loser blocks on the lock (acquired by
+    the winner *before* the blocking mint call) and, after a double-check,
+    reuses the winner's freshly-minted token instead of minting again."""
+    monkeypatch.setattr(github_ops, "_app_http_client", lambda: FakeAppHTTPClient())
+
+    first, second = await asyncio.gather(
+        github_ops._get_installation_token(),
+        github_ops._get_installation_token(),
+    )
+
+    assert first == second == "ghs_fake_installation_token"
+    assert len(FakeAppHTTPClient.instances) == 1
+    assert len(FakeAppHTTPClient.instances[0].requests) == 1
+    assert (
+        github_ops._installation_token_cache["token"]
+        == "ghs_fake_installation_token"
+    )
+    assert github_ops._installation_token_cache["expires_at"] is not None
+
+
 # --------------------------------------------------------------------------- #
 # Token resolution dispatcher (GitHub App vs PAT)
 # --------------------------------------------------------------------------- #
-def test_resolve_token_uses_github_app_when_configured(app_env, monkeypatch):
+async def test_resolve_token_uses_github_app_when_configured(app_env, monkeypatch):
     monkeypatch.setattr(
         github_ops,
         "_app_http_client",
@@ -275,12 +316,12 @@ def test_resolve_token_uses_github_app_when_configured(app_env, monkeypatch):
         lambda *a, **k: (_ for _ in ()).throw(AssertionError("PAT path should not run")),
     )
 
-    token = github_ops._resolve_token(_PROJECT)
+    token = await github_ops._resolve_token(_PROJECT)
 
     assert token == "ghs_fake_installation_token"
 
 
-def test_resolve_token_falls_back_to_pat_when_app_not_configured(monkeypatch):
+async def test_resolve_token_falls_back_to_pat_when_app_not_configured(monkeypatch):
     monkeypatch.delenv("GITHUB_APP_ID", raising=False)
     monkeypatch.delenv("GITHUB_APP_PRIVATE_KEY", raising=False)
     monkeypatch.setattr(
@@ -289,7 +330,7 @@ def test_resolve_token_falls_back_to_pat_when_app_not_configured(monkeypatch):
         lambda name, key, **kw: "pat-token-value",
     )
 
-    token = github_ops._resolve_token(_PROJECT)
+    token = await github_ops._resolve_token(_PROJECT)
 
     assert token == "pat-token-value"
 
@@ -297,7 +338,7 @@ def test_resolve_token_falls_back_to_pat_when_app_not_configured(monkeypatch):
 # --------------------------------------------------------------------------- #
 # Backward compatibility: _client() still builds a working PAT-authed client
 # --------------------------------------------------------------------------- #
-def test_client_uses_pat_when_github_app_not_configured(monkeypatch):
+async def test_client_uses_pat_when_github_app_not_configured(monkeypatch):
     monkeypatch.delenv("GITHUB_APP_ID", raising=False)
     monkeypatch.delenv("GITHUB_APP_PRIVATE_KEY", raising=False)
     captured = {}
@@ -309,7 +350,7 @@ def test_client_uses_pat_when_github_app_not_configured(monkeypatch):
 
     monkeypatch.setattr(github_ops.cluster, "read_secret_value", fake_read_secret_value)
 
-    client = github_ops._client(_PROJECT)
+    client = await github_ops._client(_PROJECT)
     try:
         assert client.headers["authorization"] == "Bearer pat-token-value"
     finally:
@@ -318,7 +359,7 @@ def test_client_uses_pat_when_github_app_not_configured(monkeypatch):
     assert captured == {"name": "omneval-agent-github-token", "key": "GITHUB_TOKEN"}
 
 
-def test_client_uses_installation_token_when_github_app_configured(app_env, monkeypatch):
+async def test_client_uses_installation_token_when_github_app_configured(app_env, monkeypatch):
     monkeypatch.setattr(
         github_ops,
         "_app_http_client",
@@ -330,7 +371,7 @@ def test_client_uses_installation_token_when_github_app_configured(app_env, monk
         lambda *a, **k: (_ for _ in ()).throw(AssertionError("PAT path should not run")),
     )
 
-    client = github_ops._client(_PROJECT)
+    client = await github_ops._client(_PROJECT)
     try:
         assert client.headers["authorization"] == "Bearer ghs_fake_installation_token"
     finally:

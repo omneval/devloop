@@ -86,9 +86,12 @@ def test_post_github_comment_posts_to_issues_api(monkeypatch):
             posted_bodies.append({"url": url, "json": json})
             return FakeResponse()
 
+    async def fake_client(cfg):
+        return FakeClient()
+
     monkeypatch.setattr(
         "devloop.github_ops._client",
-        lambda cfg: FakeClient(),
+        fake_client,
     )
 
     import asyncio
@@ -133,7 +136,10 @@ def test_post_github_comment_uses_correct_repo(monkeypatch):
             urls_called.append(url)
             return FakeResponse()
 
-    monkeypatch.setattr("devloop.github_ops._client", lambda cfg: FakeClient())
+    async def fake_client(cfg):
+        return FakeClient()
+
+    monkeypatch.setattr("devloop.github_ops._client", fake_client)
 
     import asyncio
 
