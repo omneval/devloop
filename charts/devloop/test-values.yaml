@@ -1,4 +1,1 @@
 temporalHost: "temporal-frontend.agents.svc:7233"
-
-discordBot:
-  token: "test-token-placeholder"

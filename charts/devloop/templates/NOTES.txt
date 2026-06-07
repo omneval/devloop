@@ -4,12 +4,6 @@ Components:
 {{- if .Values.temporalWorker.enabled }}
   - Temporal Orchestration Worker: {{ .Release.Name }}-temporal-worker
 {{- end }}
-{{- if .Values.discordBot.enabled }}
-  - Discord Bot: {{ .Release.Name }}-discord-bot
-{{- end }}
-{{- if and .Values.poller.enabled .Values.poller.projects }}
-  - GitHub Issue Poller(s): {{ len .Values.poller.projects }} poller(s)
-{{- end }}
 
 NOTE: Temporal must already be running at {{ .Values.temporalHost }}.
 This chart does NOT deploy Temporal.

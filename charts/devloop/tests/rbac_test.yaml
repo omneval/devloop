@@ -5,21 +5,21 @@ templates:
 tests:
   # ─── Document count invariants ───────────────────────────────────────────────
 
-  - it: serviceaccounts.yaml creates 3 SAs when all serviceAccount.create values are true
+  - it: serviceaccounts.yaml creates 2 SAs when all serviceAccount.create values are true
     template: templates/serviceaccounts.yaml
     set:
       temporalHost: "temporal-frontend.agents.svc:7233"
     asserts:
       - hasDocuments:
-          count: 3
+          count: 2
 
-  - it: rbac.yaml creates 6 resources when all serviceAccount.create values are true
+  - it: rbac.yaml creates 4 resources when all serviceAccount.create values are true
     template: templates/rbac.yaml
     set:
       temporalHost: "temporal-frontend.agents.svc:7233"
     asserts:
       - hasDocuments:
-          count: 6
+          count: 4
 
   - it: serviceaccounts.yaml skips temporal-worker SA when its serviceAccount.create is false
     template: templates/serviceaccounts.yaml
@@ -28,7 +28,7 @@ tests:
       temporalWorker.serviceAccount.create: false
     asserts:
       - hasDocuments:
-          count: 2
+          count: 1
 
   - it: rbac.yaml skips temporal-worker RBAC when its serviceAccount.create is false
     template: templates/rbac.yaml
@@ -37,25 +37,7 @@ tests:
       temporalWorker.serviceAccount.create: false
     asserts:
       - hasDocuments:
-          count: 4
-
-  - it: serviceaccounts.yaml skips discord-bot SA when its serviceAccount.create is false
-    template: templates/serviceaccounts.yaml
-    set:
-      temporalHost: "temporal-frontend.agents.svc:7233"
-      discordBot.serviceAccount.create: false
-    asserts:
-      - hasDocuments:
           count: 2
-
-  - it: rbac.yaml skips discord-bot RBAC when its serviceAccount.create is false
-    template: templates/rbac.yaml
-    set:
-      temporalHost: "temporal-frontend.agents.svc:7233"
-      discordBot.serviceAccount.create: false
-    asserts:
-      - hasDocuments:
-          count: 4
 
   - it: serviceaccounts.yaml skips agent-job SA when its serviceAccount.create is false
     template: templates/serviceaccounts.yaml
@@ -64,7 +46,7 @@ tests:
       temporalWorker.agentJob.serviceAccount.create: false
     asserts:
       - hasDocuments:
-          count: 2
+          count: 1
 
   - it: rbac.yaml skips agent-job RBAC when its serviceAccount.create is false
     template: templates/rbac.yaml
@@ -73,20 +55,19 @@ tests:
       temporalWorker.agentJob.serviceAccount.create: false
     asserts:
       - hasDocuments:
-          count: 4
+          count: 2
 
   - it: renders no resources when all serviceAccount.create values are false
     template: templates/serviceaccounts.yaml
     set:
       temporalHost: "temporal-frontend.agents.svc:7233"
       temporalWorker.serviceAccount.create: false
-      discordBot.serviceAccount.create: false
       temporalWorker.agentJob.serviceAccount.create: false
     asserts:
       - hasDocuments:
           count: 0
 
-  # ─── ServiceAccount names (all enabled; indices fixed: 0=tw, 1=db, 2=aj) ───
+  # ─── ServiceAccount names (all enabled; indices fixed: 0=tw, 1=aj) ──────────
 
   - it: temporal-worker SA is at index 0 with default name
     template: templates/serviceaccounts.yaml
@@ -112,7 +93,7 @@ tests:
           path: metadata.name
           value: orchestration-worker
 
-  - it: discord-bot SA is at index 1 with default name
+  - it: agent-job SA is at index 1 with default name
     template: templates/serviceaccounts.yaml
     set:
       temporalHost: "temporal-frontend.agents.svc:7233"
@@ -121,30 +102,6 @@ tests:
         isKind:
           of: ServiceAccount
       - documentIndex: 1
-        equal:
-          path: metadata.name
-          value: RELEASE-NAME-discord-bot
-
-  - it: discord-bot SA uses custom name when serviceAccount.name is set
-    template: templates/serviceaccounts.yaml
-    set:
-      temporalHost: "temporal-frontend.agents.svc:7233"
-      discordBot.serviceAccount.name: "my-discord-sa"
-    asserts:
-      - documentIndex: 1
-        equal:
-          path: metadata.name
-          value: my-discord-sa
-
-  - it: agent-job SA is at index 2 with default name
-    template: templates/serviceaccounts.yaml
-    set:
-      temporalHost: "temporal-frontend.agents.svc:7233"
-    asserts:
-      - documentIndex: 2
-        isKind:
-          of: ServiceAccount
-      - documentIndex: 2
         equal:
           path: metadata.name
           value: RELEASE-NAME-agent-job
@@ -155,7 +112,7 @@ tests:
       temporalHost: "temporal-frontend.agents.svc:7233"
       temporalWorker.agentJob.serviceAccount.name: "my-agent-sa"
     asserts:
-      - documentIndex: 2
+      - documentIndex: 1
         equal:
           path: metadata.name
           value: my-agent-sa
@@ -167,7 +124,6 @@ tests:
     template: templates/rbac.yaml
     set:
       temporalHost: "temporal-frontend.agents.svc:7233"
-      discordBot.serviceAccount.create: false
       temporalWorker.agentJob.serviceAccount.create: false
     asserts:
       - documentIndex: 0
@@ -217,7 +173,6 @@ tests:
     template: templates/rbac.yaml
     set:
       temporalHost: "temporal-frontend.agents.svc:7233"
-      discordBot.serviceAccount.create: false
       temporalWorker.agentJob.serviceAccount.create: false
     asserts:
       - documentIndex: 1
@@ -235,63 +190,6 @@ tests:
         equal:
           path: roleRef.name
           value: RELEASE-NAME-temporal-worker
-
-  # ─── discord-bot Role + RoleBinding ────────────────────────────────────────
-  # Isolate: only discord-bot enabled → rbac.yaml indices [0=Role, 1=RB].
-
-  - it: discord-bot Role allows configmap create and scoped get/update/patch
-    template: templates/rbac.yaml
-    set:
-      temporalHost: "temporal-frontend.agents.svc:7233"
-      temporalWorker.serviceAccount.create: false
-      temporalWorker.agentJob.serviceAccount.create: false
-      discordBot.threadMapConfigMap: "my-thread-map"
-    asserts:
-      - documentIndex: 0
-        isKind:
-          of: Role
-      - documentIndex: 0
-        equal:
-          path: metadata.name
-          value: RELEASE-NAME-discord-bot
-      - documentIndex: 0
-        contains:
-          path: rules
-          content:
-            apiGroups: [""]
-            resources: ["configmaps"]
-            verbs: ["create"]
-      - documentIndex: 0
-        contains:
-          path: rules
-          content:
-            apiGroups: [""]
-            resources: ["configmaps"]
-            resourceNames: ["my-thread-map"]
-            verbs: ["get", "update", "patch"]
-
-  - it: creates discord-bot RoleBinding binding SA to Role
-    template: templates/rbac.yaml
-    set:
-      temporalHost: "temporal-frontend.agents.svc:7233"
-      temporalWorker.serviceAccount.create: false
-      temporalWorker.agentJob.serviceAccount.create: false
-    asserts:
-      - documentIndex: 1
-        isKind:
-          of: RoleBinding
-      - documentIndex: 1
-        equal:
-          path: metadata.name
-          value: RELEASE-NAME-discord-bot
-      - documentIndex: 1
-        equal:
-          path: subjects[0].name
-          value: RELEASE-NAME-discord-bot
-      - documentIndex: 1
-        equal:
-          path: roleRef.name
-          value: RELEASE-NAME-discord-bot
 
   # ─── agent-job Role + RoleBinding ──────────────────────────────────────────
   # Isolate: only agent-job enabled → rbac.yaml indices [0=Role, 1=RB].
@@ -301,7 +199,6 @@ tests:
     set:
       temporalHost: "temporal-frontend.agents.svc:7233"
       temporalWorker.serviceAccount.create: false
-      discordBot.serviceAccount.create: false
     asserts:
       - documentIndex: 0
         isKind:
@@ -323,7 +220,6 @@ tests:
     set:
       temporalHost: "temporal-frontend.agents.svc:7233"
       temporalWorker.serviceAccount.create: false
-      discordBot.serviceAccount.create: false
     asserts:
       - documentIndex: 1
         isKind:
@@ -340,4 +236,3 @@ tests:
         equal:
           path: roleRef.name
           value: RELEASE-NAME-agent-job
-
