@@ -47,9 +47,16 @@ mapped onto GitHub App permission names:
 | **Pull requests** | Read and write | open PRs, request reviewers, post review comments, fetch diffs, poll merge state |
 | **Issues**      | Read and write | read trigger labels, post status comments, file follow-up issues, open summarization digests |
 | **Checks**      | Read           | poll CI status during the CI Fix Loop                                            |
+| **Workflows**   | Read and write | push agent branches that add or edit `.github/workflows/*` files                |
 
 Grant nothing else — devloop never needs Actions, Administration, Webhooks, or
 any account-level permission.
+
+> **Don't skip Workflows.** Without it, any agent branch that touches
+> `.github/workflows/*` is rejected on push with a generic-looking failure
+> (`refusing to allow a GitHub App to create or update workflow ... without
+> \`workflows\` permission`) — the job fails with an opaque "exit status 1"
+> and no indication that a permission, not a bug, is the cause.
 
 ### Manifest (for the manifest creation flow)
 
@@ -64,7 +71,8 @@ any account-level permission.
     "contents": "write",
     "pull_requests": "write",
     "issues": "write",
-    "checks": "read"
+    "checks": "read",
+    "workflows": "write"
   },
   "default_events": []
 }

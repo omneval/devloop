@@ -4,7 +4,8 @@ Triggered by ``webhook.py`` when a human posts a ``pull_request_review`` or an
 ``@devloop-bot``-mentioning ``issue_comment`` on an open ``agent/issue-<N>``
 PR. The workflow re-engages the agent on the existing branch:
 
-    "⏳ queued" ─▶ Phase.PR_COMMENT job (PR diff + comment/review body)
+    "⏳ queued" ─▶ Phase.PR_COMMENT job (PR number + comment/review body;
+                   the agent fetches the diff itself via ``gh pr diff``)
                  ─▶ CI Fix Loop (reuse of ``_WorkflowCommon._ci_fix_loop``)
                  ─▶ request reviewer + post result comment
 
@@ -25,7 +26,6 @@ from temporalio.common import RetryPolicy
 from . import dev_loop_logic as logic
 from ._workflow_common import _WorkflowCommon
 from .shared import (
-    GetPRDiffInput,
     JobStatus,
     Phase,
     TaskSpec,
@@ -33,7 +33,6 @@ from .shared import (
 
 _RETRY = RetryPolicy(maximum_attempts=3)
 _GITHUB_COMMENT_TIMEOUT = timedelta(seconds=60)
-_DIFF_FETCH_TIMEOUT = timedelta(minutes=2)
 
 
 @dataclass
@@ -116,14 +115,6 @@ class PRCommentWorkflow(_WorkflowCommon):
             "⏳ queued — agent is responding to reviewer feedback",
         )
 
-        diff = await workflow.execute_activity(
-            "get_pr_diff",
-            GetPRDiffInput(project_id=inp.project_id, pr_number=inp.pr_number),
-            result_type=str,
-            start_to_close_timeout=_DIFF_FETCH_TIMEOUT,
-            retry_policy=_RETRY,
-        )
-
         spec = TaskSpec(
             phase=Phase.PR_COMMENT.value,
             project_id=inp.project_id,
@@ -131,7 +122,6 @@ class PRCommentWorkflow(_WorkflowCommon):
             branch=inp.branch,
             extra={
                 "pr_number": inp.pr_number,
-                "pr_diff": diff,
                 "comment_body": inp.comment_body,
                 "source": inp.source,
                 "author": inp.author,

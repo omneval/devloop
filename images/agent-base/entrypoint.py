@@ -369,6 +369,25 @@ def _run(cmd: list[str], cwd: str | None = None) -> str:
     ).stdout
 
 
+def _describe_exception(exc: BaseException) -> str:
+    """Render an exception for ``AgentJobResult.error``.
+
+    ``CalledProcessError.__str__`` reports only the command and exit code, not
+    the captured output — which hid the real cause behind failures like
+    GitHub's "refusing to allow a Personal Access Token to create or update
+    workflow `.github/workflows/...` without `workflow` scope" push rejection
+    (it surfaced only as "git push ... returned non-zero exit status 1", with
+    the actual rejection message stuck in ``exc.stderr``). Append the captured
+    stderr/stdout, when present, so the real reason ends up in the job result
+    instead of requiring a log dive."""
+    msg = str(exc)
+    if isinstance(exc, subprocess.CalledProcessError):
+        output = (exc.stderr or exc.stdout or "").strip()
+        if output:
+            msg = f"{msg}\n{output}"
+    return msg
+
+
 # --------------------------------------------------------------------------- #
 # Test-suite discovery and execution
 # --------------------------------------------------------------------------- #
@@ -527,6 +546,38 @@ def _gh(args: list[str]) -> subprocess.CompletedProcess:
     """Run a ``gh`` subcommand, capturing output (never raises)."""
     log.info("$ gh %s", " ".join(args))
     return subprocess.run(["gh", *args], text=True, capture_output=True)
+
+
+# Cap on the PR diff handed to the agent's prompt — keeps the LLM context (and
+# the truncated copy logged for diagnostics) bounded regardless of PR size.
+_MAX_PR_DIFF_CHARS = 60_000
+
+
+def _fetch_pr_diff(repo: str, pr_number: int) -> str:
+    """Fetch a PR's unified diff via ``gh`` (best-effort — never raises).
+
+    The diff used to be fetched by the workflow and threaded through
+    ``TaskSpec.extra["pr_diff"]`` into the ``TASK_SPEC`` env var — which broke
+    for large PRs: a big enough diff pushes a single env var past Linux's
+    ``MAX_ARG_STRLEN`` (128 KiB), and the container fails to even exec Python
+    with "argument list too long". The agent already has ``GH_TOKEN``/``gh``
+    and clones the repo, so it fetches the diff itself, off the env-var path
+    entirely. Returns ``""`` on any failure — the agent still has the
+    comment/review body and branch access to work from."""
+    if pr_number <= 0:
+        return ""
+    result = _gh(["pr", "diff", str(pr_number), "-R", repo])
+    if result.returncode != 0:
+        log.warning(
+            "could not fetch PR #%d diff: %s",
+            pr_number,
+            (result.stderr or result.stdout or "").strip(),
+        )
+        return ""
+    diff = result.stdout or ""
+    if len(diff) > _MAX_PR_DIFF_CHARS:
+        diff = diff[:_MAX_PR_DIFF_CHARS] + "\n... (diff truncated)"
+    return diff
 
 
 def _existing_pr(repo: str, branch: str) -> tuple[str, bool]:
@@ -1244,10 +1295,14 @@ def handle_ci_fix(spec: TaskSpec, tracer) -> dict:
 def handle_pr_comment(spec: TaskSpec, tracer) -> dict:
     """Phase.PR_COMMENT (#78): respond to reviewer feedback on an open agent PR.
 
-    Given the PR diff and the comment/review body (``TaskSpec.extra``), the
-    agent makes targeted changes on the existing branch, commits, and pushes —
-    mirroring ``handle_ci_fix``'s clone → run_agent → commit → push shape. Any
-    pushed commits are picked up by ``PRCommentWorkflow``'s CI fix loop.
+    Given the PR diff and the comment/review body, the agent makes targeted
+    changes on the existing branch, commits, and pushes — mirroring
+    ``handle_ci_fix``'s clone → run_agent → commit → push shape. Any pushed
+    commits are picked up by ``PRCommentWorkflow``'s CI fix loop.
+
+    The diff is fetched here (via ``gh pr diff``), not threaded through
+    ``TASK_SPEC`` — see ``_fetch_pr_diff`` for why a large diff in an env var
+    crashes the container outright.
 
     Note: the agent does **not** post the GitHub reply itself — that happens
     via the workflow's ``post_github_comment`` activity once this Job
@@ -1258,6 +1313,9 @@ def handle_pr_comment(spec: TaskSpec, tracer) -> dict:
         clone_repo(os.environ["GITHUB_URL"], spec.branch, workdir)
     with tracer.start_as_current_span("install_deps"):
         install_deps(workdir)
+
+    pr_number = int(spec.extra.get("pr_number", 0) or 0)
+    spec.extra["pr_diff"] = _fetch_pr_diff(repo_slug(os.environ["GITHUB_URL"]), pr_number)
 
     base_sha = _run(["git", "rev-parse", "HEAD"], cwd=workdir).strip()
     outcome = run_agent(spec, workdir, tracer)
@@ -1438,7 +1496,9 @@ def main() -> int:
         return 0
     except Exception as exc:  # noqa: BLE001
         log.exception("agent job failed")
-        write_output(AgentJobResult(status="failed", error=str(exc)).to_payload())
+        write_output(
+            AgentJobResult(status="failed", error=_describe_exception(exc)).to_payload()
+        )
         return 1
 
 

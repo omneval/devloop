@@ -130,7 +130,7 @@ GitHub App; otherwise it falls back to each project's PAT
 ### Option A — GitHub App (recommended)
 
 Register a `devloop` GitHub App with the exact permission set devloop needs
-(Contents rw, Pull requests rw, Issues rw, Checks read), install it on your
+(Contents rw, Pull requests rw, Issues rw, Checks read, Workflows rw), install it on your
 enrolled repos, and wire the App ID + private key + installation ID into the
 chart via the new `githubApp.*` values (`appId`, `privateKeySecret`,
 `installationId` → forwarded as `GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY`,
@@ -157,6 +157,12 @@ need Option B.
    - **Issues**: Read and write — read labels, post status comments, open
      summarization digest issues
    - **Checks**: Read — poll CI status during the CI Fix Loop
+   - **Workflows**: Read and write — push agent branches that add or edit
+     `.github/workflows/*` files. **Don't skip this**: without it, a push
+     touching workflow files is rejected with a generic-looking failure
+     (`refusing to allow a Personal Access Token to create or update
+     workflow ... without \`workflow\` scope`) — the job just fails with an
+     opaque "exit status 1" and no obvious permission-related cause.
 3. **Store the PAT as a Kubernetes Secret** — this is the value referenced by
    each project's `github_token_secret` in the Project Registry (Step 5a):
 

@@ -35,7 +35,6 @@ class Mocks:
     pr_comment_commits: int = 1
     pr_comment_pr_url: str = "https://github.com/omneval/omneval/pull/17"
     pr_comment_summary: str = "Pushed `abc1234`: renamed the helper per feedback."
-    pr_diff: str = "diff --git a/foo.py b/foo.py\n+print('hi')\n"
     ci_poll_results: list = field(default_factory=list)
     ci_poll_calls: int = 0
     ci_fix_commits: list = field(default_factory=lambda: [1])
@@ -45,7 +44,6 @@ class Mocks:
     dispatched_phases: list = field(default_factory=list)
     dispatched_specs: list = field(default_factory=list)
     reviewer_requests: list = field(default_factory=list)
-    diff_requests: list = field(default_factory=list)
     ci_polls: list = field(default_factory=list)
 
     @property
@@ -98,11 +96,6 @@ def _make_activities():
     async def request_github_reviewer(inp) -> None:
         M.reviewer_requests.append(inp)
 
-    @activity.defn(name="get_pr_diff")
-    async def get_pr_diff(inp) -> str:
-        M.diff_requests.append(inp)
-        return M.pr_diff
-
     @activity.defn(name="poll_ci_checks")
     async def poll_ci_checks(inp) -> CIChecksResult:
         M.ci_polls.append(inp)
@@ -118,7 +111,6 @@ def _make_activities():
         "orchestration": [
             post_github_comment,
             request_github_reviewer,
-            get_pr_diff,
             poll_ci_checks,
         ],
     }
@@ -189,18 +181,18 @@ async def test_pr_comment_workflow_full_flow(reset_mocks):
     assert queued, "expected a queued comment"
     assert "responding to reviewer feedback" in queued[0].lower()
 
-    # Phase.PR_COMMENT dispatched with PR diff + comment body in extra
+    # Phase.PR_COMMENT dispatched with PR number + comment body in extra
+    # (the agent fetches the diff itself via `gh pr diff` — see _fetch_pr_diff —
+    # rather than the workflow threading it through TASK_SPEC, which broke for
+    # large PRs: a big diff blew past Linux's per-env-var size limit)
     assert "pr_comment" in M.dispatched_phases
     pr_comment_specs = [s for s in M.dispatched_specs if s.get("phase") == "pr_comment"]
     assert pr_comment_specs
     extra = pr_comment_specs[0]["extra"]
-    assert extra["pr_diff"] == M.pr_diff
+    assert "pr_diff" not in extra
     assert extra["comment_body"] == "Please rename this function."
     assert extra["pr_number"] == 17
     assert extra["source"] == "review"
-
-    # diff was fetched for the right PR
-    assert len(M.diff_requests) == 1
 
     # CI checks were polled (loop ran, passed immediately => no ci_fix dispatch)
     assert len(M.ci_polls) == 1

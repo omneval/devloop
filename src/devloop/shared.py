@@ -307,20 +307,6 @@ class ReviewerRequestResult:
     reason: str = ""
 
 
-@dataclass
-class GetPRDiffInput:
-    """Input for the get_pr_diff activity.
-
-    Fetches the unified diff for a PR (``Accept: application/vnd.github.diff``)
-    so ``PRCommentWorkflow`` can hand the reviewer/commenter's targeted feedback
-    *and* the actual code under discussion to the ``Phase.PR_COMMENT`` Agent
-    Execution Job via ``TaskSpec.extra``.
-    """
-
-    project_id: str
-    pr_number: int
-
-
 # ---------------------------------------------------------------------------
 # Summarization delivery activity I/O (issue #79)
 # ---------------------------------------------------------------------------
