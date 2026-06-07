@@ -308,6 +308,23 @@ async def test_plan_skips_issue_with_open_review_pr(reset_mocks):
 
 
 @pytest.mark.asyncio
+async def test_plan_phase_scopes_to_triggering_issue(reset_mocks):
+    """The Plan TaskSpec must carry the triggering issue's number so the Plan
+    agent scopes its work to that single issue rather than replanning the
+    whole agent-ready backlog (which let the agent pick a different — and
+    possibly much larger — issue to execute first, surprising whoever applied
+    the agent_label to trigger this run; caught in real-cluster E2E testing)."""
+    reset_mocks.plan_rounds = [_one_issue(7)]
+    await _env_and_run(DevLoopInput("omneval", triggering_issue=7), [])
+
+    plan_specs = [
+        s for p, s in zip(M.dispatched_phases, M.dispatched_specs) if p == "plan"
+    ]
+    assert plan_specs
+    assert plan_specs[0]["issue_number"] == 7
+
+
+@pytest.mark.asyncio
 async def test_autonomous_round_plan_execute_review_notify(reset_mocks):
     """Full autonomous round: plan → execute → review → reviewer notification.
     No human gates, no human replies needed. Result has queued_for_review."""

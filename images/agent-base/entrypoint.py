@@ -906,6 +906,7 @@ def _prompt_variables(spec: TaskSpec) -> dict[str, str]:
         feedback = (spec.extra.get("feedback") or "").strip()
         return {
             "AGENT_LABEL": spec.extra.get("agent_label", "agent-ready"),
+            "TRIGGERING_ISSUE": str(spec.issue_number),
             "FEEDBACK": (
                 "# REVISION\n\nThe previous plan was rejected. Address this "
                 f"feedback before re-planning:\n\n{feedback}"

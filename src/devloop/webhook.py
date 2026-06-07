@@ -108,7 +108,7 @@ def create_app(client: Client, projects: list[ProjectConfig]) -> FastAPI:
         wf_id = f"devloop-{project.id}"
         await client.start_workflow(
             "DevLoopWorkflow",
-            _dev_loop_input(project.id, project.agent_label),
+            _dev_loop_input(project.id, project.agent_label, issue_number),
             id=wf_id,
             task_queue=ORCHESTRATION_QUEUE,
             id_conflict_policy=WorkflowIDConflictPolicy.USE_EXISTING,
@@ -224,10 +224,14 @@ def create_app(client: Client, projects: list[ProjectConfig]) -> FastAPI:
 
 # Inputs are built lazily to avoid importing the workflow modules (and their
 # passthrough deps) at module import time in the webhook process path.
-def _dev_loop_input(project_id: str, agent_label: str):
+def _dev_loop_input(project_id: str, agent_label: str, triggering_issue=None):
     from .dev_loop import DevLoopInput
 
-    return DevLoopInput.from_env(project_id, agent_label)
+    try:
+        issue = int(triggering_issue or 0)
+    except (TypeError, ValueError):
+        issue = 0
+    return DevLoopInput.from_env(project_id, agent_label, issue)
 
 
 def _pr_comment_input(

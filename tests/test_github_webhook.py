@@ -44,6 +44,7 @@ class _FakeClient:
             {
                 "workflow": workflow_name,
                 "project_id": arg.project_id if hasattr(arg, "project_id") else None,
+                "triggering_issue": getattr(arg, "triggering_issue", None),
                 "id": id,
                 "task_queue": task_queue,
                 "id_conflict_policy": kwargs.get("id_conflict_policy"),
@@ -140,6 +141,30 @@ def test_valid_signature_starts_devloop_workflow(client_and_spy):
 
     assert wf["id"] == f"devloop-{_PROJECT_ID}"
     assert wf["id_conflict_policy"] == WorkflowIDConflictPolicy.USE_EXISTING
+
+
+def test_labeled_event_passes_triggering_issue_to_workflow(client_and_spy):
+    """The DevLoopInput started for a labeling event must carry the issue
+    number that triggered it (here #42, from _labeled_payload), so the Plan
+    phase scopes to that single issue rather than replanning the whole
+    agent-ready backlog (caught in real-cluster E2E testing — without this,
+    the agent could pick a different, larger issue to execute first)."""
+    tc, fake = client_and_spy
+    body = _labeled_payload()
+    sig = _sign(body, _SECRET)
+
+    resp = tc.post(
+        "/webhook/github",
+        content=body,
+        headers={
+            "X-GitHub-Event": "issues",
+            "X-Hub-Signature-256": sig,
+            "Content-Type": "application/json",
+        },
+    )
+
+    assert resp.status_code == 200
+    assert fake.started[0]["triggering_issue"] == 42
 
 
 # ---------------------------------------------------------------------------

@@ -175,6 +175,26 @@ def test_build_agent_message_renders_bundled_prompt(monkeypatch):
     assert "{{" not in msg  # every placeholder substituted or stripped
 
 
+def test_build_agent_message_scopes_plan_to_triggering_issue(monkeypatch):
+    """The plan prompt must be rendered with the triggering issue's number
+    (TaskSpec.issue_number) substituted into {{TRIGGERING_ISSUE}}, so the Plan
+    agent fetches and scopes its work to that single issue rather than
+    replanning the whole agent-ready backlog (caught in real-cluster E2E
+    testing — without this, the agent could pick a different, larger issue to
+    execute first, surprising whoever applied the agent-ready label)."""
+    prompts_dir = Path(__file__).parent / "prompts"
+    monkeypatch.setenv("AGENT_PROMPTS_DIR", str(prompts_dir))
+    spec = entrypoint.TaskSpec(
+        phase="plan",
+        project_id="omneval",
+        issue_number=42,
+        extra={"agent_label": "agent-ready"},
+    )
+    msg = entrypoint.build_agent_message(spec)
+    assert "gh issue view 42" in msg
+    assert "{{" not in msg
+
+
 def test_structured_extractor_plan_via_llm(monkeypatch):
     """structured_extractor extracts PlanOutput from LLM response with response_format."""
     from openai.types.chat import ChatCompletion, ChatCompletionMessage

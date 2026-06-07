@@ -53,10 +53,18 @@ class DevLoopInput:
     # phase run may spawn before the workflow stops asking and tells the parked
     # job to proceed with its best guess.
     max_questions_per_phase: int = 3
+    # The issue whose `agent_label` triggered this run. Scopes the Plan phase
+    # to that single issue instead of replanning the whole agent-ready backlog
+    # — see _plan_phase. 0 only for legacy/test inputs; the webhook always
+    # supplies a real issue number since it's the sole entry point.
+    triggering_issue: int = 0
 
     @classmethod
     def from_env(
-        cls, project_id: str, agent_label: str = "agent-ready"
+        cls,
+        project_id: str,
+        agent_label: str = "agent-ready",
+        triggering_issue: int = 0,
     ) -> "DevLoopInput":
         """Build an input with the timeout gates sourced from the worker env.
 
@@ -80,6 +88,7 @@ class DevLoopInput:
         return cls(
             project_id=project_id,
             agent_label=agent_label,
+            triggering_issue=triggering_issue,
             ci_fix_max_iterations=_int(
                 "CI_FIX_MAX_ITERATIONS", cls.ci_fix_max_iterations
             ),
@@ -191,13 +200,20 @@ class DevLoopWorkflow(_WorkflowCommon):
     async def _plan_phase(self, inp: DevLoopInput, rnd: int) -> dict | None:
         """Dispatch the Plan Agent Execution Job and return the plan directly.
 
-        No human-approval gate. ``_drop_issues_in_review`` filters out any
-        issues that already have an open agent PR so the planner doesn't
-        re-surface them each round.
+        Scoped to ``inp.triggering_issue`` — the issue whose ``agent_label``
+        triggered this run — rather than the entire agent-ready backlog. A
+        labeling event signals intent to work *that* issue; replanning across
+        every open issue let the agent pick a different (and possibly much
+        larger) one to execute first, surprising whoever applied the label.
+
+        No human-approval gate. ``_drop_issues_in_review`` filters out the
+        issue if it already has an open agent PR (e.g. a prior round already
+        queued it) so the planner doesn't re-surface it.
         """
         spec = TaskSpec(
             phase="plan",
             project_id=inp.project_id,
+            issue_number=inp.triggering_issue,
             extra={"agent_label": inp.agent_label},
         )
         result = await self._dispatch(inp.project_id, spec, poll_interval_seconds=inp.poll_interval_seconds)
