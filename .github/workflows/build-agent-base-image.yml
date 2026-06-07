@@ -33,9 +33,14 @@ jobs:
 
       # Run from the repo root so uv uses the root project (local omneval-devloop),
       # which provides devloop.shared that entrypoint.py imports — rather than the
-      # image's own pyproject.toml (whose heavy deps the mocked tests don't need).
+      # image's own pyproject.toml. test_skills.py's filesystem tests exercise the
+      # real openhands-sdk skill loader, so pin those two extras to the same
+      # version images/agent-base/pyproject.toml builds against.
       - name: Run entrypoint tests
-        run: uv run --with pytest --with pytest-asyncio pytest images/agent-base -q
+        run: |
+          uv run --with pytest --with pytest-asyncio \
+            --with openhands-sdk==1.24.0 --with openhands-tools==1.24.0 \
+            pytest images/agent-base -q
 
   build_and_push:
     name: Build and push agent-base to GHCR
