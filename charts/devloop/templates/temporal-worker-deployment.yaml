@@ -58,6 +58,21 @@ spec:
               value: {{ .Values.temporalWorker.maxConcurrentJobs | default 1 | quote }}
             - name: AGENT_GITHUB_LOGIN
               value: {{ .Values.temporalWorker.agentGithubLogin | default "devloop-bot" | quote }}
+            {{- with .Values.githubApp.appId }}
+            - name: GITHUB_APP_ID
+              value: {{ . | quote }}
+            {{- end }}
+            {{- if .Values.githubApp.privateKeySecret.name }}
+            - name: GITHUB_APP_PRIVATE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.githubApp.privateKeySecret.name }}
+                  key: {{ .Values.githubApp.privateKeySecret.key }}
+            {{- end }}
+            {{- with .Values.githubApp.installationId }}
+            - name: GITHUB_APP_INSTALLATION_ID
+              value: {{ . | quote }}
+            {{- end }}
             - name: GIT_AUTHOR_NAME
               value: {{ .Values.agent.gitName | default "homelab-agent" | quote }}
             - name: GIT_AUTHOR_EMAIL

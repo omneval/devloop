@@ -132,6 +132,35 @@ temporalWorker:
   replicas: 1
 
 # ---------------------------------------------------------------------------
+# GitHub App authentication (issue #81)
+# ---------------------------------------------------------------------------
+# Recommended replacement for the per-project fine-grained PAT
+# (`github_token_secret`): devloop-bot authenticates as a GitHub App and mints
+# short-lived (1h) installation access tokens on demand from an RSA private
+# key, refreshed 5 minutes before they expire. See docs/github-app.md for the
+# app manifest / required permission set (Contents rw, Pull requests rw,
+# Issues rw, Checks read) and full setup instructions.
+#
+# Opt-in and fully backward compatible: devloop only switches to GitHub App
+# auth when BOTH appId and privateKeySecret resolve to a non-empty value —
+# otherwise it falls back to each project's `github_token_secret` PAT exactly
+# as before. Leave this section empty/unset to keep using PATs.
+githubApp:
+  # GitHub App ID (shown on the app's settings page). Forwarded as
+  # GITHUB_APP_ID.
+  appId: ""
+  # Reference to a K8s Secret holding the App's RSA private key (the .pem
+  # downloaded when generating a private key for the app). Forwarded as
+  # GITHUB_APP_PRIVATE_KEY via secretKeyRef.
+  # privateKeySecret: { name: devloop-github-app-key, key: privateKey }
+  privateKeySecret: {}
+  # Installation ID selecting which installation of the app to mint tokens
+  # for (the numeric segment of
+  # https://github.com/settings/installations/<installation_id>). Forwarded
+  # as GITHUB_APP_INSTALLATION_ID.
+  installationId: ""
+
+# ---------------------------------------------------------------------------
 # Agent Execution Job identity
 # ---------------------------------------------------------------------------
 # Git author identity used by Agent Execution Jobs when committing to enrolled

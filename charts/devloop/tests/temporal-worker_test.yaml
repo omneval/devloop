@@ -327,3 +327,50 @@ tests:
           content:
             name: AGENT_LLM_API_KEY
             value: "sk-local"
+
+  - it: injects GitHub App env vars from githubApp values (issue #81)
+    template: templates/temporal-worker-deployment.yaml
+    set:
+      temporalHost: "temporal-frontend.agents.svc:7233"
+      githubApp.appId: "123456"
+      githubApp.installationId: "987654"
+      githubApp.privateKeySecret:
+        name: devloop-github-app-key
+        key: privateKey
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: GITHUB_APP_ID
+            value: "123456"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: GITHUB_APP_INSTALLATION_ID
+            value: "987654"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: GITHUB_APP_PRIVATE_KEY
+            valueFrom:
+              secretKeyRef:
+                name: devloop-github-app-key
+                key: privateKey
+
+  - it: omits GitHub App env vars when githubApp values are not set (PAT fallback, issue #81)
+    template: templates/temporal-worker-deployment.yaml
+    set:
+      temporalHost: "temporal-frontend.agents.svc:7233"
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: GITHUB_APP_ID
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: GITHUB_APP_PRIVATE_KEY
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: GITHUB_APP_INSTALLATION_ID

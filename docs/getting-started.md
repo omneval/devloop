@@ -92,20 +92,50 @@ GitHub signs every delivery with `X-Hub-Signature-256` using the webhook
 secret; devloop verifies this signature whenever `GITHUB_WEBHOOK_SECRET` is
 set on the worker (strongly recommended — see Step 6).
 
-## Step 3: Set Up the `devloop-bot` GitHub Account
+## Step 3: Set Up GitHub Authentication for devloop-bot
 
-devloop acts on GitHub as a dedicated bot account (`devloop-bot` by
+devloop acts on GitHub as a dedicated bot identity (`devloop-bot` by
 convention — configurable via `temporalWorker.agentGithubLogin`). This keeps
 the agent's activity (PRs, review requests, status comments, replies) clearly
 attributed and lets the webhook receiver filter out the bot's own
 comments/reviews so they don't loop back and re-trigger workflows.
+
+There are two ways to authenticate as that identity. **Pick one:**
+
+| Path | Best for |
+|------|----------|
+| **GitHub App** (recommended) | Production deployments, multiple repos/orgs, or operators who want to avoid managing a bot account. Short-lived (1h) tokens generated on demand — nothing long-lived to leak or rotate. Installable per-repo, and publishable so other devloop users can install it on their own repos without creating a bot account. |
+| **Fine-grained PAT** (simpler fallback) | Quick local setups, single-repo experiments, or anyone who'd rather not register a GitHub App. One token to create and store; works exactly as before. |
+
+devloop auto-detects which one is configured: if `GITHUB_APP_ID` and
+`GITHUB_APP_PRIVATE_KEY` are both set on the worker, it authenticates as a
+GitHub App; otherwise it falls back to each project's PAT
+(`github_token_secret`). **Existing PAT-based deployments need no changes.**
+
+### Option A — GitHub App (recommended)
+
+Register a `devloop` GitHub App with the exact permission set devloop needs
+(Contents rw, Pull requests rw, Issues rw, Checks read), install it on your
+enrolled repos, and wire the App ID + private key + installation ID into the
+chart via the new `githubApp.*` values (`appId`, `privateKeySecret`,
+`installationId` → forwarded as `GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY`,
+`GITHUB_APP_INSTALLATION_ID`).
+
+Full walkthrough — including the app manifest, the required permission table,
+private-key/Secret setup, and how token minting + refresh works — lives in
+**[GitHub App Setup for devloop-bot](github-app.md)**. Follow that guide, then
+skip directly to [Step 4](#step-4-install-temporal) below; you do **not** also
+need Option B.
+
+### Option B — Fine-grained PAT (simpler fallback)
 
 1. **Create a GitHub account** dedicated to the bot (e.g. `devloop-bot`), and
    add it as a collaborator (or member, for an org) with write access to each
    repository you plan to enroll.
 2. **Generate a fine-grained personal access token** (Settings → Developer
    settings → Personal access tokens → Fine-grained tokens) scoped to the
-   enrolled repositories, with these **Repository permissions**:
+   enrolled repositories, with these **Repository permissions** (the same set
+   the GitHub App path uses):
    - **Contents**: Read and write — clone, commit, and push branches
    - **Pull requests**: Read and write — open PRs, request reviewers, reply to
      review comments
@@ -415,7 +445,7 @@ reuse SDK activities for Kubernetes Job dispatch and GitHub Issue notifications.
 | `agent_image`         | Yes      | string | Container image for the project agent             |
 | `agent_label`         | Yes      | string | GitHub issue label to trigger Dev Loop           |
 | `omneval_ingest_secret` | Yes    | string | K8s secret name for Omneval ingest API key       |
-| `github_token_secret` | Yes      | string | K8s secret name for the devloop-bot GitHub token (also used for posting issue comments) |
+| `github_token_secret` | Yes      | string | K8s secret name for the devloop-bot GitHub token (also used for posting issue comments). Used as the auth fallback when GitHub App auth (`githubApp.*` / `GITHUB_APP_ID` + `GITHUB_APP_PRIVATE_KEY`) is not configured — see [GitHub App Setup](github-app.md) |
 | `pr_reviewer`         | No       | string | GitHub login requested as reviewer after CI Fix Loop and Review phases complete |
 
 ## Configuration Reference
@@ -423,7 +453,10 @@ reuse SDK activities for Kubernetes Job dispatch and GitHub Issue notifications.
 | Setting                          | Description                                                                                   |
 |----------------------------------|-----------------------------------------------------------------------------------------------|
 | `temporalHost`                   | Temporal frontend gRPC address; set in Helm values to point at your Temporal cluster          |
-| `GITHUB_TOKEN`                   | devloop-bot GitHub token used to post comments, open PRs, and request reviewers (per project via `github_token_secret`) |
+| `GITHUB_TOKEN`                   | devloop-bot GitHub token used to post comments, open PRs, and request reviewers (per project via `github_token_secret`) — used when GitHub App auth is not configured |
+| `GITHUB_APP_ID` / `githubApp.appId` | **Recommended** — GitHub App ID; together with `GITHUB_APP_PRIVATE_KEY` switches devloop-bot to GitHub App authentication (short-lived installation tokens) instead of a PAT. See [GitHub App Setup](github-app.md) |
+| `GITHUB_APP_PRIVATE_KEY` / `githubApp.privateKeySecret` | RSA private key for the GitHub App, sourced from a K8s Secret (`{name, key}`) and forwarded via `secretKeyRef`. Used to sign the JWTs devloop exchanges for installation access tokens |
+| `GITHUB_APP_INSTALLATION_ID` / `githubApp.installationId` | Selects which installation of the GitHub App devloop mints installation tokens for |
 | `GITHUB_WEBHOOK_SECRET`          | HMAC secret for verifying GitHub webhook payload signatures (set on the temporal-worker pod via `extraEnv` + the `github-webhook-secret` Secret — strongly recommended) |
 | `temporalWorker.agentGithubLogin`| GitHub login of the devloop-bot account (default `devloop-bot`). Forwarded as `AGENT_GITHUB_LOGIN`; the webhook receiver uses it to filter out the bot's own comments/reviews so they don't re-trigger workflows |
 | `temporalWorker.maxConcurrentJobs` | Maximum number of Agent Execution Job dispatches (and LLM-bearing activities) that may run concurrently across all workflow types and projects. Forwarded as `MAX_CONCURRENT_JOBS`. Default `1` |

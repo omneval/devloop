@@ -1,9 +1,24 @@
-"""GitHub REST activities for the Dev Loop (issues #22, #23).
+"""GitHub REST activities for the Dev Loop (issues #22, #23, #81).
 
-Network access is via ``httpx`` against the GitHub REST API. Each enrolled
-project carries its own scoped GitHub token (``github_token_secret`` in the
-registry); the token is resolved per project from that Secret at call time, so
-different orgs/owners use different credentials.
+Network access is via ``httpx`` against the GitHub REST API.
+
+Two authentication modes are supported for devloop-bot:
+
+* **GitHub App** (recommended, issue #81) — when ``GITHUB_APP_ID`` and
+  ``GITHUB_APP_PRIVATE_KEY`` are set, devloop mints short-lived (1h)
+  installation access tokens: a JWT is signed with the app's RSA private key
+  and exchanged via ``POST /app/installations/{id}/access_tokens``. The
+  resulting token is cached process-wide and refreshed 5 minutes before it
+  expires. ``GITHUB_APP_INSTALLATION_ID`` selects which installation to use.
+* **Fine-grained PAT** (existing, fallback) — each enrolled project carries
+  its own scoped GitHub token (``github_token_secret`` in the registry); the
+  token is resolved per project from that Secret at call time, so different
+  orgs/owners use different credentials.
+
+When GitHub App auth is configured it takes priority for *all* projects (the
+app is installed per-repo on GitHub's side); otherwise devloop falls back to
+the project's PAT. This keeps existing PAT-based deployments working
+unchanged.
 """
 
 from __future__ import annotations
@@ -11,7 +26,9 @@ from __future__ import annotations
 import logging
 import os
 import re
+import time
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any
 
 from temporalio import activity
@@ -32,6 +49,127 @@ from .shared import (
 log = logging.getLogger(__name__)
 
 GITHUB_API = os.getenv("GITHUB_API", "https://api.github.com")
+
+# Refresh installation tokens this long before they actually expire, so a
+# long-running activity never gets caught mid-call with a token that GitHub
+# has just rejected.
+_TOKEN_REFRESH_SKEW_SECONDS = 5 * 60
+
+# Process-wide cache for the current installation access token: (token, expiry).
+# GitHub App auth is global (one app installed across the orgs/repos devloop
+# manages), so a single cache entry — rather than one per project — is correct
+# and avoids needless POSTs to /access_tokens.
+_installation_token_cache: dict[str, Any] = {"token": None, "expires_at": None}
+
+
+def _reset_installation_token_cache() -> None:
+    """Test seam: clear the process-wide installation-token cache."""
+    _installation_token_cache["token"] = None
+    _installation_token_cache["expires_at"] = None
+
+
+# --------------------------------------------------------------------------- #
+# GitHub App authentication (issue #81)
+# --------------------------------------------------------------------------- #
+def _github_app_configured() -> bool:
+    """True when devloop should authenticate as a GitHub App rather than a PAT.
+
+    Both ``GITHUB_APP_ID`` and ``GITHUB_APP_PRIVATE_KEY`` must be set — a
+    partially-configured app (e.g. ID without a key) is treated as "not
+    configured" so devloop falls back to the simpler, still-supported PAT path
+    rather than failing outright.
+    """
+    return bool(os.getenv("GITHUB_APP_ID")) and bool(os.getenv("GITHUB_APP_PRIVATE_KEY"))
+
+
+def _generate_app_jwt() -> str:
+    """Build the short-lived JWT GitHub Apps use to authenticate as themselves.
+
+    Per GitHub's App authentication docs: RS256-signed, ``iss`` is the App ID,
+    ``iat`` is set 60s in the past to tolerate clock drift between devloop and
+    GitHub's servers, and ``exp`` is capped at GitHub's 10-minute maximum (we
+    use a conservative 9 minutes). This JWT is itself only used to mint
+    installation access tokens — it is never sent on regular API calls.
+    """
+    import jwt as pyjwt
+
+    app_id = os.environ["GITHUB_APP_ID"]
+    private_key = os.environ["GITHUB_APP_PRIVATE_KEY"]
+    now = int(time.time())
+    payload = {
+        "iat": now - 60,
+        "exp": now + (9 * 60),
+        "iss": app_id,
+    }
+    return pyjwt.encode(payload, private_key, algorithm="RS256")
+
+
+def _app_http_client():
+    """Build the (unauthenticated-by-default) httpx client used to mint
+    installation tokens. Factored out as its own seam so tests can substitute
+    a fake transport without reaching across the network."""
+    import httpx
+
+    return httpx.Client(base_url=GITHUB_API, timeout=30.0)
+
+
+def _parse_github_timestamp(value: str) -> datetime:
+    """Parse a GitHub API timestamp (``2024-01-01T00:00:00Z``) into an aware
+    UTC ``datetime``."""
+    return datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+
+
+def _get_installation_token() -> str:
+    """Return a valid installation access token, minting (and caching) a new
+    one when the cached token is missing or within 5 minutes of expiring.
+
+    Flow (GitHub App → installation token, issue #81):
+      1. Sign a JWT with the app's RSA private key (``_generate_app_jwt``).
+      2. ``POST /app/installations/{installation_id}/access_tokens`` using
+         that JWT as the bearer credential.
+      3. Cache the returned token alongside its ``expires_at`` and reuse it
+         until we're within the refresh skew window.
+    """
+    cached_token = _installation_token_cache["token"]
+    cached_expiry = _installation_token_cache["expires_at"]
+    if cached_token and cached_expiry is not None:
+        remaining = (cached_expiry - datetime.now(timezone.utc)).total_seconds()
+        if remaining > _TOKEN_REFRESH_SKEW_SECONDS:
+            return cached_token
+
+    installation_id = os.environ["GITHUB_APP_INSTALLATION_ID"]
+    app_jwt = _generate_app_jwt()
+    with _app_http_client() as c:
+        resp = c.post(
+            f"/app/installations/{installation_id}/access_tokens",
+            headers={
+                "Authorization": f"Bearer {app_jwt}",
+                "Accept": "application/vnd.github+json",
+                "X-GitHub-Api-Version": "2022-11-28",
+            },
+        )
+        resp.raise_for_status()
+        data = resp.json()
+
+    token = data["token"]
+    expires_at = _parse_github_timestamp(data["expires_at"])
+    _installation_token_cache["token"] = token
+    _installation_token_cache["expires_at"] = expires_at
+    log.info(
+        "minted GitHub App installation token (installation %s, expires %s)",
+        installation_id,
+        expires_at.isoformat(),
+    )
+    return token
+
+
+def _resolve_token(cfg: ProjectConfig) -> str:
+    """Resolve the GitHub credential to use for ``cfg``: a GitHub App
+    installation token when the app is configured, otherwise the project's
+    scoped PAT (existing behavior — fully backward compatible)."""
+    if _github_app_configured():
+        return _get_installation_token()
+    return cluster.read_secret_value(cfg.github_token_secret, "GITHUB_TOKEN")
 
 # Agent issue branches are named ``agent/issue-<N>[-slug]`` (see entrypoint.py).
 _AGENT_BRANCH = re.compile(r"^agent/issue-(\d+)")
@@ -69,7 +207,7 @@ def _headers(token: str) -> dict[str, str]:
 def _client(cfg: ProjectConfig):
     import httpx
 
-    token = cluster.read_secret_value(cfg.github_token_secret, "GITHUB_TOKEN")
+    token = _resolve_token(cfg)
     return httpx.Client(base_url=GITHUB_API, headers=_headers(token), timeout=30.0)
 
 
@@ -238,7 +376,7 @@ async def get_pr_diff(inp: GetPRDiffInput) -> str:
         return ""
     cfg = get_project(inp.project_id)
     repo = parse_github_repo(cfg.github_url)
-    headers = dict(_headers(cluster.read_secret_value(cfg.github_token_secret, "GITHUB_TOKEN")))
+    headers = dict(_headers(_resolve_token(cfg)))
     headers["Accept"] = "application/vnd.github.v3.diff"
     import httpx
 
