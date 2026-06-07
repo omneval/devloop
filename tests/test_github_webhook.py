@@ -136,7 +136,7 @@ def test_valid_signature_starts_devloop_workflow(client_and_spy):
     assert wf["workflow"] == "DevLoopWorkflow"
     assert wf["project_id"] == _PROJECT_ID
     # Stable per-project ID + USE_EXISTING so N issues collapse to one Dev Loop
-    # run (no duplicate workflows / duplicate Discord threads).
+    # run (no duplicate workflows / duplicate notification threads).
     from temporalio.common import WorkflowIDConflictPolicy
 
     assert wf["id"] == f"devloop-{_PROJECT_ID}"

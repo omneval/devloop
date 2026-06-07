@@ -13,7 +13,7 @@ _PR_NUMBER = re.compile(r"/pull/(\d+)")
 
 
 def is_approval(reply: str) -> bool:
-    """True if a Discord reply approves a Phase Gate."""
+    """True if a reply approves a Phase Gate."""
     low = (reply or "").strip().lower()
     if not low:
         return False

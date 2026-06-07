@@ -4,10 +4,8 @@ name: Release
 # release as one job DAG, so ordering is structural (needs:) instead of a race
 # between independent workflows:
 #
-#   test ─┬─> pypi ─> sdk-images (agent-base, temporal-worker,   [pinned SDK]
-#         │                       discord-bot, slack-bot)
-#         ├─> chart                                              [parallel]
-#         └─> images (poller)                                    [parallel, no SDK]
+#   test ─┬─> pypi ─> sdk-images (agent-base, temporal-worker)   [pinned SDK]
+#         └─> chart                                              [parallel]
 #
 # The git tag is the single source of truth: hatch-vcs derives the SDK version
 # from it (e.g. v0.0.2 -> 0.0.2), the PyPI release carries that version, the
@@ -102,8 +100,8 @@ jobs:
         uses: azure/setup-helm@v5.0.0
         with:
           # Pinned to the Helm 4 line used for local development and the chart
-          # PR checks (publish-devloop-chart.yml), so packaging/lint behaviour is
-          # consistent across dev, PR CI, and release.
+          # PR checks (ci.yml), so packaging/lint behaviour is consistent
+          # across dev, PR CI, and release.
           version: v4.2.0
 
       - name: Log in to GHCR
@@ -132,27 +130,6 @@ jobs:
       - name: Push chart to GHCR
         run: helm push ${{ steps.package.outputs.chart }} oci://ghcr.io/omneval/charts
 
-  images:
-    name: Build ${{ matrix.image_name }}
-    needs: test
-    # A job calling a reusable workflow must grant the permissions that workflow
-    # needs; otherwise the token is capped at the repo default (packages: read).
-    permissions:
-      packages: write
-      contents: read
-    strategy:
-      matrix:
-        include:
-          - image_name: devloop-poller
-            docker_context: '.'
-            dockerfile: './images/poller/Dockerfile'
-    uses: ./.github/workflows/build-image.yml
-    with:
-      image_name: ${{ matrix.image_name }}
-      docker_context: ${{ matrix.docker_context }}
-      dockerfile: ${{ matrix.dockerfile }}
-    secrets: inherit
-
   sdk-images:
     name: Build ${{ matrix.image_name }}
     # Only build after the pinned SDK is published; the reusable workflow also
@@ -170,12 +147,6 @@ jobs:
           - image_name: devloop-temporal-worker
             docker_context: './images/temporal-worker'
             dockerfile: './images/temporal-worker/Dockerfile'
-          - image_name: devloop-discord-bot
-            docker_context: './images/discord-bot'
-            dockerfile: './images/discord-bot/Dockerfile'
-          - image_name: devloop-slack-bot
-            docker_context: './images/slack-bot'
-            dockerfile: './images/slack-bot/Dockerfile'
     uses: ./.github/workflows/build-image.yml
     with:
       image_name: ${{ matrix.image_name }}

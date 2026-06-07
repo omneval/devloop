@@ -154,13 +154,13 @@ def test_post_github_comment_uses_correct_repo(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# DevLoopWorkflow no longer imports Discord-specific names
+# DevLoopWorkflow no longer imports messaging-bridge-specific names
 # ---------------------------------------------------------------------------
 
 
 def test_dev_loop_does_not_import_discord_constants():
     """dev_loop.py must not import MESSAGING_QUEUE or SendMessageInput
-    (those are Discord-era names; the workflow now uses post_github_comment)."""
+    (those are messaging-bridge-era names; the workflow now uses post_github_comment)."""
     import ast
     import pathlib
 
@@ -175,7 +175,7 @@ def test_dev_loop_does_not_import_discord_constants():
                     "SendNotificationInput",
                     "CHANNEL_APPROVALS",
                 ), (
-                    f"dev_loop.py still imports Discord-era name '{alias.name}'"
+                    f"dev_loop.py still imports messaging-bridge-era name '{alias.name}'"
                 )
 
 
@@ -218,12 +218,13 @@ def test_dev_loop_imports_github_notification_input():
 # ---------------------------------------------------------------------------
 
 
-def test_worker_does_not_import_discord_activities():
-    """worker.py must not reference discord-bot or DiscordActivities."""
+def test_worker_does_not_import_messaging_bridge_activities():
+    """worker.py must not reference any messaging-bridge activities or queues."""
     import pathlib
 
     src = pathlib.Path("src/devloop/worker.py").read_text()
     assert "DiscordActivities" not in src, "worker.py still imports DiscordActivities"
+    assert "SlackActivities" not in src, "worker.py still imports SlackActivities"
     assert "MESSAGING_QUEUE" not in src, "worker.py still references MESSAGING_QUEUE"
 
 

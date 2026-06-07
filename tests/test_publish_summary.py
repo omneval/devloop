@@ -325,7 +325,7 @@ def test_summarization_workflow_does_not_call_send_message():
         if isinstance(node, (ast.Attribute, ast.Name)):
             name = node.attr if isinstance(node, ast.Attribute) else node.id
             assert name not in ("send_message", "MESSAGING_QUEUE"), (
-                f"summarization.py still references Discord-era name '{name}'"
+                f"summarization.py still references messaging-bridge-era name '{name}'"
             )
 
 

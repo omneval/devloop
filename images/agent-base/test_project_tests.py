@@ -489,7 +489,7 @@ def test_handle_merge_opens_pr_and_never_pushes_main(origin, monkeypatch):
 
 def test_handle_merge_fails_with_info_when_no_pr(origin, monkeypatch):
     """If no PR could be opened, the phase fails and carries failure info for
-    Discord rather than silently succeeding."""
+    notification rather than silently succeeding."""
     _merge_env(origin, monkeypatch)
     monkeypatch.setattr(entrypoint, "open_review_pr", lambda *a, **k: "")
 

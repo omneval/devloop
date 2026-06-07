@@ -78,11 +78,6 @@ class Mocks:
         """Compatibility shim: return all GitHub comment bodies."""
         return [c.body for c in self.github_comments]
 
-    @property
-    def messages(self):
-        """Compatibility shim: return GitHub comment bodies (formerly Discord messages)."""
-        return [c.body for c in self.github_comments]
-
 
 M = Mocks()
 
@@ -563,7 +558,7 @@ def test_from_env_does_not_read_question_timeout_seconds(monkeypatch):
 # Phase.ANSWER + max_questions_per_phase (#77)
 # --------------------------------------------------------------------------- #
 def test_phase_enum_has_answer():
-    """Phase.ANSWER replaces the Discord-based human-reply loop."""
+    """Phase.ANSWER replaces the old chat-based human-reply loop."""
     from devloop.shared import Phase
 
     assert Phase.ANSWER.value == "answer"

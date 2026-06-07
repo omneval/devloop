@@ -291,11 +291,11 @@ def request_human_input(
     *,
     tracer=None,
 ) -> tuple[str, bool]:
-    """Pause the agent mid-run to ask a human a clarifying question via Discord.
+    """Pause the agent mid-run to ask a human a clarifying question.
 
     Writes ``{"status": "awaiting_human", "question": question}`` to the output
     ConfigMap/file (which the orchestration worker detects and forwards to
-    Discord).  Then polls ``read_human_answer()`` every
+    the human).  Then polls ``read_human_answer()`` every
     ``HUMAN_ANSWER_POLL_SECONDS`` (default 15) until an answer arrives or
     ``HUMAN_ANSWER_TIMEOUT_SECONDS`` (default 14400 = 4 hours) elapses.
 
@@ -374,7 +374,7 @@ def _run(cmd: list[str], cwd: str | None = None) -> str:
 # --------------------------------------------------------------------------- #
 _NPM_DEFAULT_PLACEHOLDER = 'echo "Error: no test specified" && exit 1'
 _MAX_TEST_OUTPUT = (
-    4096  # bytes kept in result payload (truncated for Discord / Temporal UI)
+    4096  # bytes kept in result payload (truncated for Temporal UI)
 )
 
 
@@ -1280,7 +1280,7 @@ def handle_merge(spec: TaskSpec, tracer) -> dict:
     """Merge phase (PR-review model): open a *review* PR for each approved branch
     instead of merging it into the default branch directly.
 
-    The Discord Merge gate already approved that this work should go up for
+    The Merge gate already approved that this work should go up for
     review; this phase turns the pushed branch into a ready-for-review PR (the
     execute phase opened it as a draft) and tags the reviewer (``PR_REVIEWER``,
     e.g. ``zbloss``). A human then does the final code review and merges the PR
@@ -1334,7 +1334,7 @@ def handle_diagnosis(spec: TaskSpec, tracer) -> dict:
     emits a ``<diagnosis>`` JSON block. We normalize ``recommended_actions`` into
     executable ``{action, requires_approval, rationale}`` entries so the
     workflow's remediation phase can allowlist-check and (autonomously or after a
-    Discord gate) run them. Falls back to a label-only diagnosis with no actions
+    human-approval gate) run them. Falls back to a label-only diagnosis with no actions
     if the model produced nothing parseable."""
     alert = spec.extra.get("alert", {}) or {}
     outcome = run_agent(spec, os.getenv("WORKDIR", "/tmp"), tracer)

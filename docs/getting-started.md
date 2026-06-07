@@ -6,7 +6,7 @@ account, installing Temporal, deploying the devloop Helm chart, enrolling your
 first project, and verifying everything works.
 
 devloop is **fully autonomous and webhook-driven**. There is no poller, no
-Discord bot, and no human approval gates — once an issue is labeled
+chat bot, and no human approval gates — once an issue is labeled
 `agent-ready`, GitHub delivers a webhook event and the Dev Loop runs end to
 end (Plan → Execute → CI Fix Loop → Review → Merge), posting status updates as
 comments on the GitHub Issue and opening a PR for human consumption. The only
@@ -195,7 +195,7 @@ temporal-frontend.agents.svc.cluster.local:7233
 
 ## Step 5: Build the Two devloop Images
 
-devloop ships exactly two images — there is no poller image and no Discord
+devloop ships exactly two images — there is no poller image and no chat
 bot image.
 
 ### 5a: Build the Agent Base Image

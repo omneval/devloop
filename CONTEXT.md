@@ -13,7 +13,7 @@ The first phase of the Dev Loop. An OpenHands agent that reads all open `agent-r
 _Avoid_: planning agent, issue sorter
 
 **Summarization Agent**:
-A Temporal workflow run on a configurable schedule (`summarization.cronSchedule`, disabled by default). Reads the git diff and closed issues since the last run, generates a plain-English explanation of what changed and why, opens (or appends to) a `devloop-summary`-labelled GitHub Issue via the `publish_summary` activity, and optionally POSTs the digest as JSON to `SUMMARIZATION_WEBHOOK_URL` (fire-and-forget) for consumers who want to bridge it elsewhere (Slack, Discord, etc.).
+A Temporal workflow run on a configurable schedule (`summarization.cronSchedule`, disabled by default). Reads the git diff and closed issues since the last run, generates a plain-English explanation of what changed and why, opens (or appends to) a `devloop-summary`-labelled GitHub Issue via the `publish_summary` activity, and optionally POSTs the digest as JSON to `SUMMARIZATION_WEBHOOK_URL` (fire-and-forget) for consumers who want to bridge it elsewhere.
 _Avoid_: changelog agent, diff summarizer
 
 **Project Registry**:
@@ -65,7 +65,7 @@ Controls how eligible skills are presented to the agent within a phase: `"trigge
 _Avoid_: skill discovery mode, skill matching mode
 
 **Phase.ANSWER**:
-An Agent Execution Job phase that answers a paused agent's mid-run clarifying question (`AWAITING_HUMAN`) without any human involvement: a fresh agent investigates the question with read/write access to the working branch and returns its best-informed decision, which the workflow patches back into the paused job's ConfigMap via `answer_agent_job` so it can resume via `await_agent_job`. Dispatched on the [job dispatch queue](#temporal-orchestration-worker) (counts against `maxConcurrentJobs`) and bounded by `max_questions_per_phase` (Helm `temporalWorker.maxQuestionsPerPhase`, env `MAX_QUESTIONS_PER_PHASE`, default 3): once a phase run hits that many questions, the workflow stops spawning answer jobs and tells the parked agent to proceed with its best guess directly. Replaces the earlier Discord-mediated human-reply loop (`question_timeout_seconds` / `QUESTION_TIMEOUT_SECONDS`, removed).
+An Agent Execution Job phase that answers a paused agent's mid-run clarifying question (`AWAITING_HUMAN`) without any human involvement: a fresh agent investigates the question with read/write access to the working branch and returns its best-informed decision, which the workflow patches back into the paused job's ConfigMap via `answer_agent_job` so it can resume via `await_agent_job`. Dispatched on the [job dispatch queue](#temporal-orchestration-worker) (counts against `maxConcurrentJobs`) and bounded by `max_questions_per_phase` (Helm `temporalWorker.maxQuestionsPerPhase`, env `MAX_QUESTIONS_PER_PHASE`, default 3): once a phase run hits that many questions, the workflow stops spawning answer jobs and tells the parked agent to proceed with its best guess directly. Replaces the earlier chat-bridge-mediated human-reply loop (`question_timeout_seconds` / `QUESTION_TIMEOUT_SECONDS`, removed).
 _Avoid_: auto-answer phase, question resolver, answer agent
 
 **Per-phase enablement**:

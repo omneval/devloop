@@ -1,7 +1,7 @@
 # Alert Response Action Allowlist
 #
 # Actions listed here execute autonomously without human approval.
-# Any action NOT listed here pauses for Discord approval before running.
+# Any action NOT listed here pauses for human approval via a GitHub comment before running.
 #
 # Format:
 #   category:

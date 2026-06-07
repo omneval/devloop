@@ -7,8 +7,9 @@ workflow.  The pattern is:
 2. Write a custom workflow (e.g. `AlertResponseWorkflow`).
 3. Register **both** the SDK workflows and your custom workflow in a single
    Temporal worker process.
-4. Your workflow reuses SDK activities (`dispatch_agent_job`, `send_message`,
-   etc.) so you get Kubernetes Job dispatch and Discord integration for free.
+4. Your workflow reuses SDK activities (`dispatch_agent_job`,
+   `post_github_comment`, etc.) so you get Kubernetes Job dispatch and
+   GitHub-comment notifications for free.
 
 ## The Alert Response Workflow pattern
 
@@ -18,7 +19,7 @@ workflow.  The pattern is:
 └─────────────┘                │                   │
                                │  1. diagnose      │──► Agent Job (K8s)
                                │  2. check allowlist│──► allowlist.yaml
-                               │  3. execute / ask  │──► Discord approval
+                               │  3. execute / ask  │──► GitHub comment approval
                                │  4. notify          │──► summary
                                └───────────────────┘
 ```
@@ -28,8 +29,8 @@ workflow.  The pattern is:
 | **Diagnose** | An Agent Job runs on Kubernetes to understand the alert |
 | **Allowlist check** | Each suggested remediation is checked against `allowlist.yaml` |
 | **Execute** | Allowlisted actions run autonomously via Agent Jobs |
-| **Approve** | Non-allowlisted actions pause for a human reply on Discord |
-| **Notify** | A summary is sent to the alerts channel |
+| **Approve** | Non-allowlisted actions pause for a human reply on the GitHub Issue |
+| **Notify** | A summary is posted as a GitHub comment |
 
 ## File layout
 

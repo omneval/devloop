@@ -1,12 +1,39 @@
 name: CI
 
+# Single PR gate: everything that release.yml checks before a tagged release —
+# SDK lint/test, Helm chart unit tests + lint, and Docker image builds — minus
+# any publishing. Image builds run with push disabled (build-image.yml only
+# pushes when github.event_name != 'pull_request'), so PRs get a build-success
+# signal without touching GHCR; the dedicated publish-*-image.yml workflows and
+# release.yml remain the only paths that actually publish.
+
 on:
   push:
     branches: [main]
   pull_request:
 
 jobs:
+  lint:
+    name: Lint SDK
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b
+        with:
+          version: "0.11.18"
+
+      - name: Install dependencies
+        run: uv sync --all-groups
+
+      - name: Lint
+        run: uv run ruff check --fix .
+
   test:
+    name: Test SDK
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -16,15 +43,74 @@ jobs:
           fetch-depth: 0
 
       - name: Install uv
-        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b 
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b
         with:
           version: "0.11.18"
 
       - name: Install dependencies
         run: uv sync --all-groups
 
-      - name: Lint
-        run: uv run ruff check src/ tests/
-
       - name: Test
-        run: uv run pytest
+        run: uv run pytest tests
+
+  chart-unittest:
+    name: Unit test Helm chart
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v5.0.0
+        with:
+          version: 'v4.2.0'
+
+      - name: Install helm-unittest plugin
+        run: helm plugin install https://github.com/helm-unittest/helm-unittest --verify=false
+
+      - name: Run chart unit tests
+        run: helm unittest charts/devloop
+
+  chart-lint:
+    name: Lint Helm chart
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v5.0.0
+        with:
+          version: 'v4.2.0'
+
+      - name: Package chart
+        id: package
+        run: |
+          helm package charts/devloop/ -u -d .cr-release-packages
+          echo "chart=$(ls .cr-release-packages/devloop-*.tgz)" >> "$GITHUB_OUTPUT"
+
+      - name: Lint chart
+        run: helm lint ${{ steps.package.outputs.chart }}
+
+  build-images:
+    name: Build ${{ matrix.image_name }}
+    # PR-only build-success check: build-image.yml pushes whenever the event
+    # isn't a pull_request, and the dedicated publish-*-image.yml workflows
+    # already own publishing on main, so this job must not run there too.
+    if: github.event_name == 'pull_request'
+    permissions:
+      packages: write
+      contents: read
+    strategy:
+      matrix:
+        include:
+          - image_name: devloop-agent-base
+            docker_context: './images/agent-base'
+            dockerfile: './images/agent-base/Dockerfile'
+          - image_name: devloop-temporal-worker
+            docker_context: './images/temporal-worker'
+            dockerfile: './images/temporal-worker/Dockerfile'
+    uses: ./.github/workflows/build-image.yml
+    with:
+      image_name: ${{ matrix.image_name }}
+      docker_context: ${{ matrix.docker_context }}
+      dockerfile: ${{ matrix.dockerfile }}
+    secrets: inherit

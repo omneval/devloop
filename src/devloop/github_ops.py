@@ -384,7 +384,7 @@ async def file_issues(inp: FileIssuesInput) -> list[int]:
 async def post_github_comment(inp: GithubNotificationInput) -> None:
     """Post a comment on a GitHub Issue using the project's scoped token.
 
-    Used by DevLoopWorkflow to replace all Discord _say/_notify calls with
+    Used by DevLoopWorkflow to replace all chat-bridge _say/_notify calls with
     in-GitHub Issue comments visible to the project operators. The token is
     resolved per project from the project's ``github_token_secret`` Secret,
     so different orgs/owners use different credentials (same pattern as

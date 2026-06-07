@@ -5,8 +5,8 @@ workflows from omneval-devloop (DevLoopWorkflow, SummarizationWorkflow) alongsid
 custom workflows (AlertResponseWorkflow) on the same task queue.
 
 The worker reuses omneval-devloop's activity definitions (dispatch_agent_job,
-send_message, etc.) so custom workflows can dispatch Agent Jobs and communicate
-via Discord without reimplementing infrastructure code.
+post_github_comment, etc.) so custom workflows can dispatch Agent Jobs and
+post notifications without reimplementing infrastructure code.
 """
 
 import asyncio
