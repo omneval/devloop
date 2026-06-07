@@ -160,7 +160,7 @@ class _WorkflowCommon:
             )
             await self._comment(
                 project_id,
-                issue_no,
+                pr_number,
                 f"⏳ queued — CI fix attempt {attempt}/{max_iters}",
             )
             result = await self._dispatch(
@@ -172,14 +172,14 @@ class _WorkflowCommon:
             if result.status == JobStatus.COMPLETE.value:
                 await self._comment(
                     project_id,
-                    issue_no,
+                    pr_number,
                     f"🔧 CI fix attempt {attempt}/{max_iters} — "
                     f"pushed {result.commits} commit(s)",
                 )
             else:
                 await self._comment(
                     project_id,
-                    issue_no,
+                    pr_number,
                     f"❌ CI fix attempt {attempt}/{max_iters} failed",
                 )
 
