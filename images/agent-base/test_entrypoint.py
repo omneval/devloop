@@ -582,6 +582,8 @@ def test_main_installs_configmap_skills_when_configured(origin, tmp_path, monkey
     staging = tmp_path / "staging"
     staging.mkdir()
     (staging / "deploy-review").write_text("# ConfigMap Skill\n")
+    convergence = tmp_path / "convergence"
+    convergence.mkdir()
 
     workdir = tmp_path / "repo"
     out_file = tmp_path / "out.json"
@@ -606,7 +608,7 @@ def test_main_installs_configmap_skills_when_configured(origin, tmp_path, monkey
     monkeypatch.setenv("OUTPUT_FILE", str(out_file))
     monkeypatch.setenv("AGENT_SKILLS_CONFIGMAP", "devloop-skills")
     monkeypatch.setenv("AGENT_SKILLS_STAGING_DIR", str(staging))
-    monkeypatch.delenv("AGENT_SKILLS_DIR", raising=False)
+    monkeypatch.setenv("AGENT_SKILLS_DIR", str(convergence))
     monkeypatch.delenv("GITHUB_TOKEN", raising=False)
 
     # Mock run_agent so main() doesn't block on real agent work
