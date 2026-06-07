@@ -177,6 +177,8 @@ temporalHost: temporal-frontend.agents.svc.cluster.local:7233
 
 **Workflow notifications**: All Dev Loop status updates (queued, implemented, parked, review findings) are posted as comments on the relevant GitHub Issue using the project's `github_token_secret`. Operators can follow progress directly in GitHub without a separate messaging platform.
 
+**Weekly summaries**: Once a week (Monday 08:00 UTC by default), devloop opens a GitHub Issue on each enrolled repo titled `[devloop] <project-id> — <date> digest`, labeled `devloop-summary` (the label is created automatically if it does not exist), summarizing the week's merged changes and closed issues in plain English. No extra configuration is required — see `summarization.*` below to customize the schedule, disable it, or forward the digest to an outbound webhook.
+
 Deploy:
 
 ```bash
@@ -260,3 +262,24 @@ reuse SDK activities for Kubernetes Job dispatch and GitHub Issue notifications.
 | `temporalHost`                   | Temporal frontend gRPC address; set in Helm values to point at your Temporal cluster          |
 | `GITHUB_TOKEN`                   | GitHub token used by devloop-bot to post comments on GitHub Issues (per project via `github_token_secret`) |
 | `GITHUB_WEBHOOK_SECRET`          | Optional HMAC secret for verifying GitHub webhook payloads (set on the temporal-worker pod)   |
+
+### Summarization (`summarization.*`)
+
+Controls the weekly Summarization workflow and its Temporal Schedule (one schedule per enrolled project, `summarize-weekly-<project-id>`). Delivery defaults to opening a GitHub Issue — no extra configuration required.
+
+| Helm value                  | Default          | Description                                                                                                  |
+|-----------------------------|------------------|--------------------------------------------------------------------------------------------------------------|
+| `summarization.enabled`     | `true`           | When `false`, devloop does not create the weekly summarization schedule for any project (and deletes any existing one on the next worker startup). |
+| `summarization.cronSchedule`| `"0 8 * * 1"`    | 5-field cron expression (`minute hour day-of-month month day-of-week`) controlling when the weekly digest runs. Default is Monday 08:00. Forwarded to the Temporal `ScheduleCalendarSpec`; only plain integers and `*` are supported per field — anything richer falls back to the default Monday 08:00 schedule. |
+| `summarization.webhookUrl`  | `""`             | Optional outbound webhook URL. When set, devloop POSTs `{"project_id": ..., "summary": ..., "date": ...}` as JSON to this URL in addition to opening the GitHub Issue. Forwarded to the worker as `SUMMARIZATION_WEBHOOK_URL`. Delivery is fire-and-forget — failures are logged but never fail the workflow. |
+
+Example:
+
+```yaml
+summarization:
+  enabled: true
+  cronSchedule: "0 9 * * 1"   # Monday 09:00 instead of the 08:00 default
+  webhookUrl: "https://hooks.example.com/devloop-digest"
+```
+
+**Delivery**: Each run opens a GitHub Issue titled `[devloop] <project-id> — <date> digest` on the enrolled repo, with the digest as the issue body and the label `devloop-summary` (created automatically on first use). The issue is opened by devloop-bot using the project's `github_token_secret`.

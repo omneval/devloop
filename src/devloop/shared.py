@@ -15,6 +15,10 @@ from enum import Enum
 
 # Task queues — override via env vars to match helm chart values.
 ORCHESTRATION_QUEUE = os.getenv("ORCHESTRATION_QUEUE", "devloop-orchestration")
+# Dedicated queue for Agent Execution Job dispatches and LLM-bearing activities.
+# A separate Worker listens here with a configurable max_concurrent_activity_task_executions
+# to enforce a global concurrency cap across all workflow types and projects.
+JOB_DISPATCH_QUEUE = os.getenv("JOB_DISPATCH_QUEUE", "devloop-job-dispatch")
 
 # Agent Job output ConfigMap contract: the keys the worker and the Agent
 # Execution Job exchange through the Job's output ConfigMap. Defined here so both
@@ -235,3 +239,23 @@ class RequestReviewerInput:
     project_id: str
     pr_number: int
     reviewer: str
+
+
+# ---------------------------------------------------------------------------
+# Summarization delivery activity I/O (issue #79)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class PublishSummaryInput:
+    """Input for the publish_summary activity.
+
+    Carries the rendered digest from SummarizationWorkflow to the activity that
+    delivers it: opens a GitHub Issue (label ``devloop-summary``, created if
+    absent) and optionally POSTs the same payload to ``SUMMARIZATION_WEBHOOK_URL``
+    as JSON (fire-and-forget).
+    """
+
+    project_id: str
+    summary: str
+    date: str  # ISO date string, e.g. "2026-06-06"

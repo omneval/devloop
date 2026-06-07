@@ -83,29 +83,152 @@ async def _ensure(client: Client, schedule_id: str, schedule: Schedule) -> None:
         )
 
 
-async def ensure_schedules(client: Client, projects: list[ProjectConfig]) -> None:
+def _default_weekly_spec() -> ScheduleSpec:
+    return ScheduleSpec(
+        calendars=[
+            ScheduleCalendarSpec(
+                # Monday = 1 in Temporal's day-of-week range
+                day_of_week=[ScheduleRange(1)],
+                hour=[ScheduleRange(8)],
+                minute=[ScheduleRange(0)],
+            )
+        ]
+    )
+
+
+def _parse_cron_field(field: str) -> list[ScheduleRange] | None:
+    """Parse a single 5-field cron field into ScheduleRanges.
+
+    Supports plain integers and ``*`` (returns ``None``, meaning "every value" —
+    omit the constraint so Temporal treats it as unrestricted).  Anything else
+    (ranges, steps, lists) is not supported and triggers a fallback to the
+    default spec.
+    """
+    field = field.strip()
+    if field == "*":
+        return None
+    if field.lstrip("-").isdigit():
+        return [ScheduleRange(int(field))]
+    raise ValueError(f"unsupported cron field {field!r}")
+
+
+def build_schedule_spec(cron_schedule: str) -> ScheduleSpec:
+    """Build a ``ScheduleSpec`` from a 5-field cron string.
+
+    Falls back to the default Monday-08:00 spec when ``cron_schedule`` is empty
+    or cannot be parsed (logs a warning in the latter case so misconfiguration
+    stays visible without crashing schedule reconciliation).
+
+    Supported cron syntax: plain integers and ``*`` per field
+    (``minute hour day-of-month month day-of-week``). Day-of-month and month
+    wildcards are required (only weekly, day-of-week-anchored schedules are
+    supported); anything richer (ranges, steps, lists) falls back to the default.
+    """
+    cron_schedule = (cron_schedule or "").strip()
+    if not cron_schedule:
+        return _default_weekly_spec()
+
+    parts = cron_schedule.split()
+    if len(parts) != 5:
+        log.warning(
+            "summarization.cronSchedule %r is not a 5-field cron expression; "
+            "falling back to the default Monday 08:00 schedule",
+            cron_schedule,
+        )
+        return _default_weekly_spec()
+
+    minute, hour, dom, month, dow = parts
+    try:
+        minute_r = _parse_cron_field(minute)
+        hour_r = _parse_cron_field(hour)
+        dom_r = _parse_cron_field(dom)
+        month_r = _parse_cron_field(month)
+        dow_r = _parse_cron_field(dow)
+    except ValueError:
+        log.warning(
+            "summarization.cronSchedule %r uses unsupported cron syntax "
+            "(only plain integers and '*' are supported); falling back to the "
+            "default Monday 08:00 schedule",
+            cron_schedule,
+        )
+        return _default_weekly_spec()
+
+    if dom_r is not None or month_r is not None:
+        log.warning(
+            "summarization.cronSchedule %r constrains day-of-month/month, which "
+            "is not supported (weekly schedules are day-of-week-anchored); "
+            "falling back to the default Monday 08:00 schedule",
+            cron_schedule,
+        )
+        return _default_weekly_spec()
+
+    calendar_kwargs: dict = {}
+    if minute_r is not None:
+        calendar_kwargs["minute"] = minute_r
+    if hour_r is not None:
+        calendar_kwargs["hour"] = hour_r
+    if dow_r is not None:
+        calendar_kwargs["day_of_week"] = dow_r
+
+    return ScheduleSpec(calendars=[ScheduleCalendarSpec(**calendar_kwargs)])
+
+
+async def _delete_if_exists(client: Client, schedule_id: str) -> None:
+    """Delete a schedule if it exists; silently ignore if absent or on error."""
+    try:
+        await client.get_schedule_handle(schedule_id).delete()
+        log.info("deleted schedule %s (disabled via config)", schedule_id)
+    except Exception:
+        log.warning(
+            "could not delete schedule %s (may not exist; ignored)",
+            schedule_id,
+            exc_info=True,
+        )
+
+
+async def ensure_schedules(
+    client: Client,
+    projects: list[ProjectConfig],
+    *,
+    summarization_enabled: bool = True,
+    summarization_cron_schedule: str = "",
+) -> None:
+    """Reconcile all Temporal Schedules for *projects*.
+
+    Parameters
+    ----------
+    client:
+        Connected Temporal client.
+    projects:
+        List of enrolled projects from the Project Registry.
+    summarization_enabled:
+        When ``False`` any existing ``summarize-weekly-*`` schedules are deleted
+        and no new ones are created.  Maps to the Helm value
+        ``summarization.enabled`` (default ``True``).
+    summarization_cron_schedule:
+        Optional override for the cron spec (e.g. ``"0 8 * * 1"``).  When
+        empty the default Monday-08:00 ``ScheduleCalendarSpec`` is used.  Maps
+        to the Helm value ``summarization.cronSchedule``.
+    """
     from .summarization import SummarizeInput
 
     for p in projects:
+        schedule_id = f"summarize-weekly-{p.id}"
+
+        if not summarization_enabled:
+            await _delete_if_exists(client, schedule_id)
+            continue
+
         await _ensure(
             client,
-            f"summarize-weekly-{p.id}",
+            schedule_id,
             Schedule(
                 action=ScheduleActionStartWorkflow(
                     "SummarizationWorkflow",
                     SummarizeInput(project_id=p.id, trigger="weekly"),
-                    id=f"summarize-weekly-{p.id}",
+                    id=schedule_id,
                     task_queue=ORCHESTRATION_QUEUE,
                 ),
-                spec=ScheduleSpec(
-                    calendars=[
-                        ScheduleCalendarSpec(
-                            # Monday = 1 in Temporal's day-of-week range
-                            day_of_week=[ScheduleRange(1)],
-                            hour=[ScheduleRange(8)],
-                            minute=[ScheduleRange(0)],
-                        )
-                    ]
-                ),
+                spec=build_schedule_spec(summarization_cron_schedule),
             ),
         )

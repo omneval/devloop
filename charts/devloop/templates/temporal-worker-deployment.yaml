@@ -50,6 +50,16 @@ spec:
               value: {{ .Values.temporalWorker.projectsFile | quote }}
             - name: QUESTION_TIMEOUT_SECONDS
               value: {{ .Values.temporalWorker.questionTimeoutSeconds | quote }}
+            - name: MAX_CONCURRENT_JOBS
+              value: {{ .Values.temporalWorker.maxConcurrentJobs | default 1 | quote }}
+            - name: SUMMARIZATION_ENABLED
+              value: {{ .Values.summarization.enabled | default true | quote }}
+            - name: SUMMARIZATION_CRON_SCHEDULE
+              value: {{ .Values.summarization.cronSchedule | default "0 8 * * 1" | quote }}
+            {{- with .Values.summarization.webhookUrl }}
+            - name: SUMMARIZATION_WEBHOOK_URL
+              value: {{ . | quote }}
+            {{- end }}
             {{- if .Values.skillsByPhase }}
             - name: AGENT_SKILLS_BY_PHASE
               value: {{ .Values.skillsByPhase | toJson | quote }}

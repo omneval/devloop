@@ -107,6 +107,33 @@ temporalWorker:
   # Timeout, in seconds, for a mid-run clarifying question gate.
   # Mirrors DevLoopInput.question_timeout_seconds. Default: 14400 (4h).
   questionTimeoutSeconds: 14400
+  # Maximum number of Agent Execution Job dispatches (and LLM-bearing activities)
+  # that may run concurrently across all workflow types and projects.
+  # Forwarded to the job-dispatch Worker as MAX_CONCURRENT_JOBS.
+  # Set higher when the inference backend can serve multiple requests in parallel.
+  maxConcurrentJobs: 1
   # Replica count
   replicas: 1
+
+# ---------------------------------------------------------------------------
+# Weekly Summarization
+# ---------------------------------------------------------------------------
+# Controls the weekly Summarization workflow / Temporal Schedule (issue #24, #79).
+# Delivery defaults to opening a GitHub Issue (label `devloop-summary`, opened by
+# devloop-bot) on each enrolled repo — no extra config required. An optional
+# outbound webhook can also receive the digest as JSON for push notifications.
+summarization:
+  # When false, ensure_schedules does not create the weekly summarization
+  # schedule for any project — and deletes any existing one.
+  enabled: true
+  # 5-field cron expression (minute hour day-of-month month day-of-week).
+  # Forwarded to the Temporal ScheduleCalendarSpec (or parsed into one).
+  # Default: Monday 08:00. Only plain integers and "*" are supported per field;
+  # anything richer falls back to the default Monday-08:00 schedule.
+  cronSchedule: "0 8 * * 1"
+  # Optional outbound webhook URL. When set, `publish_summary` POSTs
+  # {"project_id": ..., "summary": ..., "date": ...} as JSON to this URL in
+  # addition to opening the GitHub Issue (fire-and-forget; failures are logged
+  # but do not fail the workflow). Forwarded as SUMMARIZATION_WEBHOOK_URL.
+  webhookUrl: ""
 

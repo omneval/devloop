@@ -1,8 +1,10 @@
-"""I/O activities for the Summarization workflow (issue #24).
+"""I/O activities for the Summarization workflow (issue #24, #79).
 
 * dedup state (last-summarized commit SHA per project) is kept in a ConfigMap.
 * the change set is read from the GitHub compare API (no clone needed).
 * the digest is produced by a single-turn LLM call against the homelab model.
+* the digest is published as a GitHub Issue with label ``devloop-summary``.
+* optionally POSTs the payload to ``SUMMARIZATION_WEBHOOK_URL`` (fire-and-forget).
 """
 
 from __future__ import annotations
@@ -16,6 +18,7 @@ from temporalio import activity
 from . import cluster
 from .github_ops import _client  # reuse the authed httpx client
 from .projects import get_project, parse_github_repo
+from .shared import PublishSummaryInput
 from .summarization import SummarizeInput, SummarizeResult
 
 log = logging.getLogger(__name__)
@@ -23,6 +26,8 @@ log = logging.getLogger(__name__)
 STATE_CONFIGMAP = os.getenv("SUMMARY_STATE_CONFIGMAP", "dev-loop-summary-state")
 LLM_BASE_URL = os.getenv("AGENT_LLM_BASE_URL", "http://192.168.68.104/v1")
 SUMMARY_MODEL = os.getenv("SUMMARY_MODEL", "qwen3-27b")
+
+SUMMARY_LABEL = "devloop-summary"
 
 
 # --------------------------------------------------------------------------- #
@@ -112,6 +117,21 @@ def _llm_summary(prompt: str) -> str:
     return resp.json()["choices"][0]["message"]["content"].strip()
 
 
+def _ensure_label(c, repo: str) -> None:
+    """Create the ``devloop-summary`` label on *repo* if it does not exist."""
+    r = c.get(f"/repos/{repo}/labels/{SUMMARY_LABEL}")
+    if r.status_code == 404:
+        c.post(
+            f"/repos/{repo}/labels",
+            json={"name": SUMMARY_LABEL, "color": "0075ca", "description": "Weekly devloop summary"},
+        ).raise_for_status()
+        log.info("created label %r on %s", SUMMARY_LABEL, repo)
+
+
+# --------------------------------------------------------------------------- #
+# Activities
+# --------------------------------------------------------------------------- #
+
 @activity.defn
 async def summarize_changes(inp: SummarizeInput) -> SummarizeResult:
     cfg = get_project(inp.project_id)
@@ -128,3 +148,66 @@ async def summarize_changes(inp: SummarizeInput) -> SummarizeResult:
     summary = _llm_summary(build_prompt(commits, issues))
     set_last_sha(inp.project_id, head)
     return SummarizeResult(skipped=False, summary=summary, head_sha=head)
+
+
+@activity.defn
+async def publish_summary(inp: PublishSummaryInput) -> None:
+    """Publish a weekly digest as a GitHub Issue on the enrolled repo.
+
+    1. Ensures the ``devloop-summary`` label exists (creates it if absent).
+    2. Opens a GitHub Issue titled ``[devloop] {project_id} — {date} digest``
+       with the summary as the body and the ``devloop-summary`` label.
+    3. If ``SUMMARIZATION_WEBHOOK_URL`` is set and non-empty, fires a POST with
+       ``{"project_id": ..., "summary": ..., "date": ...}`` as JSON.
+       Webhook failure is logged but does NOT fail the activity (fire-and-forget).
+    """
+    # Accept both dataclass and plain dict (the workflow passes a dict via args=[]).
+    if isinstance(inp, dict):
+        inp = PublishSummaryInput(**inp)
+
+    cfg = get_project(inp.project_id)
+    repo = parse_github_repo(cfg.github_url)
+
+    title = f"[devloop] {inp.project_id} — {inp.date} digest"
+
+    with _client(cfg) as c:
+        _ensure_label(c, repo)
+        resp = c.post(
+            f"/repos/{repo}/issues",
+            json={
+                "title": title,
+                "body": inp.summary,
+                "labels": [SUMMARY_LABEL],
+            },
+        )
+        resp.raise_for_status()
+        issue_number = resp.json().get("number")
+        log.info(
+            "created GitHub Issue #%s '%s' on %s",
+            issue_number,
+            title,
+            repo,
+        )
+
+    # Optional outbound webhook (fire-and-forget).
+    webhook_url = os.getenv("SUMMARIZATION_WEBHOOK_URL", "").strip()
+    if webhook_url:
+        import httpx
+
+        try:
+            httpx.post(
+                webhook_url,
+                json={
+                    "project_id": inp.project_id,
+                    "summary": inp.summary,
+                    "date": inp.date,
+                },
+                timeout=10.0,
+            )
+            log.info("posted summary webhook to %s", webhook_url)
+        except Exception:
+            log.warning(
+                "webhook delivery to %s failed (fire-and-forget; workflow not failed)",
+                webhook_url,
+                exc_info=True,
+            )

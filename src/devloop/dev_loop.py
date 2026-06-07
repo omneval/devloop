@@ -29,6 +29,7 @@ from .shared import (
     DispatchInput,
     GithubNotificationInput,
     InlineComment,
+    JOB_DISPATCH_QUEUE,
     JobStatus,
     OpenAgentPRsInput,
     PostCommentsInput,
@@ -159,6 +160,7 @@ class DevLoopWorkflow:
             result_type=AgentJobResult,
             start_to_close_timeout=_ACTIVITY_TIMEOUT,
             retry_policy=_RETRY,
+            task_queue=JOB_DISPATCH_QUEUE,
         )
 
     async def _drop_issues_in_review(
