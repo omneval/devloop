@@ -1,4 +1,8 @@
-"""Summarization workflow tests (issue #24)."""
+"""Summarization workflow tests (issue #24).
+
+Discord delivery has been removed from SummarizationWorkflow per issue #72.
+The workflow now logs the summary and returns; delivery is handled separately.
+"""
 
 from __future__ import annotations
 
@@ -10,12 +14,7 @@ from temporalio import activity
 from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import Worker
 
-from devloop.shared import (
-    MESSAGING_QUEUE,
-    ORCHESTRATION_QUEUE,
-    SendMessageInput,
-    SendMessageOutput,
-)
+from devloop.shared import ORCHESTRATION_QUEUE
 from devloop.summarization import SummarizationWorkflow, SummarizeInput, SummarizeResult
 
 
@@ -25,7 +24,6 @@ class Mocks:
         default_factory=lambda: SummarizeResult(False, "digest", "sha9")
     )
     seen_inputs: list = field(default_factory=list)
-    changelog_posts: list = field(default_factory=list)
 
 
 M = Mocks()
@@ -37,12 +35,7 @@ def _activities():
         M.seen_inputs.append(inp)
         return M.result
 
-    @activity.defn(name="send_message")
-    async def send_message(inp: SendMessageInput) -> SendMessageOutput:
-        M.changelog_posts.append((inp.channel, inp.message, inp.thread_name))
-        return SendMessageOutput(thread_id="t")
-
-    return [summarize_changes], [send_message]
+    return [summarize_changes]
 
 
 @pytest.fixture
@@ -53,16 +46,13 @@ def reset_mocks():
 
 
 async def _run(inp: SummarizeInput):
-    orch, disc = _activities()
+    acts = _activities()
     async with await WorkflowEnvironment.start_time_skipping() as env:
-        async with (
-            Worker(
-                env.client,
-                task_queue=ORCHESTRATION_QUEUE,
-                workflows=[SummarizationWorkflow],
-                activities=orch,
-            ),
-            Worker(env.client, task_queue=MESSAGING_QUEUE, activities=disc),
+        async with Worker(
+            env.client,
+            task_queue=ORCHESTRATION_QUEUE,
+            workflows=[SummarizationWorkflow],
+            activities=acts,
         ):
             return await env.client.execute_workflow(
                 SummarizationWorkflow.run,
@@ -73,30 +63,30 @@ async def _run(inp: SummarizeInput):
 
 
 @pytest.mark.asyncio
-async def test_post_merge_posts_to_changelog(reset_mocks):
+async def test_post_merge_summarizes_changes(reset_mocks):
+    """Summarization workflow calls summarize_changes and returns the result."""
     result = await _run(
         SummarizeInput(
             "omneval", trigger="post-merge", head_sha="abc", closed_issues=[1, 2]
         )
     )
     assert result.skipped is False
-    assert M.changelog_posts, "expected a #changelog post"
-    channel, message, title = M.changelog_posts[0]
-    assert channel == "changelog"
-    assert message == "digest"
-    assert "post-merge" in title
+    assert result.summary == "digest"
+    assert M.seen_inputs[0].trigger == "post-merge"
 
 
 @pytest.mark.asyncio
 async def test_weekly_trigger(reset_mocks):
-    await _run(SummarizeInput("omneval", trigger="weekly"))
+    """Weekly trigger is passed through to the summarize_changes activity."""
+    result = await _run(SummarizeInput("omneval", trigger="weekly"))
     assert M.seen_inputs[0].trigger == "weekly"
-    assert "weekly" in M.changelog_posts[0][2]
+    assert result.summary == "digest"
 
 
 @pytest.mark.asyncio
-async def test_dedup_skip_does_not_post(reset_mocks):
+async def test_dedup_skip_returns_skipped(reset_mocks):
+    """When summarize_changes returns skipped=True the workflow propagates it."""
     reset_mocks.result = SummarizeResult(skipped=True)
     result = await _run(SummarizeInput("omneval", trigger="weekly"))
     assert result.skipped is True
-    assert M.changelog_posts == []  # nothing new -> no changelog spam
+    assert result.summary == ""

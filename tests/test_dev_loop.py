@@ -1,5 +1,5 @@
 """Dev Loop workflow tests (sequential model) using Temporal's time-skipping
-env with mocked activities on the orchestration + discord task queues."""
+env with mocked activities on the orchestration task queue."""
 
 from __future__ import annotations
 
@@ -15,13 +15,10 @@ from temporalio.worker import Worker
 from devloop import dev_loop_logic as logic
 from devloop.dev_loop import DevLoopInput, DevLoopWorkflow
 from devloop.shared import (
-    MESSAGING_QUEUE,
     ORCHESTRATION_QUEUE,
     AgentJobResult,
+    GithubNotificationInput,
     JobStatus,
-    SendMessageInput,
-    SendMessageOutput,
-    SendNotificationInput,
 )
 
 
@@ -44,14 +41,23 @@ class Mocks:
     merge_status: str = JobStatus.COMPLETE.value
     await_status: str = JobStatus.COMPLETE.value
     # recorders
-    notifications: list = field(default_factory=list)
-    messages: list = field(default_factory=list)
+    github_comments: list = field(default_factory=list)  # GithubNotificationInput records
     answers: list = field(default_factory=list)
     post_comments: list = field(default_factory=list)
     dispatched_phases: list = field(default_factory=list)
     # issue numbers the "open_agent_pr_issue_numbers" activity reports as already
     # having an open review PR (planner should skip these)
     open_agent_prs: list = field(default_factory=list)
+
+    @property
+    def notifications(self):
+        """Compatibility shim: return all GitHub comment bodies."""
+        return [c.body for c in self.github_comments]
+
+    @property
+    def messages(self):
+        """Compatibility shim: return GitHub comment bodies (formerly Discord messages)."""
+        return [c.body for c in self.github_comments]
 
 
 M = Mocks()
@@ -153,14 +159,9 @@ def _make_activities():
             tests_passed=True,
         )
 
-    @activity.defn(name="send_message")
-    async def send_message(inp: SendMessageInput) -> SendMessageOutput:
-        M.messages.append(inp.message)
-        return SendMessageOutput(thread_id="thread-1")
-
-    @activity.defn(name="send_notification")
-    async def send_notification(inp: SendNotificationInput) -> None:
-        M.notifications.append(inp.message)
+    @activity.defn(name="post_github_comment")
+    async def post_github_comment(inp: GithubNotificationInput) -> None:
+        M.github_comments.append(inp)
 
     @activity.defn(name="open_agent_pr_issue_numbers")
     async def open_agent_pr_issue_numbers(inp) -> list:
@@ -171,16 +172,14 @@ def _make_activities():
         M.dispatched_phases.append("post_pr_comments")
         M.post_comments.append(inp)
 
-    return (
-        [
-            dispatch_agent_job,
-            answer_agent_job,
-            await_agent_job,
-            open_agent_pr_issue_numbers,
-            post_pr_comments,
-        ],
-        [send_message, send_notification],
-    )
+    return [
+        dispatch_agent_job,
+        answer_agent_job,
+        await_agent_job,
+        open_agent_pr_issue_numbers,
+        post_pr_comments,
+        post_github_comment,
+    ]
 
 
 @pytest.fixture
@@ -201,16 +200,13 @@ async def _run_devloop(client: Client, inp: DevLoopInput, replies: list[str]):
 
 
 async def _env_and_run(inp: DevLoopInput, replies: list[str]):
-    orch_acts, discord_acts = _make_activities()
+    acts = _make_activities()
     async with await WorkflowEnvironment.start_time_skipping() as env:
-        async with (
-            Worker(
-                env.client,
-                task_queue=ORCHESTRATION_QUEUE,
-                workflows=[DevLoopWorkflow],
-                activities=orch_acts,
-            ),
-            Worker(env.client, task_queue=MESSAGING_QUEUE, activities=discord_acts),
+        async with Worker(
+            env.client,
+            task_queue=ORCHESTRATION_QUEUE,
+            workflows=[DevLoopWorkflow],
+            activities=acts,
         ):
             return await _run_devloop(env.client, inp, replies)
 
@@ -426,7 +422,7 @@ async def test_merge_failure_terminates(reset_mocks):
     reset_mocks.merge_status = JobStatus.FAILED.value
     result = await _env_and_run(DevLoopInput("omneval"), ["approve", "approve"])
     assert result.status == "failed_merge"
-    assert any("merge #1 failed" in n.lower() for n in M.notifications)
+    assert any("parked" in n.lower() for n in M.notifications)
 
 
 # --------------------------------------------------------------------------- #

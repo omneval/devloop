@@ -1,7 +1,9 @@
 """Messaging platform abstraction tests (issue #19).
 
 Verifies the MessagingPlatform protocol and the generic activity wrapper
-that any messaging bridge (Discord, Slack, etc.) must conform to.
+that any messaging bridge (Slack, etc.) must conform to.
+
+Discord-specific tests were removed in issue #72 (Discord Bot removed).
 """
 
 from __future__ import annotations
@@ -157,44 +159,6 @@ def test_stub_records_archive_thread_calls():
     stub.archive_thread("t-99")
     assert len(stub.calls["archive_thread"]) == 1
     assert stub.calls["archive_thread"][0]["thread_id"] == "t-99"
-
-
-# --------------------------------------------------------------------------- #
-# DiscordActivities: @activity.defn decorators present
-# --------------------------------------------------------------------------- #
-
-
-def _import_discord_activities():
-    """Import DiscordActivities with the discord package stubbed out."""
-    import sys
-    from unittest.mock import MagicMock, patch
-
-    discord_mock = MagicMock()
-    discord_mock.Client = object  # real class so BotClient can subclass it
-    discord_mock.Intents = MagicMock()
-
-    with patch.dict(sys.modules, {"discord": discord_mock}):
-        sys.modules.pop("devloop.messaging.discord_bot", None)
-        from devloop.messaging.discord_bot import DiscordActivities
-
-        sys.modules.pop("devloop.messaging.discord_bot", None)
-    return DiscordActivities
-
-
-def test_discord_activities_have_activity_defn():
-    """DiscordActivities methods must carry @activity.defn so Temporal's Worker
-    can register them.  Without the decorator the worker raises at startup."""
-    DiscordActivities = _import_discord_activities()
-    from unittest.mock import MagicMock
-
-    bot = MagicMock()
-    acts = DiscordActivities(bot)
-
-    for method_name in ("send_message", "send_notification", "archive_thread"):
-        method = getattr(acts, method_name)
-        assert hasattr(method, "__temporal_activity_definition"), (
-            f"DiscordActivities.{method_name} is missing @activity.defn"
-        )
 
 
 # --------------------------------------------------------------------------- #

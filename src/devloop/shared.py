@@ -14,16 +14,7 @@ from enum import Enum
 
 
 # Task queues — override via env vars to match helm chart values.
-# MESSAGING_TASK_QUEUE is the queue name for whichever messaging platform bot is
-# deployed (discord-bot, slack-bot, etc.); set it in helm values alongside the
-# bot's own TASK_QUEUE so both sides agree on the queue name.
 ORCHESTRATION_QUEUE = os.getenv("ORCHESTRATION_QUEUE", "devloop-orchestration")
-MESSAGING_QUEUE = os.getenv("MESSAGING_TASK_QUEUE", "discord-bot")
-
-# Discord channel logical names (resolved to IDs inside the bot)
-CHANNEL_APPROVALS = "approvals"
-CHANNEL_ALERTS = "alerts"
-CHANNEL_CHANGELOG = "changelog"
 
 # Agent Job output ConfigMap contract: the keys the worker and the Agent
 # Execution Job exchange through the Job's output ConfigMap. Defined here so both
@@ -218,29 +209,18 @@ class AwaitInput:
 
 
 # ---------------------------------------------------------------------------
-# Messaging activity I/O
+# GitHub Issue comment notification activity I/O
 # ---------------------------------------------------------------------------
 
 
 @dataclass
-class SendMessageInput:
-    workflow_id: str
-    message: str
-    channel: str = "approvals"
-    thread_name: str = ""
+class GithubNotificationInput:
+    """Input for the post_github_comment activity.
 
+    Posts a comment to a GitHub Issue using the devloop-bot PAT
+    (GITHUB_TOKEN env var / project's github_token_secret).
+    """
 
-@dataclass
-class SendMessageOutput:
-    thread_id: str
-
-
-@dataclass
-class SendNotificationInput:
-    workflow_id: str
-    message: str
-
-
-@dataclass
-class ArchiveThreadInput:
-    workflow_id: str
+    issue_number: int
+    project_id: str
+    body: str

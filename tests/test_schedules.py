@@ -33,7 +33,6 @@ def _project(project_id: str = "omneval") -> ProjectConfig:
         default_branch="main",
         agent_image="ghcr.io/example/agent:sha-abc",
         agent_label="agent-ready",
-        discord_channel="agent-approvals",
         omneval_ingest_secret="omneval-ingest",
         github_token_secret="omneval-agent-github-token",
     )

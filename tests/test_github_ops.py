@@ -19,7 +19,6 @@ _PROJECT = ProjectConfig(
     default_branch="main",
     agent_image="img",
     agent_label="agent-ready",
-    discord_channel="agent-approvals",
     omneval_ingest_secret="s",
     github_token_secret="omneval-agent-github-token",
 )

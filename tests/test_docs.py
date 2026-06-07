@@ -87,7 +87,6 @@ def test_getting_started_documents_required_fields():
         "default_branch",
         "agent_image",
         "agent_label",
-        "discord_channel",
         "omneval_ingest_secret",
         "github_token_secret",
     ]
@@ -101,9 +100,8 @@ def test_getting_started_documents_optional_fields():
 
 
 def test_getting_started_documents_config_settings():
-    """Guide must cover GITHUB_TOKEN, Discord bot token, and temporalHost."""
+    """Guide must cover GITHUB_TOKEN and temporalHost."""
     text = (DOCS_DIR / "getting-started.md").read_text()
     text_lower = text.lower()
     assert "github_token" in text_lower
-    assert "discord" in text_lower
     assert "temporalHost" in text

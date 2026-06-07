@@ -22,7 +22,6 @@ _PROJECT = ProjectConfig(
     default_branch="main",
     agent_image="zacharybloss/agent-omneval:sha-test",
     agent_label="agent-ready",
-    discord_channel="agent-approvals",
     omneval_ingest_secret="omneval-ingest-omneval",
     github_token_secret="omneval-agent-github-token",
 )

@@ -123,7 +123,6 @@ projects:
     default_branch: main
     agent_image: ghcr.io/your-org/your-project-agent:latest
     agent_label: agent-ready
-    discord_channel: agent-approvals
     omneval_ingest_secret: omneval-ingest-your-project
     github_token_secret: your-project-github-token
 ```
@@ -137,10 +136,9 @@ projects:
     default_branch: main
     agent_image: ghcr.io/your-org/your-project-agent:latest
     agent_label: agent-ready
-    discord_channel: agent-approvals
     omneval_ingest_secret: omneval-ingest-your-project
     github_token_secret: your-project-github-token
-    pr_reviewer: "https://api.openai.com/v1"
+    pr_reviewer: "your-github-reviewer-username"
 ```
 
 ### 5b: Create Kubernetes Secrets
@@ -173,13 +171,11 @@ Create a `devloop-values.yaml`:
 
 ```yaml
 temporalHost: temporal-frontend.agents.svc.cluster.local:7233
-
-discordBot:
-  enabled: true
-  token: "your-discord-bot-token"
 ```
 
 **How issue triggering works**: devloop uses GitHub webhook events. When you apply the `agent-ready` label to a GitHub issue, GitHub sends an `issues` webhook event to the public ingress endpoint you configured in Step 1. The `devloop-temporal-worker` receives the event at `/webhook/github` and starts a Dev Loop workflow. Webhook delivery is instant — no polling interval to wait for.
+
+**Workflow notifications**: All Dev Loop status updates (queued, implemented, parked, review findings) are posted as comments on the relevant GitHub Issue using the project's `github_token_secret`. Operators can follow progress directly in GitHub without a separate messaging platform.
 
 Deploy:
 
@@ -204,7 +200,6 @@ Expected pods:
 
 ```
 NAME                                        READY   STATUS    RESTARTS   AGE
-devloop-discord-bot-xxxxxxxxx               1/1     Running   0          2m
 devloop-temporal-worker-xxxxxxx             1/1     Running   0          2m
 ```
 
@@ -212,10 +207,9 @@ Check logs for each component:
 
 ```bash
 kubectl logs -n agents -l app.kubernetes.io/component=temporal-worker --tail=20
-kubectl logs -n agents -l app.kubernetes.io/component=discord-bot --tail=20
 ```
 
-Create an issue in your GitHub repository with the `agent-ready` label. GitHub delivers the webhook event immediately; the temporal-worker will receive it and start the Dev Loop. The Discord bot should then announce the Dev Loop in the configured channel.
+Create an issue in your GitHub repository with the `agent-ready` label. GitHub delivers the webhook event immediately; the temporal-worker will receive it and start the Dev Loop. Status comments will appear on the GitHub Issue as the Dev Loop progresses.
 
 ## Manually Triggering or Restarting a Dev Loop
 
@@ -244,7 +238,7 @@ DevLoop and Summarization workflows.  See the
 [Alert Response Workflow example](examples/alert-response/README.md) for a
 complete consumer extension pattern: install `omneval-devloop` as a dependency,
 write a custom `@workflow.defn`, register both in a single worker process, and
-reuse SDK activities for Kubernetes Job dispatch and Discord messaging.
+reuse SDK activities for Kubernetes Job dispatch and GitHub Issue notifications.
 
 ## Project Registry Schema
 
@@ -255,15 +249,14 @@ reuse SDK activities for Kubernetes Job dispatch and Discord messaging.
 | `default_branch`      | Yes      | string | Default branch for PRs                           |
 | `agent_image`         | Yes      | string | Container image for the project agent             |
 | `agent_label`         | Yes      | string | GitHub issue label to trigger Dev Loop           |
-| `discord_channel`     | Yes      | string | Discord channel name for Dev Loop approvals      |
 | `omneval_ingest_secret` | Yes    | string | K8s secret name for Omneval ingest API key       |
-| `github_token_secret` | Yes      | string | K8s secret name for GitHub agent token           |
-| `pr_reviewer`         | No       | string | Optional API endpoint for PR review automation   |
+| `github_token_secret` | Yes      | string | K8s secret name for GitHub agent token (also used for posting issue comments) |
+| `pr_reviewer`         | No       | string | Optional GitHub login tagged for review on merge PRs |
 
 ## Configuration Reference
 
 | Setting                          | Description                                                                                   |
 |----------------------------------|-----------------------------------------------------------------------------------------------|
 | `temporalHost`                   | Temporal frontend gRPC address; set in Helm values to point at your Temporal cluster          |
-| `DISCORD_TOKEN`                  | Discord bot token for the approval channel                                                    |
+| `GITHUB_TOKEN`                   | GitHub token used by devloop-bot to post comments on GitHub Issues (per project via `github_token_secret`) |
 | `GITHUB_WEBHOOK_SECRET`          | Optional HMAC secret for verifying GitHub webhook payloads (set on the temporal-worker pod)   |

@@ -7,8 +7,8 @@ workflow that responds to AlertManager alerts.  The pattern is:
     2. A diagnosis Agent Job runs to understand the alert
     3. Each suggested remediation is checked against an allowlist
     4. Allowlisted actions execute autonomously
-    5. Non-allowlisted actions pause for human approval via Discord
-    6. After remediation, a summary notification is sent
+    5. Non-allowlisted actions pause for human approval (via signal)
+    6. After remediation, a summary is logged
 
 See README.md for the full consumer extension pattern and how to adapt this
 example to your own custom workflow.
@@ -27,8 +27,6 @@ from temporalio.common import RetryPolicy
 
 from devloop import DevLoopInput  # noqa: F401 — shows SDK import works
 from devloop.shared import (
-    CHANNEL_ALERTS,
-    MESSAGING_QUEUE,
     AgentJobResult,
     AnswerInput,
     AwaitInput,
@@ -47,7 +45,6 @@ logger = logging.getLogger(__name__)
 
 _RETRY = RetryPolicy(maximum_attempts=3)
 _ACTIVITY_TIMEOUT = timedelta(hours=1)
-_DISCORD_TIMEOUT = timedelta(seconds=60)
 
 
 @dataclass
@@ -106,10 +103,10 @@ def _is_allowlisted(action: str, category: str, allowlist: dict) -> bool:
 
 @workflow.defn
 class AlertResponseWorkflow:
-    """Handle an alert end-to-end: diagnose → remediate → notify.
+    """Handle an alert end-to-end: diagnose → remediate → log summary.
 
     Allowlisted actions run autonomously; everything else pauses for a human
-    reply on Discord.
+    reply signal.
     """
 
     def __init__(self) -> None:
@@ -125,35 +122,6 @@ class AlertResponseWorkflow:
         self._replies.append(text)
 
     # ---- helpers ---------------------------------------------------------- #
-
-    def _workflow_id(self) -> str:
-        return workflow.info().workflow_id
-
-    async def _send_message(
-        self, message: str, thread_name: str = "", channel: str = CHANNEL_ALERTS
-    ) -> None:
-        with workflow.unsafe.import_outside_workflow_sandbox_mode():
-            from devloop.shared import SendMessageInput
-
-        await workflow.execute_activity(
-            "send_message",
-            SendMessageInput(self._workflow_id(), message, channel, thread_name),
-            task_queue=MESSAGING_QUEUE,
-            start_to_close_timeout=_DISCORD_TIMEOUT,
-            retry_policy=_RETRY,
-        )
-
-    async def _notify(self, message: str) -> None:
-        with workflow.unsafe.import_outside_workflow_sandbox_mode():
-            from devloop.shared import SendNotificationInput
-
-        await workflow.execute_activity(
-            "send_notification",
-            SendNotificationInput(self._workflow_id(), message),
-            task_queue=MESSAGING_QUEUE,
-            start_to_close_timeout=_DISCORD_TIMEOUT,
-            retry_policy=_RETRY,
-        )
 
     async def _await_reply(self, timeout: float | None = None) -> str | None:
         """Block until the next unconsumed human reply; None on timeout."""
@@ -223,10 +191,12 @@ class AlertResponseWorkflow:
     async def _answer_and_await(
         self, inp: AlertResponseInput, result: AgentJobResult
     ) -> AgentJobResult:
-        """Handle an AWAITING_HUMAN result: ask Discord, then resume polling."""
+        """Handle an AWAITING_HUMAN result: wait for signal, then resume polling."""
         while result.status == JobStatus.AWAITING_HUMAN.value:
             async with self._ask_lock:
-                await self._send_message(f"❓ [{inp.alert_name}] {result.question}")
+                workflow.logger.info(
+                    "❓ [%s] %s", inp.alert_name, result.question
+                )
                 answer = await self._await_reply(
                     timeout=inp.approval_timeout_seconds
                     if inp.approval_timeout_seconds > 0
@@ -234,8 +204,8 @@ class AlertResponseWorkflow:
                 )
             if answer is None:
                 answer = "No human reply within the timeout — proceed with best guess."
-                await self._notify(
-                    f"⏱️ [{inp.alert_name}] no reply — proceeding with best guess."
+                workflow.logger.info(
+                    "⏱️ [%s] no reply — proceeding with best guess.", inp.alert_name
                 )
             await workflow.execute_activity(
                 "answer_agent_job",
@@ -264,28 +234,29 @@ class AlertResponseWorkflow:
         Returns a summary string describing what happened.
         """
         self._ask_lock = asyncio.Lock()
-        thread_name = f"Alert: {inp.alert_name}"
         allowlist = workflow.query(load_allowlist, path=_ALLOWLIST_PATH)
 
         steps: list[str] = []
 
         # 1. Diagnose
         steps.append(f"🔍 Diagnosing alert: {inp.alert_name}")
-        await self._send_message(steps[-1], thread_name=thread_name)
+        workflow.logger.info(steps[-1])
         diagnosis = await self._dispatch_diagnosis(inp)
         diagnosis = await self._answer_and_await(inp, diagnosis)
 
         if diagnosis.status != JobStatus.COMPLETE.value:
-            await self._notify(
-                f"❌ [{inp.alert_name}] diagnosis failed: {diagnosis.error or diagnosis.summary}"
+            workflow.logger.info(
+                "❌ [%s] diagnosis failed: %s",
+                inp.alert_name,
+                diagnosis.error or diagnosis.summary,
             )
             return f"diagnosis_failed: {diagnosis.error}"
 
         diag_data = diagnosis.diagnosis or {}
         suggested_actions = diag_data.get("actions", [])
         if not suggested_actions:
-            await self._notify(
-                f"✅ [{inp.alert_name}] diagnosis complete — no actions needed."
+            workflow.logger.info(
+                "✅ [%s] diagnosis complete — no actions needed.", inp.alert_name
             )
             return f"diagnosed: {diagnosis.summary}"
 
@@ -296,10 +267,10 @@ class AlertResponseWorkflow:
 
             if _is_allowlisted(action, category, allowlist):
                 steps.append(f"✅ [{action}] allowlisted — executing")
-                await self._send_message(steps[-1], thread_name=thread_name)
+                workflow.logger.info(steps[-1])
             else:
                 steps.append(f"⚠️ [{action}] not allowlisted — requesting approval")
-                await self._send_message(steps[-1], thread_name=thread_name)
+                workflow.logger.info(steps[-1])
                 reply = await self._await_reply(
                     timeout=inp.approval_timeout_seconds
                     if inp.approval_timeout_seconds > 0
@@ -307,8 +278,8 @@ class AlertResponseWorkflow:
                 )
                 if reply is None or not reply.lower().startswith("approve"):
                     steps.append(f"⏭️ [{action}] skipped (not approved)")
-                    await self._notify(
-                        f"⏭️ [{inp.alert_name}] {action} not approved — skipping."
+                    workflow.logger.info(
+                        "⏭️ [%s] %s not approved — skipping.", inp.alert_name, action
                     )
                     continue
 
@@ -322,5 +293,5 @@ class AlertResponseWorkflow:
 
         # 3. Summary
         summary = "\n".join(steps)
-        await self._notify(f"📋 [{inp.alert_name}] Response complete:\n{summary}")
+        workflow.logger.info("📋 [%s] Response complete:\n%s", inp.alert_name, summary)
         return summary

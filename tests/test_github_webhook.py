@@ -60,7 +60,6 @@ def _make_project():
         default_branch="main",
         agent_image="ghcr.io/example/agent:sha-abc",
         agent_label=_AGENT_LABEL,
-        discord_channel="agent-approvals",
         omneval_ingest_secret="omneval-ingest-omneval",
         github_token_secret="omneval-agent-github-token",
     )

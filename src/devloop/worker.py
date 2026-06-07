@@ -35,6 +35,7 @@ from .k8s_jobs import (
 from .github_ops import (
     file_issues,
     open_agent_pr_issue_numbers,
+    post_github_comment,
     post_pr_comments,
 )
 from .summarize_activities import summarize_changes
@@ -62,6 +63,7 @@ ACTIVITIES = [
     await_agent_job,
     cleanup_agent_job,
     post_pr_comments,
+    post_github_comment,
     file_issues,
     open_agent_pr_issue_numbers,
     summarize_changes,

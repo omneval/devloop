@@ -21,7 +21,6 @@ _REQUIRED_FIELDS = (
     "default_branch",
     "agent_image",
     "agent_label",
-    "discord_channel",
     "omneval_ingest_secret",
     "github_token_secret",
 )
@@ -34,7 +33,6 @@ class ProjectConfig:
     default_branch: str
     agent_image: str
     agent_label: str
-    discord_channel: str
     omneval_ingest_secret: str
     # Secret (agents ns, key "GITHUB_TOKEN") holding this project's scoped GitHub
     # token. Per-project so each org/owner gets its own credential — the worker
@@ -67,7 +65,6 @@ def load_projects(path: str | Path) -> list[ProjectConfig]:
                 default_branch=entry["default_branch"],
                 agent_image=entry["agent_image"],
                 agent_label=entry["agent_label"],
-                discord_channel=entry["discord_channel"],
                 omneval_ingest_secret=entry["omneval_ingest_secret"],
                 github_token_secret=entry["github_token_secret"],
                 pr_reviewer=entry.get("pr_reviewer", ""),

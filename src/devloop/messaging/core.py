@@ -12,12 +12,29 @@ import uuid
 from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 
-from devloop.shared import (
-    ArchiveThreadInput,
-    SendMessageInput,
-    SendMessageOutput,
-    SendNotificationInput,
-)
+
+@dataclass
+class SendMessageInput:
+    workflow_id: str
+    message: str
+    channel: str = "approvals"
+    thread_name: str = ""
+
+
+@dataclass
+class SendMessageOutput:
+    thread_id: str
+
+
+@dataclass
+class SendNotificationInput:
+    workflow_id: str
+    message: str
+
+
+@dataclass
+class ArchiveThreadInput:
+    workflow_id: str
 
 
 # --------------------------------------------------------------------------- #

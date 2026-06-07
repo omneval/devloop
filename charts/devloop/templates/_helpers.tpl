@@ -30,14 +30,6 @@ the release name so that multiple installs in the same namespace don't collide.
 {{- end -}}
 {{- end }}
 
-{{- define "devloop.discordBot.serviceAccountName" -}}
-{{- if .Values.discordBot.serviceAccount.name -}}
-{{- .Values.discordBot.serviceAccount.name -}}
-{{- else -}}
-{{- printf "%s-discord-bot" .Release.Name -}}
-{{- end -}}
-{{- end }}
-
 {{- define "devloop.agentJob.serviceAccountName" -}}
 {{- if .Values.temporalWorker.agentJob.serviceAccount.name -}}
 {{- .Values.temporalWorker.agentJob.serviceAccount.name -}}

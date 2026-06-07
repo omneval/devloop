@@ -18,7 +18,7 @@ from temporalio import activity
 
 from . import cluster
 from .projects import ProjectConfig, get_project, parse_github_repo
-from .shared import OpenAgentPRsInput, PostCommentsInput
+from .shared import GithubNotificationInput, OpenAgentPRsInput, PostCommentsInput
 
 log = logging.getLogger(__name__)
 
@@ -150,6 +150,30 @@ async def file_issues(inp: FileIssuesInput) -> list[int]:
             created.append(resp.json()["number"])
     log.info("filed %d new issue(s) in %s: %s", len(created), repo, created)
     return created
+
+
+@activity.defn
+async def post_github_comment(inp: GithubNotificationInput) -> None:
+    """Post a comment on a GitHub Issue using the project's scoped token.
+
+    Used by DevLoopWorkflow to replace all Discord _say/_notify calls with
+    in-GitHub Issue comments visible to the project operators. The token is
+    resolved per project from the project's ``github_token_secret`` Secret,
+    so different orgs/owners use different credentials (same pattern as
+    ``post_pr_comments``).
+    """
+    cfg = get_project(inp.project_id)
+    repo = parse_github_repo(cfg.github_url)
+    with _client(cfg) as c:
+        c.post(
+            f"/repos/{repo}/issues/{inp.issue_number}/comments",
+            json={"body": inp.body},
+        ).raise_for_status()
+    log.info(
+        "posted GitHub comment on %s#%d",
+        repo,
+        inp.issue_number,
+    )
 
 
 @activity.defn

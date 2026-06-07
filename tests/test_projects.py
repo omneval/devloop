@@ -14,7 +14,6 @@ _VALID_YAML = textwrap.dedent("""\
         default_branch: main
         agent_image: ghcr.io/example/agent:sha-abc1234
         agent_label: agent-ready
-        discord_channel: agent-approvals
         omneval_ingest_secret: omneval-ingest-omneval
         github_token_secret: omneval-agent-github-token
 """)
@@ -38,7 +37,6 @@ def test_valid_yaml_returns_correct_dataclass(tmp_path):
     assert cfg.default_branch == "main"
     assert cfg.agent_image == "ghcr.io/example/agent:sha-abc1234"
     assert cfg.agent_label == "agent-ready"
-    assert cfg.discord_channel == "agent-approvals"
     assert cfg.omneval_ingest_secret == "omneval-ingest-omneval"
     assert cfg.github_token_secret == "omneval-agent-github-token"
 
@@ -56,7 +54,6 @@ def test_multiple_projects(tmp_path):
             default_branch: main
             agent_image: org/agent-alpha:latest
             agent_label: agent-ready
-            discord_channel: alpha-approvals
             omneval_ingest_secret: omneval-ingest-alpha
             github_token_secret: alpha-github-token
           - id: beta
@@ -64,7 +61,6 @@ def test_multiple_projects(tmp_path):
             default_branch: trunk
             agent_image: org/agent-beta:latest
             agent_label: agent-ready
-            discord_channel: beta-approvals
             omneval_ingest_secret: omneval-ingest-beta
             github_token_secret: beta-github-token
     """)
@@ -80,7 +76,6 @@ def test_multiple_projects(tmp_path):
         "default_branch",
         "agent_image",
         "agent_label",
-        "discord_channel",
         "omneval_ingest_secret",
         "github_token_secret",
     ],

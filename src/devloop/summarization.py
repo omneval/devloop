@@ -16,8 +16,6 @@ from datetime import timedelta
 from temporalio import workflow
 from temporalio.common import RetryPolicy
 
-from .shared import CHANNEL_CHANGELOG, MESSAGING_QUEUE, SendMessageInput
-
 _RETRY = RetryPolicy(maximum_attempts=3)
 
 
@@ -53,17 +51,8 @@ class SummarizationWorkflow:
             )
             return result
 
+        # Summarization delivery is handled separately (see summarization issue).
+        # Log the summary so it appears in the worker logs for now.
         title = f"{inp.project_id} — {inp.trigger} digest"
-        await workflow.execute_activity(
-            "send_message",
-            SendMessageInput(
-                workflow_id=workflow.info().workflow_id,
-                message=result.summary,
-                channel=CHANNEL_CHANGELOG,
-                thread_name=title,
-            ),
-            task_queue=MESSAGING_QUEUE,
-            start_to_close_timeout=timedelta(seconds=60),
-            retry_policy=_RETRY,
-        )
+        workflow.logger.info("summary ready for %s: %s", title, result.summary[:200])
         return result
