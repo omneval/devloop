@@ -34,6 +34,7 @@ from .k8s_jobs import (
 )
 from .github_ops import (
     file_issues,
+    get_pr_diff,
     open_agent_pr_issue_numbers,
     poll_ci_checks,
     post_github_comment,
@@ -45,6 +46,7 @@ from .summarize_activities import publish_summary, summarize_changes
 # Workflows
 from .workflows import NoopWorkflow, noop_activity
 from .dev_loop import DevLoopWorkflow
+from .pr_comment import PRCommentWorkflow
 from .summarization import SummarizationWorkflow
 
 logging.basicConfig(
@@ -94,6 +96,7 @@ ORCHESTRATION_ACTIVITIES = [
     post_pr_comments,
     post_github_comment,
     file_issues,
+    get_pr_diff,
     open_agent_pr_issue_numbers,
     poll_ci_checks,
     request_github_reviewer,
@@ -103,6 +106,7 @@ ORCHESTRATION_ACTIVITIES = [
 WORKFLOWS = [
     NoopWorkflow,
     DevLoopWorkflow,
+    PRCommentWorkflow,
     SummarizationWorkflow,
 ]
 

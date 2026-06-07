@@ -21,21 +21,16 @@ from temporalio import workflow
 from temporalio.common import RetryPolicy
 
 from . import dev_loop_logic as logic
+from ._workflow_common import _WorkflowCommon
 from .shared import (
     AgentJobResult,
     AnswerInput,
     AwaitInput,
-    CIChecksResult,
-    DispatchInput,
-    GithubNotificationInput,
     InlineComment,
-    JOB_DISPATCH_QUEUE,
     JobStatus,
     OpenAgentPRsInput,
     Phase,
-    PollCIChecksInput,
     PostCommentsInput,
-    RequestReviewerInput,
     TaskSpec,
 )
 
@@ -117,40 +112,9 @@ def _as_int(value) -> int:
 
 
 @workflow.defn
-class DevLoopWorkflow:
+class DevLoopWorkflow(_WorkflowCommon):
     def __init__(self) -> None:
         pass
-
-    # ---- GitHub Issue comment helper ------------------------------------ #
-    async def _comment(self, inp_project_id: str, issue_number: int, body: str) -> None:
-        """Post a comment on the given GitHub Issue via devloop-bot."""
-        await workflow.execute_activity(
-            "post_github_comment",
-            GithubNotificationInput(
-                issue_number=issue_number,
-                project_id=inp_project_id,
-                body=body,
-            ),
-            start_to_close_timeout=_GITHUB_COMMENT_TIMEOUT,
-            retry_policy=_RETRY,
-        )
-
-    async def _dispatch(
-        self, inp: DevLoopInput, spec: TaskSpec, issue_number: int = 0
-    ) -> AgentJobResult:
-        return await workflow.execute_activity(
-            "dispatch_agent_job",
-            DispatchInput(
-                inp.project_id,
-                issue_number,
-                spec,
-                poll_interval_seconds=inp.poll_interval_seconds,
-            ),
-            result_type=AgentJobResult,
-            start_to_close_timeout=_ACTIVITY_TIMEOUT,
-            retry_policy=_RETRY,
-            task_queue=JOB_DISPATCH_QUEUE,
-        )
 
     async def _drop_issues_in_review(
         self, inp: DevLoopInput, issues: list[dict]
@@ -236,7 +200,7 @@ class DevLoopWorkflow:
             project_id=inp.project_id,
             extra={"agent_label": inp.agent_label},
         )
-        result = await self._dispatch(inp, spec)
+        result = await self._dispatch(inp.project_id, spec, poll_interval_seconds=inp.poll_interval_seconds)
         plan = result.plan or {"issues": []}
         issues = plan.get("issues") or []
         issues = await self._drop_issues_in_review(inp, issues)
@@ -271,7 +235,7 @@ class DevLoopWorkflow:
                 issue_no,
                 "⏳ queued — agent is working on this issue",
             )
-            result = await self._dispatch(inp, spec, issue_number=issue_no)
+            result = await self._dispatch(inp.project_id, spec, issue_number=issue_no, poll_interval_seconds=inp.poll_interval_seconds)
             result = await self._answer_questions(inp, issue_no, result)
 
             if result.status != JobStatus.COMPLETE.value or result.commits:
@@ -319,79 +283,15 @@ class DevLoopWorkflow:
             "commits": result.commits,
             "exhausted": False,
         }
-        exhausted = await self._ci_fix_loop(inp, issue_no, exec_result)
+        exhausted = await self._ci_fix_loop(
+            inp.project_id,
+            issue_no,
+            exec_result,
+            ci_fix_max_iterations=inp.ci_fix_max_iterations,
+            poll_interval_seconds=inp.poll_interval_seconds,
+        )
         exec_result["exhausted"] = exhausted
         return exec_result
-
-    # ---- Phase.CI_FIX loop (#76) ---------------------------------------- #
-    async def _ci_fix_loop(
-        self, inp: DevLoopInput, issue_no: int, exec_result: dict
-    ) -> bool:
-        """Retry CI fixes up to ``ci_fix_max_iterations`` times or until green.
-
-        Each iteration polls the PR's CI checks; if they all pass, the loop
-        exits early (``exhausted=False``). Otherwise it dispatches a
-        ``Phase.CI_FIX`` Agent Execution Job — preceded by a "⏳ queued"
-        comment — with the current failing check details in
-        ``TaskSpec.extra["ci_check_failures"]``, then posts a result comment.
-
-        Returns ``True`` when every iteration is spent without CI going green
-        (``exhausted``), so ``_notify_reviewer`` can carry a "CI still failing"
-        note to the human reviewer.
-        """
-        pr_number = logic.pr_number_from_url(exec_result.get("pr_url", ""))
-        if pr_number <= 0:
-            return False
-
-        max_iters = inp.ci_fix_max_iterations
-        for attempt in range(1, max_iters + 1):
-            checks = await workflow.execute_activity(
-                "poll_ci_checks",
-                PollCIChecksInput(project_id=inp.project_id, pr_number=pr_number),
-                result_type=CIChecksResult,
-                start_to_close_timeout=timedelta(minutes=5),
-                retry_policy=_RETRY,
-            )
-            if checks.all_passed:
-                return False
-
-            failures = [
-                {
-                    "name": f.name,
-                    "conclusion": f.conclusion,
-                    "details_url": f.details_url,
-                    "summary": f.summary,
-                }
-                for f in (checks.failures or [])
-            ]
-            spec = TaskSpec(
-                phase=Phase.CI_FIX.value,
-                project_id=inp.project_id,
-                issue_number=issue_no,
-                branch=exec_result.get("branch", ""),
-                extra={"ci_check_failures": failures},
-            )
-            await self._comment(
-                inp.project_id,
-                issue_no,
-                f"⏳ queued — CI fix attempt {attempt}/{max_iters}",
-            )
-            result = await self._dispatch(inp, spec, issue_number=issue_no)
-            if result.status == JobStatus.COMPLETE.value:
-                await self._comment(
-                    inp.project_id,
-                    issue_no,
-                    f"🔧 CI fix attempt {attempt}/{max_iters} — "
-                    f"pushed {result.commits} commit(s)",
-                )
-            else:
-                await self._comment(
-                    inp.project_id,
-                    issue_no,
-                    f"❌ CI fix attempt {attempt}/{max_iters} failed",
-                )
-
-        return True
 
     async def _answer_via_agent(
         self, inp: DevLoopInput, issue_no: int, question: str, branch: str
@@ -415,7 +315,7 @@ class DevLoopWorkflow:
             branch=branch,
             extra={"question": question},
         )
-        answer_result = await self._dispatch(inp, spec, issue_number=issue_no)
+        answer_result = await self._dispatch(inp.project_id, spec, issue_number=issue_no, poll_interval_seconds=inp.poll_interval_seconds)
         answer = answer_result.summary or "proceed with your best guess"
         await self._comment(
             inp.project_id,
@@ -491,7 +391,7 @@ class DevLoopWorkflow:
             issue_no,
             "⏳ queued — agent is reviewing this issue",
         )
-        result = await self._dispatch(inp, spec, issue_number=issue_no)
+        result = await self._dispatch(inp.project_id, spec, issue_number=issue_no, poll_interval_seconds=inp.poll_interval_seconds)
         if result.commits:
             await self._comment(
                 inp.project_id,
@@ -555,20 +455,10 @@ class DevLoopWorkflow:
         pr_number = logic.pr_number_from_url(pr_url)
 
         # Resolve the configured reviewer from the project registry.
-        # We import get_project inside workflow.now() context; the registry is
-        # process-wide so this is safe (no I/O). In tests the value is empty.
-        # We use workflow.execute_activity for the actual reviewer request so
-        # the I/O stays in activities, not in the workflow sandbox.
-        await workflow.execute_activity(
-            "request_github_reviewer",
-            RequestReviewerInput(
-                project_id=inp.project_id,
-                pr_number=pr_number,
-                reviewer="",  # reviewer resolved by the activity from project registry
-            ),
-            start_to_close_timeout=_GITHUB_COMMENT_TIMEOUT,
-            retry_policy=_RETRY,
-        )
+        # We use the shared _request_reviewer helper (mixin) so the I/O stays
+        # in activities, not in the workflow sandbox — the activity resolves
+        # the actual reviewer login from the project registry.
+        await self._request_reviewer(inp.project_id, pr_number)
 
         note = (
             " ⚠️ CI is still failing after exhausting the CI fix attempts —"

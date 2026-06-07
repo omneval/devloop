@@ -853,6 +853,7 @@ _PROMPT_FILES = {
     "diagnosis": "diagnosis.md",
     "ci_fix": "ci_fix.md",
     "answer": "answer.md",
+    "pr_comment": "pr_comment.md",
 }
 
 _PLACEHOLDER_RE = re.compile(r"\{\{[A-Z_]+\}\}")
@@ -940,6 +941,16 @@ def _prompt_variables(spec: TaskSpec) -> dict[str, str]:
             "SOURCE_BRANCH": base,
             "QUESTION": spec.extra.get("question", ""),
         }
+    if spec.phase == "pr_comment":
+        source = spec.extra.get("source", "comment")
+        return {
+            "BRANCH": spec.branch,
+            "SOURCE_BRANCH": base,
+            "PR_DIFF": spec.extra.get("pr_diff", "") or "(no diff available)",
+            "COMMENT_BODY": spec.extra.get("comment_body", ""),
+            "FEEDBACK_SOURCE": "a PR review" if source == "review" else "a PR comment",
+            "FEEDBACK_AUTHOR": spec.extra.get("author", "the reviewer"),
+        }
     if spec.phase == "diagnosis":
         alert = spec.extra.get("alert", {}) or {}
         details = {
@@ -958,14 +969,17 @@ def _prompt_variables(spec: TaskSpec) -> dict[str, str]:
 def build_agent_message(spec: TaskSpec) -> str:
     """Build the prompt sent to the agent for this phase.
 
-    plan / execute / review / merge / diagnosis / ci_fix / answer render the
-    bundled prompt templates (the diagnosis template asks for a structured
-    ``<diagnosis>`` JSON block so the Alert Response remediation phase gets
-    executable actions; the ci_fix template targets minimal changes that turn
-    failing CI checks green — see ``Phase.CI_FIX`` / ``_ci_fix_loop``; the
-    answer template asks a fresh agent to investigate a paused agent's
+    plan / execute / review / merge / diagnosis / ci_fix / answer / pr_comment
+    render the bundled prompt templates (the diagnosis template asks for a
+    structured ``<diagnosis>`` JSON block so the Alert Response remediation
+    phase gets executable actions; the ci_fix template targets minimal changes
+    that turn failing CI checks green — see ``Phase.CI_FIX`` / ``_ci_fix_loop``;
+    the answer template asks a fresh agent to investigate a paused agent's
     mid-run question with branch access and return its best-informed
-    decision — see ``Phase.ANSWER`` / ``_answer_questions``).
+    decision — see ``Phase.ANSWER`` / ``_answer_questions``; the pr_comment
+    template asks the agent to make targeted changes responding to reviewer
+    feedback on an open PR and summarize them with the commit SHA — see
+    ``Phase.PR_COMMENT`` / ``PRCommentWorkflow``).
     """
     if spec.phase in _PROMPT_FILES:
         return load_prompt(_PROMPT_FILES[spec.phase], _prompt_variables(spec))
@@ -1206,6 +1220,47 @@ def handle_ci_fix(spec: TaskSpec, tracer) -> dict:
     ).to_payload()
 
 
+def handle_pr_comment(spec: TaskSpec, tracer) -> dict:
+    """Phase.PR_COMMENT (#78): respond to reviewer feedback on an open agent PR.
+
+    Given the PR diff and the comment/review body (``TaskSpec.extra``), the
+    agent makes targeted changes on the existing branch, commits, and pushes —
+    mirroring ``handle_ci_fix``'s clone → run_agent → commit → push shape. Any
+    pushed commits are picked up by ``PRCommentWorkflow``'s CI fix loop.
+
+    Note: the agent does **not** post the GitHub reply itself — that happens
+    via the workflow's ``post_github_comment`` activity once this Job
+    completes, using ``AgentJobResult.summary`` (which the prompt asks the
+    agent to end with, referencing the commit SHA it pushed)."""
+    workdir = os.getenv("WORKDIR", "/workspace/repo")
+    with tracer.start_as_current_span("clone"):
+        clone_repo(os.environ["GITHUB_URL"], spec.branch, workdir)
+    with tracer.start_as_current_span("install_deps"):
+        install_deps(workdir)
+
+    base_sha = _run(["git", "rev-parse", "HEAD"], cwd=workdir).strip()
+    outcome = run_agent(spec, workdir, tracer)
+
+    _run(["git", "add", "-A"], cwd=workdir)
+    if _run(["git", "status", "--porcelain"], cwd=workdir).strip():
+        _run(
+            ["git", "commit", "-m", f"pr_comment: address feedback on #{spec.issue_number}"],
+            cwd=workdir,
+        )
+
+    fixes = _commit_count(workdir, base_sha)
+    if fixes:
+        with tracer.start_as_current_span("push"):
+            push_branch(workdir, spec.branch, force=True)
+    return AgentJobResult(
+        status="complete",
+        issue_number=spec.issue_number,
+        branch=spec.branch,
+        commits=fixes,
+        summary=outcome.summary,
+    ).to_payload()
+
+
 def handle_merge(spec: TaskSpec, tracer) -> dict:
     """Merge phase (PR-review model): open a *review* PR for each approved branch
     instead of merging it into the default branch directly.
@@ -1290,6 +1345,7 @@ _HANDLERS = {
     "merge": handle_merge,
     "diagnosis": handle_diagnosis,
     "answer": handle_answer,
+    "pr_comment": handle_pr_comment,
 }
 
 

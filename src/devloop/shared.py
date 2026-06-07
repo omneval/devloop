@@ -36,6 +36,7 @@ class Phase(str, Enum):
     CI_FIX = "ci_fix"
     SUMMARIZE = "summarize"
     ANSWER = "answer"
+    PR_COMMENT = "pr_comment"
 
 
 class JobStatus(str, Enum):
@@ -273,6 +274,20 @@ class RequestReviewerInput:
     project_id: str
     pr_number: int
     reviewer: str
+
+
+@dataclass
+class GetPRDiffInput:
+    """Input for the get_pr_diff activity.
+
+    Fetches the unified diff for a PR (``Accept: application/vnd.github.diff``)
+    so ``PRCommentWorkflow`` can hand the reviewer/commenter's targeted feedback
+    *and* the actual code under discussion to the ``Phase.PR_COMMENT`` Agent
+    Execution Job via ``TaskSpec.extra``.
+    """
+
+    project_id: str
+    pr_number: int
 
 
 # ---------------------------------------------------------------------------

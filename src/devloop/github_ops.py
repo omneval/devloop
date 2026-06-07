@@ -21,6 +21,7 @@ from .projects import ProjectConfig, get_project, parse_github_repo
 from .shared import (
     CICheckFailure,
     CIChecksResult,
+    GetPRDiffInput,
     GithubNotificationInput,
     OpenAgentPRsInput,
     PollCIChecksInput,
@@ -218,6 +219,33 @@ async def request_github_reviewer(inp: RequestReviewerInput) -> None:
         repo,
         inp.pr_number,
     )
+
+
+@activity.defn
+async def get_pr_diff(inp: GetPRDiffInput) -> str:
+    """Fetch the unified diff for a PR via the GitHub REST API.
+
+    Used by ``PRCommentWorkflow`` (#78) to hand the ``Phase.PR_COMMENT`` Agent
+    Execution Job the actual code under discussion (alongside the
+    reviewer/commenter's feedback) in ``TaskSpec.extra["pr_diff"]`` — so the
+    agent can ground its targeted changes in exactly what the human is
+    responding to. Returns ``""`` for an unresolvable PR number rather than
+    raising, so a transient diff-fetch hiccup doesn't sink the whole workflow
+    (the agent still has the comment/review body and branch access to work
+    from).
+    """
+    if inp.pr_number <= 0:
+        return ""
+    cfg = get_project(inp.project_id)
+    repo = parse_github_repo(cfg.github_url)
+    headers = dict(_headers(cluster.read_secret_value(cfg.github_token_secret, "GITHUB_TOKEN")))
+    headers["Accept"] = "application/vnd.github.v3.diff"
+    import httpx
+
+    with httpx.Client(base_url=GITHUB_API, headers=headers, timeout=30.0) as c:
+        resp = c.get(f"/repos/{repo}/pulls/{inp.pr_number}")
+        resp.raise_for_status()
+        return resp.text
 
 
 _TERMINAL_CONCLUSIONS = {

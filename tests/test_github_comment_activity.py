@@ -174,19 +174,37 @@ def test_dev_loop_does_not_import_discord_constants():
 
 
 def test_dev_loop_imports_github_notification_input():
-    """dev_loop.py must import GithubNotificationInput from shared."""
+    """The Dev Loop's GitHub-comment path must use GithubNotificationInput.
+
+    Issue #78 extracted the comment-posting helper (``_comment``) into the
+    shared ``_WorkflowCommon`` mixin (``_workflow_common.py``) so
+    ``PRCommentWorkflow`` can reuse it without duplicating the activity call —
+    ``dev_loop.py`` now imports ``_WorkflowCommon`` rather than
+    ``GithubNotificationInput`` directly. This test accepts either: a direct
+    import in ``dev_loop.py``, or the indirect path through the shared mixin
+    module it imports from.
+    """
     import ast
     import pathlib
 
-    src = pathlib.Path("src/devloop/dev_loop.py").read_text()
-    tree = ast.parse(src)
-    found = False
-    for node in ast.walk(tree):
-        if isinstance(node, ast.ImportFrom):
-            for alias in node.names:
-                if alias.name == "GithubNotificationInput":
-                    found = True
-    assert found, "dev_loop.py must import GithubNotificationInput from shared"
+    def _imports(path: str, name: str) -> bool:
+        src = pathlib.Path(path).read_text()
+        tree = ast.parse(src)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom):
+                for alias in node.names:
+                    if alias.name == name:
+                        return True
+        return False
+
+    direct = _imports("src/devloop/dev_loop.py", "GithubNotificationInput")
+    via_mixin = _imports(
+        "src/devloop/dev_loop.py", "_WorkflowCommon"
+    ) and _imports("src/devloop/_workflow_common.py", "GithubNotificationInput")
+    assert direct or via_mixin, (
+        "dev_loop.py's GitHub-comment path must use GithubNotificationInput "
+        "(directly or via the shared _WorkflowCommon mixin)"
+    )
 
 
 # ---------------------------------------------------------------------------

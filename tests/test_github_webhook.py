@@ -30,6 +30,7 @@ _PROJECT_ID = "omneval"
 _GITHUB_REPO = "omneval/omneval"
 _AGENT_LABEL = "agent-ready"
 _SECRET = "super-secret-webhook-token"
+_AGENT_LOGIN = "devloop-bot"
 
 
 class _FakeClient:
@@ -91,6 +92,7 @@ def client_and_spy(monkeypatch):
     """
     fake = _FakeClient()
     monkeypatch.setattr(webhook, "GITHUB_WEBHOOK_SECRET", _SECRET)
+    monkeypatch.setattr(webhook, "AGENT_GITHUB_LOGIN", _AGENT_LOGIN)
     app = webhook.create_app(fake, [_make_project()])
     tc = TestClient(app, raise_server_exceptions=True)
     return tc, fake
@@ -101,6 +103,7 @@ def client_no_secret(monkeypatch):
     """App with GITHUB_WEBHOOK_SECRET set to empty string (secret not configured)."""
     fake = _FakeClient()
     monkeypatch.setattr(webhook, "GITHUB_WEBHOOK_SECRET", "")
+    monkeypatch.setattr(webhook, "AGENT_GITHUB_LOGIN", _AGENT_LOGIN)
     app = webhook.create_app(fake, [_make_project()])
     tc = TestClient(app, raise_server_exceptions=True)
     return tc, fake
@@ -350,3 +353,156 @@ def test_no_secret_configured_skips_signature_check(client_no_secret):
 
     assert resp.status_code == 200
     assert len(fake.started) == 1
+
+
+# ---------------------------------------------------------------------------
+# pull_request_review / issue_comment → PRCommentWorkflow routing (issue #78)
+# ---------------------------------------------------------------------------
+
+_AGENT_PR_BRANCH = "agent/issue-53"
+_PR_NUMBER = 17
+
+
+def _pull_request_review_payload(
+    *,
+    login: str = "a-human-reviewer",
+    head_ref: str = _AGENT_PR_BRANCH,
+    repo: str = _GITHUB_REPO,
+    body: str = "Please rename this function.",
+) -> bytes:
+    payload = {
+        "action": "submitted",
+        "review": {"user": {"login": login}, "body": body, "state": "commented"},
+        "pull_request": {
+            "number": _PR_NUMBER,
+            "head": {"ref": head_ref},
+        },
+        "repository": {"full_name": repo},
+    }
+    return json.dumps(payload).encode()
+
+
+def _issue_comment_payload(
+    *,
+    login: str = "a-human-reviewer",
+    body: str = f"Hey @{_AGENT_LOGIN} can you fix the typo?",
+    is_pr: bool = True,
+    repo: str = _GITHUB_REPO,
+) -> bytes:
+    issue: dict = {"number": _PR_NUMBER, "title": "agent: #53 add feature"}
+    if is_pr:
+        issue["pull_request"] = {"url": "https://api.github.com/.../pulls/17"}
+    payload = {
+        "action": "created",
+        "comment": {"user": {"login": login}, "body": body},
+        "issue": issue,
+        "repository": {"full_name": repo},
+    }
+    return json.dumps(payload).encode()
+
+
+def _post_event(tc, body: bytes, event: str):
+    sig = _sign(body, _SECRET)
+    return tc.post(
+        "/webhook/github",
+        content=body,
+        headers={
+            "X-GitHub-Event": event,
+            "X-Hub-Signature-256": sig,
+            "Content-Type": "application/json",
+        },
+    )
+
+
+def test_pull_request_review_by_human_triggers_pr_comment_workflow(client_and_spy):
+    tc, fake = client_and_spy
+    body = _pull_request_review_payload(login="a-human-reviewer")
+
+    resp = _post_event(tc, body, "pull_request_review")
+
+    assert resp.status_code == 200
+    assert len(fake.started) == 1
+    wf = fake.started[0]
+    assert wf["workflow"] == "PRCommentWorkflow"
+    owner, _, name = _GITHUB_REPO.partition("/")
+    assert wf["id"] == f"pr-comment-{owner}-{name}-{_PR_NUMBER}"
+
+    from temporalio.common import WorkflowIDConflictPolicy
+
+    assert wf["id_conflict_policy"] == WorkflowIDConflictPolicy.TERMINATE_EXISTING
+
+
+def test_pull_request_review_by_bot_is_ignored(client_and_spy):
+    tc, fake = client_and_spy
+    body = _pull_request_review_payload(login=_AGENT_LOGIN)
+
+    resp = _post_event(tc, body, "pull_request_review")
+
+    assert resp.status_code == 200
+    assert fake.started == []
+
+
+def test_pull_request_review_on_non_agent_branch_is_ignored(client_and_spy):
+    tc, fake = client_and_spy
+    body = _pull_request_review_payload(head_ref="feature/something-else")
+
+    resp = _post_event(tc, body, "pull_request_review")
+
+    assert resp.status_code == 200
+    assert fake.started == []
+
+
+def test_issue_comment_with_mention_triggers_pr_comment_workflow(client_and_spy):
+    tc, fake = client_and_spy
+    body = _issue_comment_payload(
+        login="a-human-reviewer", body=f"@{_AGENT_LOGIN} please address this"
+    )
+
+    resp = _post_event(tc, body, "issue_comment")
+
+    assert resp.status_code == 200
+    assert len(fake.started) == 1
+    wf = fake.started[0]
+    assert wf["workflow"] == "PRCommentWorkflow"
+    owner, _, name = _GITHUB_REPO.partition("/")
+    assert wf["id"] == f"pr-comment-{owner}-{name}-{_PR_NUMBER}"
+
+    from temporalio.common import WorkflowIDConflictPolicy
+
+    assert wf["id_conflict_policy"] == WorkflowIDConflictPolicy.TERMINATE_EXISTING
+
+
+def test_issue_comment_without_mention_is_ignored(client_and_spy):
+    tc, fake = client_and_spy
+    body = _issue_comment_payload(body="Just a regular comment, no mention here.")
+
+    resp = _post_event(tc, body, "issue_comment")
+
+    assert resp.status_code == 200
+    assert fake.started == []
+
+
+def test_issue_comment_by_bot_is_ignored(client_and_spy):
+    tc, fake = client_and_spy
+    body = _issue_comment_payload(
+        login=_AGENT_LOGIN, body=f"@{_AGENT_LOGIN} self-mention from the bot"
+    )
+
+    resp = _post_event(tc, body, "issue_comment")
+
+    assert resp.status_code == 200
+    assert fake.started == []
+
+
+def test_issue_comment_on_plain_issue_is_ignored(client_and_spy):
+    """A comment on a plain Issue (no `pull_request` key) is not a PR comment —
+    PRCommentWorkflow only engages on PRs."""
+    tc, fake = client_and_spy
+    body = _issue_comment_payload(
+        body=f"@{_AGENT_LOGIN} can you look at this?", is_pr=False
+    )
+
+    resp = _post_event(tc, body, "issue_comment")
+
+    assert resp.status_code == 200
+    assert fake.started == []
