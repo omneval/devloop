@@ -1,46 +1,130 @@
 # Getting Started with devloop
 
-This guide walks you through the full path to running your first Dev Loop: installing Temporal, deploying the devloop Helm chart, enrolling your first project, and verifying everything works.
+This guide walks you through the full path to running your first Dev Loop:
+exposing a webhook ingress endpoint, setting up the `devloop-bot` GitHub
+account, installing Temporal, deploying the devloop Helm chart, enrolling your
+first project, and verifying everything works.
 
-**Prerequisites**: A Kubernetes cluster with Helm 3 and `kubectl` configured.
+devloop is **fully autonomous and webhook-driven**. There is no poller, no
+Discord bot, and no human approval gates — once an issue is labeled
+`agent-ready`, GitHub delivers a webhook event and the Dev Loop runs end to
+end (Plan → Execute → CI Fix Loop → Review → Merge), posting status updates as
+comments on the GitHub Issue and opening a PR for human consumption. The only
+two devloop-specific images are `devloop-agent-base` (the shared toolchain
+baked into every per-project agent image) and `devloop-temporal-worker` (the
+single long-running deployment).
+
+**Prerequisites**: A Kubernetes cluster with Helm 3 and `kubectl` configured,
+and a public hostname or tunnel that can reach your cluster (see Step 1 — this
+is a hard prerequisite, not optional).
 
 ## Step 1: Expose a Webhook Ingress Endpoint
 
-Webhook ingress is required. The `devloop-temporal-worker` receives GitHub webhook events at `/webhook/github` and must be reachable from GitHub's servers. Choose one of the following options before proceeding:
+Webhook ingress is **required** — devloop has no fallback polling mode. The
+`devloop-temporal-worker` receives GitHub webhook events at
+`/webhook/github`, and `https://<your-domain>/webhook/github` **must be
+reachable by GitHub's servers** before you enroll any project. Choose one of
+the following options:
 
-**Option A — Cloudflare Tunnel (recommended for production):**
+**Option A — Cloudflare Tunnel (recommended; no inbound firewall ports needed):**
+
+See [Cloudflare Tunnel setup](cloudflare-tunnel.md) for a full walkthrough of
+creating a tunnel, routing DNS, and forwarding traffic to the in-cluster
+`devloop-temporal-worker` Service. In short:
+
 ```bash
-# Install cloudflared and create a tunnel that forwards to the temporal-worker service
-cloudflared tunnel create devloop
-cloudflared tunnel route dns devloop webhooks.your-domain.com
-# Add the tunnel credentials as a Kubernetes secret, then deploy the cloudflared pod
+cloudflared tunnel login
+cloudflared tunnel create devloop-webhooks
+cloudflared tunnel route dns devloop-webhooks webhooks.your-domain.com
+# Configure ingress to forward to devloop-temporal-worker.<namespace>.svc.cluster.local:8088
+# and run cloudflared as a Deployment in the cluster (see the linked guide).
 ```
 
 **Option B — Cloud load balancer (managed Kubernetes, e.g. EKS / GKE / AKS):**
+
 ```yaml
 # Add to devloop-values.yaml — exposes the temporal-worker webhook port via a
-# cloud-provisioned LoadBalancer. Use annotations for your cloud provider's LB class.
+# cloud-provisioned LoadBalancer. Use annotations for your cloud provider's LB
+# class, then point a DNS record at the resulting external address/hostname.
 temporalWorker:
   service:
     type: LoadBalancer
     webhookPort: 8088
 ```
 
-**Option C — ngrok (local testing only):**
+**Option C — ngrok (local testing / evaluation only):**
+
 ```bash
 # Forward the temporal-worker webhook port to a public ngrok URL
 ngrok http 8088
-# Use the https://xxxx.ngrok.io URL as your GitHub webhook URL
+# Use the resulting https://xxxx.ngrok.io URL as your GitHub webhook Payload URL
 ```
 
-Once the endpoint is reachable, configure a GitHub webhook in each enrolled repository:
+Once you have a stable public hostname, confirm it can reach the
+`devloop-temporal-worker` pod (a `405 Method Not Allowed` for a `GET` request
+is the expected response from the POST-only `/webhook/github` endpoint):
 
-- **Payload URL**: `https://<your-public-host>/webhook/github`
+```bash
+curl -i https://<your-domain>/webhook/github
+```
+
+## Step 2: Create the GitHub Webhook
+
+In each repository you plan to enroll, go to **Settings → Webhooks → Add
+webhook** and configure:
+
+- **Payload URL**: `https://<your-domain>/webhook/github` (the tunnel /
+  load-balancer / ngrok URL from Step 1)
 - **Content type**: `application/json`
-- **Secret**: the value you will set as `GITHUB_WEBHOOK_SECRET` (optional but recommended)
-- **Events**: select "Issues" (the `labeled` action triggers Dev Loops)
+- **Secret**: a strong random value — this becomes the `github-webhook-secret`
+  Kubernetes Secret in Step 6
+- **Events**: choose "Let me select individual events" and subscribe to:
+  - **Issues** — the `labeled` action with the `agent-ready` label starts a
+    new Dev Loop run
+  - **Pull request reviews** — human review comments on an open agent PR
+    (`agent/issue-<N>` branch) start a `PRCommentWorkflow` so the agent can
+    respond
+  - **Issue comments** — `@`-mentions of the `devloop-bot` account on an open
+    agent PR (PRs are issues in the GitHub API) likewise start a
+    `PRCommentWorkflow`
 
-## Step 2: Install Temporal
+GitHub signs every delivery with `X-Hub-Signature-256` using the webhook
+secret; devloop verifies this signature whenever `GITHUB_WEBHOOK_SECRET` is
+set on the worker (strongly recommended — see Step 6).
+
+## Step 3: Set Up the `devloop-bot` GitHub Account
+
+devloop acts on GitHub as a dedicated bot account (`devloop-bot` by
+convention — configurable via `temporalWorker.agentGithubLogin`). This keeps
+the agent's activity (PRs, review requests, status comments, replies) clearly
+attributed and lets the webhook receiver filter out the bot's own
+comments/reviews so they don't loop back and re-trigger workflows.
+
+1. **Create a GitHub account** dedicated to the bot (e.g. `devloop-bot`), and
+   add it as a collaborator (or member, for an org) with write access to each
+   repository you plan to enroll.
+2. **Generate a fine-grained personal access token** (Settings → Developer
+   settings → Personal access tokens → Fine-grained tokens) scoped to the
+   enrolled repositories, with these **Repository permissions**:
+   - **Contents**: Read and write — clone, commit, and push branches
+   - **Pull requests**: Read and write — open PRs, request reviewers, reply to
+     review comments
+   - **Issues**: Read and write — read labels, post status comments, open
+     summarization digest issues
+   - **Checks**: Read — poll CI status during the CI Fix Loop
+3. **Store the PAT as a Kubernetes Secret** — this is the value referenced by
+   each project's `github_token_secret` in the Project Registry (Step 5a):
+
+   ```bash
+   kubectl create secret generic your-project-github-token \
+     --from-literal=token=$DEVLOOP_BOT_PAT \
+     -n agents
+   ```
+
+   Repeat per enrolled project (or reuse the same secret name across projects
+   that share the same bot account and permission scope).
+
+## Step 4: Install Temporal
 
 devloop requires a Temporal cluster. See [Temporal Prerequisites](temporal-prerequisites.md) for a complete reference. Quick start:
 
@@ -65,16 +149,24 @@ Note the service address for later:
 temporal-frontend.agents.svc.cluster.local:7233
 ```
 
-## Step 3: Build the Agent Base Image
+## Step 5: Build the Two devloop Images
 
-The agent base image provides the shared toolchain (OpenHands SDK, Temporal SDK, `gh`, `kubectl`, `flux`). Build and push it to your registry:
+devloop ships exactly two images — there is no poller image and no Discord
+bot image.
+
+### 5a: Build the Agent Base Image
+
+`devloop-agent-base` provides the shared toolchain (OpenHands SDK, Temporal
+SDK, `gh`, `kubectl`, `flux`) used by every Agent Execution Job. It is **not**
+deployed as a running pod — it's a build-time base layer that per-project
+agent images extend. Build and push it to your registry:
 
 ```bash
 docker build -t ghcr.io/your-org/devloop-agent-base:latest images/agent-base/
 docker push ghcr.io/your-org/devloop-agent-base:latest
 ```
 
-## Step 4: Build a Per-Project Agent Image
+### 5b: Build a Per-Project Agent Image
 
 Each project gets its own agent image that extends `devloop-agent-base`. Write a `Dockerfile` in your project repository:
 
@@ -108,9 +200,9 @@ docker tag ghcr.io/your-org/your-project-agent:latest \
   ghcr.io/your-org/your-project-agent:sha-$(git rev-parse --short HEAD)
 ```
 
-## Step 5: Deploy the devloop Chart
+## Step 6: Deploy the devloop Chart
 
-### 5a: Create the projects.yaml ConfigMap
+### 6a: Create the projects.yaml ConfigMap
 
 The Project Registry tells devloop which repositories to monitor. Create a `projects.yaml` file:
 
@@ -141,12 +233,12 @@ projects:
     pr_reviewer: "your-github-reviewer-username"
 ```
 
-### 5b: Create Kubernetes Secrets
+### 6b: Create Kubernetes Secrets
 
-Create the secrets referenced in `projects.yaml`:
+Create the secrets referenced in `projects.yaml` and by the worker itself:
 
 ```bash
-# GitHub token for the agent
+# devloop-bot GitHub token for the agent (see Step 3)
 kubectl create secret generic your-project-github-token \
   --from-literal=token=$GITHUB_TOKEN \
   -n agents
@@ -155,9 +247,29 @@ kubectl create secret generic your-project-github-token \
 kubectl create secret generic omneval-ingest-your-project \
   --from-literal=api-key=$OMNEVAL_INGEST_KEY \
   -n agents
+
+# GitHub webhook secret — the same value you configured as the webhook
+# "Secret" in Step 2. Used for HMAC-SHA256 signature verification on every
+# inbound delivery.
+kubectl create secret generic github-webhook-secret \
+  --from-literal=secret=$GITHUB_WEBHOOK_SECRET \
+  -n agents
 ```
 
-### 5c: Create the ConfigMap
+Reference the `github-webhook-secret` from the worker via `extraEnv` in your
+Helm values (see 6d) so the webhook receiver enforces signature verification:
+
+```yaml
+temporalWorker:
+  extraEnv:
+    - name: GITHUB_WEBHOOK_SECRET
+      valueFrom:
+        secretKeyRef:
+          name: github-webhook-secret
+          key: secret
+```
+
+### 6c: Create the ConfigMap
 
 ```bash
 kubectl create configmap devloop-projects \
@@ -165,17 +277,61 @@ kubectl create configmap devloop-projects \
   -n agents
 ```
 
-### 5d: Deploy with Helm
+### 6d: Deploy with Helm
 
 Create a `devloop-values.yaml`:
 
 ```yaml
 temporalHost: temporal-frontend.agents.svc.cluster.local:7233
+
+temporalWorker:
+  agentGithubLogin: "devloop-bot"
+  maxConcurrentJobs: 1
+  ciFixMaxIterations: 5
+  executeMaxIterations: 1
+  maxQuestionsPerPhase: 3
+  extraEnv:
+    - name: GITHUB_WEBHOOK_SECRET
+      valueFrom:
+        secretKeyRef:
+          name: github-webhook-secret
+          key: secret
+
+agent:
+  gitName: "devloop-bot"
+  gitEmail: "devloop-bot@users.noreply.github.com"
+
+summarization:
+  enabled: true
+  cronSchedule: "0 8 * * 1"
+  webhookUrl: ""
 ```
 
-**How issue triggering works**: devloop uses GitHub webhook events. When you apply the `agent-ready` label to a GitHub issue, GitHub sends an `issues` webhook event to the public ingress endpoint you configured in Step 1. The `devloop-temporal-worker` receives the event at `/webhook/github` and starts a Dev Loop workflow. Webhook delivery is instant — no polling interval to wait for.
+**How issue triggering works**: devloop is driven entirely by GitHub webhook
+events — there is no polling loop and no interval to wait for. When you apply
+the `agent-ready` label to a GitHub issue, GitHub sends an `issues` webhook
+event (action `labeled`) to the public ingress endpoint you configured in Step
+1. The `devloop-temporal-worker` receives the event at `/webhook/github`,
+verifies its signature against `GITHUB_WEBHOOK_SECRET`, matches the repository
+to an enrolled project, and starts a `DevLoopWorkflow` immediately. The same
+endpoint also routes `pull_request_review` and `issue_comment` events from
+human reviewers on open agent PRs into a `PRCommentWorkflow`, so the agent can
+respond to feedback without any human needing to restart or approve anything.
 
-**Workflow notifications**: All Dev Loop status updates (queued, implemented, parked, review findings) are posted as comments on the relevant GitHub Issue using the project's `github_token_secret`. Operators can follow progress directly in GitHub without a separate messaging platform.
+**Fully autonomous — no approval gates**: Once triggered, the Dev Loop runs
+Plan → Execute → CI Fix Loop → Review → Merge end to end without pausing for
+human sign-off at any stage. If the agent has a clarifying question mid-run, a
+fresh `Phase.ANSWER` agent is spawned to answer it autonomously (bounded by
+`temporalWorker.maxQuestionsPerPhase`) rather than blocking on a human. The PR
+that comes out the other end — plus the GitHub Issue comment trail — is the
+review surface for humans; there is no separate plan-approval or merge-approval
+step to configure.
+
+**Workflow notifications**: All Dev Loop status updates (queued, implemented,
+parked, review findings, CI Fix Loop progress) are posted as comments on the
+relevant GitHub Issue using the project's `github_token_secret` (the
+`devloop-bot` PAT from Step 3). Operators follow progress directly in GitHub —
+no separate messaging platform is required.
 
 **Weekly summaries**: Once a week (Monday 08:00 UTC by default), devloop opens a GitHub Issue on each enrolled repo titled `[devloop] <project-id> — <date> digest`, labeled `devloop-summary` (the label is created automatically if it does not exist), summarizing the week's merged changes and closed issues in plain English. No extra configuration is required — see `summarization.*` below to customize the schedule, disable it, or forward the digest to an outbound webhook.
 
@@ -190,7 +346,7 @@ helm install devloop devloop/devloop \
   -f devloop-values.yaml
 ```
 
-## Step 6: Verify Dev Loop is Running
+## Step 7: Verify Dev Loop is Running
 
 Check all deployments are healthy:
 
@@ -198,20 +354,27 @@ Check all deployments are healthy:
 kubectl get pods -n agents
 ```
 
-Expected pods:
+Expected pods — `devloop-temporal-worker` is the **only** long-running devloop
+deployment (`devloop-agent-base` is a build-time base image, never a running
+pod; per-project agent containers exist only transiently as Agent Execution
+Jobs while a Dev Loop phase is active):
 
 ```
 NAME                                        READY   STATUS    RESTARTS   AGE
 devloop-temporal-worker-xxxxxxx             1/1     Running   0          2m
 ```
 
-Check logs for each component:
+Check logs for the worker:
 
 ```bash
 kubectl logs -n agents -l app.kubernetes.io/component=temporal-worker --tail=20
 ```
 
-Create an issue in your GitHub repository with the `agent-ready` label. GitHub delivers the webhook event immediately; the temporal-worker will receive it and start the Dev Loop. Status comments will appear on the GitHub Issue as the Dev Loop progresses.
+Create an issue in your GitHub repository with the `agent-ready` label. GitHub
+delivers the `issues` webhook event immediately; the temporal-worker receives
+it and starts the Dev Loop. Status comments appear on the GitHub Issue as the
+Dev Loop progresses, and a PR opens automatically once the agent has changes
+ready for review.
 
 ## Manually Triggering or Restarting a Dev Loop
 
@@ -252,16 +415,23 @@ reuse SDK activities for Kubernetes Job dispatch and GitHub Issue notifications.
 | `agent_image`         | Yes      | string | Container image for the project agent             |
 | `agent_label`         | Yes      | string | GitHub issue label to trigger Dev Loop           |
 | `omneval_ingest_secret` | Yes    | string | K8s secret name for Omneval ingest API key       |
-| `github_token_secret` | Yes      | string | K8s secret name for GitHub agent token (also used for posting issue comments) |
-| `pr_reviewer`         | No       | string | Optional GitHub login tagged for review on merge PRs |
+| `github_token_secret` | Yes      | string | K8s secret name for the devloop-bot GitHub token (also used for posting issue comments) |
+| `pr_reviewer`         | No       | string | GitHub login requested as reviewer after CI Fix Loop and Review phases complete |
 
 ## Configuration Reference
 
 | Setting                          | Description                                                                                   |
 |----------------------------------|-----------------------------------------------------------------------------------------------|
 | `temporalHost`                   | Temporal frontend gRPC address; set in Helm values to point at your Temporal cluster          |
-| `GITHUB_TOKEN`                   | GitHub token used by devloop-bot to post comments on GitHub Issues (per project via `github_token_secret`) |
-| `GITHUB_WEBHOOK_SECRET`          | Optional HMAC secret for verifying GitHub webhook payloads (set on the temporal-worker pod)   |
+| `GITHUB_TOKEN`                   | devloop-bot GitHub token used to post comments, open PRs, and request reviewers (per project via `github_token_secret`) |
+| `GITHUB_WEBHOOK_SECRET`          | HMAC secret for verifying GitHub webhook payload signatures (set on the temporal-worker pod via `extraEnv` + the `github-webhook-secret` Secret — strongly recommended) |
+| `temporalWorker.agentGithubLogin`| GitHub login of the devloop-bot account (default `devloop-bot`). Forwarded as `AGENT_GITHUB_LOGIN`; the webhook receiver uses it to filter out the bot's own comments/reviews so they don't re-trigger workflows |
+| `temporalWorker.maxConcurrentJobs` | Maximum number of Agent Execution Job dispatches (and LLM-bearing activities) that may run concurrently across all workflow types and projects. Forwarded as `MAX_CONCURRENT_JOBS`. Default `1` |
+| `temporalWorker.ciFixMaxIterations` | Maximum number of `Phase.CI_FIX` retry attempts the CI Fix Loop spends trying to turn a PR's failing CI checks green before handing it to the human reviewer with a "CI still failing" note. Default `5` |
+| `temporalWorker.executeMaxIterations` | Maximum number of Execute Agent Execution Job dispatch attempts the Execute phase retry loop spends when a dispatch produces zero commits, before parking the issue. Default `1` |
+| `temporalWorker.maxQuestionsPerPhase` | Maximum number of mid-run `AWAITING_HUMAN` questions a single phase run may spawn `Phase.ANSWER` agent jobs for before the workflow proceeds with the agent's best guess. Default `3` |
+| `agent.gitName`                  | Git author name used by Agent Execution Jobs when committing to enrolled repos (forwarded as `GIT_AUTHOR_NAME`). Default `homelab-agent` — set to your `devloop-bot` account name for clean attribution |
+| `agent.gitEmail`                 | Git author email used by Agent Execution Jobs when committing (forwarded as `GIT_AUTHOR_EMAIL`). Default `agent@blosshomelab.com` — set to a `devloop-bot`-associated address |
 
 ### Summarization (`summarization.*`)
 

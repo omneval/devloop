@@ -56,6 +56,12 @@ spec:
               value: {{ .Values.temporalWorker.executeMaxIterations | default 1 | quote }}
             - name: MAX_CONCURRENT_JOBS
               value: {{ .Values.temporalWorker.maxConcurrentJobs | default 1 | quote }}
+            - name: AGENT_GITHUB_LOGIN
+              value: {{ .Values.temporalWorker.agentGithubLogin | default "devloop-bot" | quote }}
+            - name: GIT_AUTHOR_NAME
+              value: {{ .Values.agent.gitName | default "homelab-agent" | quote }}
+            - name: GIT_AUTHOR_EMAIL
+              value: {{ .Values.agent.gitEmail | default "agent@blosshomelab.com" | quote }}
             - name: SUMMARIZATION_ENABLED
               value: {{ .Values.summarization.enabled | default true | quote }}
             - name: SUMMARIZATION_CRON_SCHEDULE

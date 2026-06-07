@@ -124,8 +124,22 @@ temporalWorker:
   # Forwarded to the job-dispatch Worker as MAX_CONCURRENT_JOBS.
   # Set higher when the inference backend can serve multiple requests in parallel.
   maxConcurrentJobs: 1
+  # GitHub login of the devloop-bot account. Used by the webhook receiver to
+  # filter out the bot's own comments/reviews so they don't re-trigger
+  # PRCommentWorkflow. Forwarded to the worker as AGENT_GITHUB_LOGIN.
+  agentGithubLogin: "devloop-bot"
   # Replica count
   replicas: 1
+
+# ---------------------------------------------------------------------------
+# Agent Execution Job identity
+# ---------------------------------------------------------------------------
+# Git author identity used by Agent Execution Jobs when committing to enrolled
+# repositories. Forwarded to the agent container as GIT_AUTHOR_NAME /
+# GIT_AUTHOR_EMAIL (consumed by `git config user.name` / `user.email`).
+agent:
+  gitName: "homelab-agent"
+  gitEmail: "agent@blosshomelab.com"
 
 # ---------------------------------------------------------------------------
 # Weekly Summarization

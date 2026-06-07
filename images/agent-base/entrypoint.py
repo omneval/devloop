@@ -434,8 +434,10 @@ def clone_repo(github_url: str, branch: str, workdir: str) -> None:
     if token and url.startswith("https://"):
         url = url.replace("https://", f"https://x-access-token:{token}@")
     _run(["git", "clone", "--branch", branch, url, workdir])
-    _run(["git", "config", "user.name", "homelab-agent"], cwd=workdir)
-    _run(["git", "config", "user.email", "agent@blosshomelab.com"], cwd=workdir)
+    git_name = os.environ.get("GIT_AUTHOR_NAME", "homelab-agent")
+    git_email = os.environ.get("GIT_AUTHOR_EMAIL", "agent@blosshomelab.com")
+    _run(["git", "config", "user.name", git_name], cwd=workdir)
+    _run(["git", "config", "user.email", git_email], cwd=workdir)
 
 
 def install_deps(workdir: str) -> None:

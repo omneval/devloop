@@ -163,7 +163,14 @@ def render_job(d: DispatchInput, job_name: str) -> dict:
     # the agent entrypoint can reach the DGX model endpoint and take the stub
     # fast-path when AGENT_STUB=1.  Only include vars that are actually set —
     # skip missing ones rather than forwarding empty strings.
-    for var in ("AGENT_MODEL", "AGENT_LLM_BASE_URL", "AGENT_LLM_API_KEY", "AGENT_STUB"):
+    for var in (
+        "AGENT_MODEL",
+        "AGENT_LLM_BASE_URL",
+        "AGENT_LLM_API_KEY",
+        "AGENT_STUB",
+        "GIT_AUTHOR_NAME",
+        "GIT_AUTHOR_EMAIL",
+    ):
         val = os.environ.get(var)
         if val:
             env.append({"name": var, "value": val})
