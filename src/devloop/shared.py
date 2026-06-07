@@ -33,7 +33,7 @@ class Phase(str, Enum):
     REVIEW = "review"
     DIAGNOSIS = "diagnosis"
     FIX_PASS = "fix_pass"
-    REMEDIATION = "remediation"
+    CI_FIX = "ci_fix"
     SUMMARIZE = "summarize"
 
 
@@ -227,6 +227,39 @@ class GithubNotificationInput:
     issue_number: int
     project_id: str
     body: str
+
+
+@dataclass
+class PollCIChecksInput:
+    """Input for the poll_ci_checks activity.
+
+    Polls the GitHub Checks/Status APIs for the head commit of the given PR
+    (``gh pr checks`` equivalent) and reports whether every check has passed,
+    plus details on any that failed — consumed by ``Phase.CI_FIX`` so the fix
+    Agent Execution Job knows exactly what to address.
+    """
+
+    project_id: str
+    pr_number: int
+
+
+@dataclass
+class CICheckFailure:
+    """One failing CI check, as surfaced to the ci_fix Agent Execution Job via
+    ``TaskSpec.extra["ci_check_failures"]``."""
+
+    name: str
+    conclusion: str = ""
+    details_url: str = ""
+    summary: str = ""
+
+
+@dataclass
+class CIChecksResult:
+    """The poll_ci_checks activity's result: pass/fail plus failure details."""
+
+    all_passed: bool = False
+    failures: list[CICheckFailure] = field(default_factory=list)
 
 
 @dataclass

@@ -26,12 +26,15 @@ from .shared import (
     AgentJobResult,
     AnswerInput,
     AwaitInput,
+    CIChecksResult,
     DispatchInput,
     GithubNotificationInput,
     InlineComment,
     JOB_DISPATCH_QUEUE,
     JobStatus,
     OpenAgentPRsInput,
+    Phase,
+    PollCIChecksInput,
     PostCommentsInput,
     RequestReviewerInput,
     TaskSpec,
@@ -49,6 +52,8 @@ class DevLoopInput:
     # configurable down to seconds for tests
     question_timeout_seconds: float = 14400.0  # 4h mid-run gate
     poll_interval_seconds: float = 5.0
+    # Phase.CI_FIX loop: retry until CI is green or this many attempts are spent.
+    ci_fix_max_iterations: int = 5
 
     @classmethod
     def from_env(
@@ -74,11 +79,20 @@ class DevLoopInput:
             except (KeyError, ValueError):
                 return default
 
+        def _int(name: str, default: int) -> int:
+            try:
+                return int(os.environ[name])
+            except (KeyError, ValueError):
+                return default
+
         return cls(
             project_id=project_id,
             agent_label=agent_label,
             question_timeout_seconds=_seconds(
                 "QUESTION_TIMEOUT_SECONDS", cls.question_timeout_seconds
+            ),
+            ci_fix_max_iterations=_int(
+                "CI_FIX_MAX_ITERATIONS", cls.ci_fix_max_iterations
             ),
         )
 
@@ -281,19 +295,99 @@ class DevLoopWorkflow:
                 issue_no,
                 f"❌ Parked — execute phase failed: {result.error or 'unknown error'}",
             )
-            return {"issue_id": issue_no, "branch": "", "pr_url": "", "commits": 0}
+            return {
+                "issue_id": issue_no,
+                "branch": "",
+                "pr_url": "",
+                "commits": 0,
+                "exhausted": False,
+            }
         if result.commits:
             await self._comment(
                 inp.project_id,
                 issue_no,
                 f"✅ Implemented — PR: {result.pr_url or result.branch}",
             )
-        return {
+        exec_result = {
             "issue_id": issue_no,
             "branch": result.branch,
             "pr_url": result.pr_url,
             "commits": result.commits,
+            "exhausted": False,
         }
+        exhausted = await self._ci_fix_loop(inp, issue_no, exec_result)
+        exec_result["exhausted"] = exhausted
+        return exec_result
+
+    # ---- Phase.CI_FIX loop (#76) ---------------------------------------- #
+    async def _ci_fix_loop(
+        self, inp: DevLoopInput, issue_no: int, exec_result: dict
+    ) -> bool:
+        """Retry CI fixes up to ``ci_fix_max_iterations`` times or until green.
+
+        Each iteration polls the PR's CI checks; if they all pass, the loop
+        exits early (``exhausted=False``). Otherwise it dispatches a
+        ``Phase.CI_FIX`` Agent Execution Job — preceded by a "⏳ queued"
+        comment — with the current failing check details in
+        ``TaskSpec.extra["ci_check_failures"]``, then posts a result comment.
+
+        Returns ``True`` when every iteration is spent without CI going green
+        (``exhausted``), so ``_notify_reviewer`` can carry a "CI still failing"
+        note to the human reviewer.
+        """
+        pr_number = logic.pr_number_from_url(exec_result.get("pr_url", ""))
+        if pr_number <= 0:
+            return False
+
+        max_iters = inp.ci_fix_max_iterations
+        for attempt in range(1, max_iters + 1):
+            checks = await workflow.execute_activity(
+                "poll_ci_checks",
+                PollCIChecksInput(project_id=inp.project_id, pr_number=pr_number),
+                result_type=CIChecksResult,
+                start_to_close_timeout=timedelta(minutes=5),
+                retry_policy=_RETRY,
+            )
+            if checks.all_passed:
+                return False
+
+            failures = [
+                {
+                    "name": f.name,
+                    "conclusion": f.conclusion,
+                    "details_url": f.details_url,
+                    "summary": f.summary,
+                }
+                for f in (checks.failures or [])
+            ]
+            spec = TaskSpec(
+                phase=Phase.CI_FIX.value,
+                project_id=inp.project_id,
+                issue_number=issue_no,
+                branch=exec_result.get("branch", ""),
+                extra={"ci_check_failures": failures},
+            )
+            await self._comment(
+                inp.project_id,
+                issue_no,
+                f"⏳ queued — CI fix attempt {attempt}/{max_iters}",
+            )
+            result = await self._dispatch(inp, spec, issue_number=issue_no)
+            if result.status == JobStatus.COMPLETE.value:
+                await self._comment(
+                    inp.project_id,
+                    issue_no,
+                    f"🔧 CI fix attempt {attempt}/{max_iters} — "
+                    f"pushed {result.commits} commit(s)",
+                )
+            else:
+                await self._comment(
+                    inp.project_id,
+                    issue_no,
+                    f"❌ CI fix attempt {attempt}/{max_iters} failed",
+                )
+
+        return True
 
     async def _answer_questions(
         self, inp: DevLoopInput, issue_no: int, result: AgentJobResult
@@ -428,8 +522,14 @@ class DevLoopWorkflow:
             retry_policy=_RETRY,
         )
 
+        note = (
+            " ⚠️ CI is still failing after exhausting the CI fix attempts —"
+            " please take a look."
+            if exec_result.get("exhausted")
+            else ""
+        )
         await self._comment(
             inp.project_id,
             issue_no,
-            f"👀 Ready for review — PR: {pr_url}. Reviewer has been tagged.",
+            f"👀 Ready for review — PR: {pr_url}. Reviewer has been tagged.{note}",
         )

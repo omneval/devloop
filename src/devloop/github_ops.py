@@ -19,8 +19,11 @@ from temporalio import activity
 from . import cluster
 from .projects import ProjectConfig, get_project, parse_github_repo
 from .shared import (
+    CICheckFailure,
+    CIChecksResult,
     GithubNotificationInput,
     OpenAgentPRsInput,
+    PollCIChecksInput,
     PostCommentsInput,
     RequestReviewerInput,
 )
@@ -215,6 +218,83 @@ async def request_github_reviewer(inp: RequestReviewerInput) -> None:
         repo,
         inp.pr_number,
     )
+
+
+_TERMINAL_CONCLUSIONS = {
+    "success",
+    "neutral",
+    "skipped",
+}
+
+
+@activity.defn
+async def poll_ci_checks(inp: PollCIChecksInput) -> CIChecksResult:
+    """Poll the GitHub Checks API for the PR's head commit (``gh pr checks``
+    equivalent) and report whether every check run has passed.
+
+    Used by ``Phase.CI_FIX`` (DevLoopWorkflow._ci_fix_loop) to decide whether to
+    keep retrying and to hand the fix Agent Execution Job the precise set of
+    failing checks via ``TaskSpec.extra["ci_check_failures"]``.
+
+    A check run "passes" when its ``status`` is ``completed`` and its
+    ``conclusion`` is one of success/neutral/skipped. Anything still in
+    progress or queued is treated as not-yet-passed (so the loop waits rather
+    than dispatching a fix for a check that simply hasn't finished).
+    """
+    if inp.pr_number <= 0:
+        return CIChecksResult(all_passed=False, failures=[])
+
+    cfg = get_project(inp.project_id)
+    repo = parse_github_repo(cfg.github_url)
+    with _client(cfg) as c:
+        pr = c.get(f"/repos/{repo}/pulls/{inp.pr_number}")
+        pr.raise_for_status()
+        sha = pr.json()["head"]["sha"]
+
+        runs: list[dict[str, Any]] = []
+        page = 1
+        while True:
+            resp = c.get(
+                f"/repos/{repo}/commits/{sha}/check-runs",
+                params={"per_page": 100, "page": page},
+            )
+            resp.raise_for_status()
+            batch = resp.json().get("check_runs", [])
+            if not batch:
+                break
+            runs.extend(batch)
+            page += 1
+
+    failures: list[CICheckFailure] = []
+    pending = False
+    for run in runs:
+        status = run.get("status", "")
+        conclusion = run.get("conclusion") or ""
+        if status != "completed":
+            pending = True
+            continue
+        if conclusion not in _TERMINAL_CONCLUSIONS:
+            output = run.get("output") or {}
+            failures.append(
+                CICheckFailure(
+                    name=run.get("name", ""),
+                    conclusion=conclusion,
+                    details_url=run.get("details_url", ""),
+                    summary=output.get("summary", "") or "",
+                )
+            )
+
+    all_passed = bool(runs) and not failures and not pending
+    log.info(
+        "CI checks for %s#%d (%s): %d run(s), %d failing, all_passed=%s",
+        repo,
+        inp.pr_number,
+        sha[:8],
+        len(runs),
+        len(failures),
+        all_passed,
+    )
+    return CIChecksResult(all_passed=all_passed, failures=failures)
 
 
 @activity.defn

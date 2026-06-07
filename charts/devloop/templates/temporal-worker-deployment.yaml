@@ -50,6 +50,8 @@ spec:
               value: {{ .Values.temporalWorker.projectsFile | quote }}
             - name: QUESTION_TIMEOUT_SECONDS
               value: {{ .Values.temporalWorker.questionTimeoutSeconds | quote }}
+            - name: CI_FIX_MAX_ITERATIONS
+              value: {{ .Values.temporalWorker.ciFixMaxIterations | default 5 | quote }}
             - name: MAX_CONCURRENT_JOBS
               value: {{ .Values.temporalWorker.maxConcurrentJobs | default 1 | quote }}
             - name: SUMMARIZATION_ENABLED

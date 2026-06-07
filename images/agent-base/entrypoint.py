@@ -836,6 +836,7 @@ _PROMPT_FILES = {
     "review": "review.md",
     "merge": "merge.md",
     "diagnosis": "diagnosis.md",
+    "ci_fix": "ci_fix.md",
 }
 
 _PLACEHOLDER_RE = re.compile(r"\{\{[A-Z_]+\}\}")
@@ -898,6 +899,25 @@ def _prompt_variables(spec: TaskSpec) -> dict[str, str]:
                 f"- {i.get('id')}: {i.get('title', '')}" for i in issues
             ),
         }
+    if spec.phase == "ci_fix":
+        failures = spec.extra.get("ci_check_failures", []) or []
+        lines = []
+        for f in failures:
+            name = f.get("name", "unknown check")
+            conclusion = f.get("conclusion", "")
+            summary = f.get("summary", "")
+            details_url = f.get("details_url", "")
+            line = f"- **{name}** ({conclusion or 'failing'})"
+            if summary:
+                line += f": {summary}"
+            if details_url:
+                line += f" — {details_url}"
+            lines.append(line)
+        return {
+            "BRANCH": spec.branch,
+            "SOURCE_BRANCH": base,
+            "CI_CHECK_FAILURES": "\n".join(lines) or "- (no failure details provided)",
+        }
     if spec.phase == "diagnosis":
         alert = spec.extra.get("alert", {}) or {}
         details = {
@@ -916,9 +936,11 @@ def _prompt_variables(spec: TaskSpec) -> dict[str, str]:
 def build_agent_message(spec: TaskSpec) -> str:
     """Build the prompt sent to the agent for this phase.
 
-    plan / execute / review / merge / diagnosis render the bundled prompt
-    templates (the diagnosis template asks for a structured ``<diagnosis>`` JSON
-    block so the Alert Response remediation phase gets executable actions).
+    plan / execute / review / merge / diagnosis / ci_fix render the bundled
+    prompt templates (the diagnosis template asks for a structured
+    ``<diagnosis>`` JSON block so the Alert Response remediation phase gets
+    executable actions; the ci_fix template targets minimal changes that turn
+    failing CI checks green — see ``Phase.CI_FIX`` / ``_ci_fix_loop``).
     """
     if spec.phase in _PROMPT_FILES:
         return load_prompt(_PROMPT_FILES[spec.phase], _prompt_variables(spec))

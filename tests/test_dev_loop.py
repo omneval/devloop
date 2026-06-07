@@ -4,7 +4,7 @@ env with mocked activities on the orchestration task queue."""
 from __future__ import annotations
 
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import asdict as dataclasses_asdict, dataclass, field
 
 import pytest
 from temporalio import activity
@@ -18,6 +18,8 @@ from devloop.shared import (
     JOB_DISPATCH_QUEUE,
     ORCHESTRATION_QUEUE,
     AgentJobResult,
+    CICheckFailure,
+    CIChecksResult,
     GithubNotificationInput,
     JobStatus,
 )
@@ -45,11 +47,20 @@ class Mocks:
     answers: list = field(default_factory=list)
     post_comments: list = field(default_factory=list)
     dispatched_phases: list = field(default_factory=list)
+    dispatched_specs: list = field(default_factory=list)  # recorded TaskSpec dicts
     # issue numbers the "open_agent_pr_issue_numbers" activity reports as already
     # having an open review PR (planner should skip these)
     open_agent_prs: list = field(default_factory=list)
     # reviewer requests recorded by request_github_reviewer mock
     reviewer_requests: list = field(default_factory=list)
+    # CI poll results returned in order; once exhausted, the last entry repeats.
+    # Each entry: CIChecksResult(all_passed=..., failures=[...])
+    ci_poll_results: list = field(default_factory=list)
+    ci_poll_calls: int = 0
+    ci_polls: list = field(default_factory=list)  # recorded PollCIChecksInput
+    # ci_fix dispatch behavior: number of commits per attempt (cycles if shorter)
+    ci_fix_commits: list = field(default_factory=lambda: [1])
+    ci_fix_status: str = JobStatus.COMPLETE.value
 
     @property
     def notifications(self):
@@ -76,11 +87,11 @@ def _one_issue(num=1):
 def _make_activities():
     @activity.defn(name="dispatch_agent_job")
     async def dispatch_agent_job(inp) -> AgentJobResult:
-        phase = (
-            inp["task_spec"]["phase"] if isinstance(inp, dict) else inp.task_spec.phase
-        )
+        spec = inp["task_spec"] if isinstance(inp, dict) else inp.task_spec
+        phase = spec["phase"] if isinstance(spec, dict) else spec.phase
         issue = inp["issue_number"] if isinstance(inp, dict) else inp.issue_number
         M.dispatched_phases.append(phase)
+        M.dispatched_specs.append(spec if isinstance(spec, dict) else dataclasses_asdict(spec))
         key = (phase, issue)
         if key in M.dispatch_behavior:
             return M.dispatch_behavior[key]
@@ -121,6 +132,17 @@ def _make_activities():
                 issue_number=issue,
                 commits=M.review_commits,
                 review=M.review_payload,
+            )
+        if phase == "ci_fix":
+            attempt = M.dispatched_phases.count("ci_fix") - 1
+            commits_seq = M.ci_fix_commits or [1]
+            commits = commits_seq[min(attempt, len(commits_seq) - 1)]
+            return AgentJobResult(
+                status=M.ci_fix_status,
+                job_name=f"cf{issue}",
+                issue_number=issue,
+                commits=commits,
+                error="" if M.ci_fix_status == JobStatus.COMPLETE.value else "boom",
             )
         return AgentJobResult(status=JobStatus.COMPLETE.value, job_name="x")
 
@@ -168,6 +190,16 @@ def _make_activities():
     async def request_github_reviewer(inp) -> None:
         M.reviewer_requests.append(inp)
 
+    @activity.defn(name="poll_ci_checks")
+    async def poll_ci_checks(inp) -> CIChecksResult:
+        M.ci_polls.append(inp)
+        results = M.ci_poll_results
+        if not results:
+            return CIChecksResult(all_passed=True, failures=[])
+        idx = min(M.ci_poll_calls, len(results) - 1)
+        M.ci_poll_calls += 1
+        return results[idx]
+
     # dispatch_agent_job is dispatched on JOB_DISPATCH_QUEUE (issue #73); the
     # rest stay on ORCHESTRATION_QUEUE. Returned as two lists so the test
     # harness can register each with the Worker polling its queue.
@@ -180,6 +212,7 @@ def _make_activities():
             post_pr_comments,
             post_github_comment,
             request_github_reviewer,
+            poll_ci_checks,
         ],
     }
 
@@ -451,6 +484,132 @@ async def test_reviewer_notification_comment_after_review(reset_mocks):
     assert any("ready for review" in n.lower() for n in M.notifications)
     # The reviewer activity was called
     assert len(M.reviewer_requests) >= 1
+
+
+# --------------------------------------------------------------------------- #
+# Phase.CI_FIX loop (#76)
+# --------------------------------------------------------------------------- #
+def test_phase_enum_has_ci_fix_no_remediation():
+    """Phase.CI_FIX replaces the removed Phase.REMEDIATION."""
+    from devloop.shared import Phase
+
+    assert Phase.CI_FIX.value == "ci_fix"
+    assert not hasattr(Phase, "REMEDIATION")
+
+
+def test_devloop_input_has_ci_fix_max_iterations():
+    """ci_fix_max_iterations defaults to 5."""
+    import dataclasses
+
+    field_names = {f.name for f in dataclasses.fields(DevLoopInput)}
+    assert "ci_fix_max_iterations" in field_names
+    assert DevLoopInput("omneval").ci_fix_max_iterations == 5
+
+
+def test_from_env_reads_ci_fix_max_iterations(monkeypatch):
+    monkeypatch.setenv("CI_FIX_MAX_ITERATIONS", "3")
+    inp = DevLoopInput.from_env("omneval")
+    assert inp.ci_fix_max_iterations == 3
+
+
+def test_from_env_ci_fix_max_iterations_falls_back_to_default(monkeypatch):
+    monkeypatch.delenv("CI_FIX_MAX_ITERATIONS", raising=False)
+    monkeypatch.setenv("CI_FIX_MAX_ITERATIONS", "not-a-number")
+    inp = DevLoopInput.from_env("omneval")
+    assert inp.ci_fix_max_iterations == DevLoopInput.ci_fix_max_iterations
+
+
+@pytest.mark.asyncio
+async def test_ci_fix_loop_exits_early_when_ci_passes_on_second_iteration(reset_mocks):
+    """CI is red on iteration 1 (a fix is dispatched), green on iteration 2 —
+    the loop exits early after a single fix attempt, reporting exhausted=False."""
+    reset_mocks.plan_rounds = [_one_issue(1)]
+    reset_mocks.ci_poll_results = [
+        CIChecksResult(
+            all_passed=False,
+            failures=[CICheckFailure(name="pytest", conclusion="failure")],
+        ),
+        CIChecksResult(all_passed=True, failures=[]),
+    ]
+    result = await _env_and_run(
+        DevLoopInput("omneval", ci_fix_max_iterations=5),
+        [],
+    )
+    assert result.status == "completed"
+    # CI went green on the second poll — only one fix attempt was dispatched
+    assert M.dispatched_phases.count("ci_fix") == 1
+    assert len(M.ci_polls) == 2
+    # queued comment precedes the dispatch
+    queued = [n for n in M.notifications if "queued" in n.lower() and "ci fix" in n.lower()]
+    assert len(queued) == 1
+    assert "1/5" in queued[0]
+    # result comment reports attempt N/max with the commit count
+    attempts = [
+        n
+        for n in M.notifications
+        if ("🔧" in n or "❌ ci fix attempt" in n.lower())
+        and "ci fix attempt" in n.lower()
+    ]
+    assert len(attempts) == 1
+    assert "1/5" in attempts[0]
+    assert "pushed 1 commit" in attempts[0].lower()
+    # CI passed before exhausting — no "still failing" note to the reviewer
+    assert not any("still failing" in n.lower() for n in M.notifications)
+
+
+@pytest.mark.asyncio
+async def test_ci_fix_loop_exhausts_after_max_iterations(reset_mocks):
+    """CI never goes green — the loop runs ci_fix_max_iterations times, returns
+    exhausted=True, and the reviewer notification carries a CI-still-failing note."""
+    reset_mocks.plan_rounds = [_one_issue(1)]
+    reset_mocks.ci_poll_results = [
+        CIChecksResult(
+            all_passed=False,
+            failures=[CICheckFailure(name="pytest", conclusion="failure")],
+        ),
+    ]
+    result = await _env_and_run(
+        DevLoopInput("omneval", ci_fix_max_iterations=2),
+        [],
+    )
+    assert result.status == "completed"
+    assert M.dispatched_phases.count("ci_fix") == 2
+    attempts = [
+        n
+        for n in M.notifications
+        if ("🔧" in n or "❌ ci fix attempt" in n.lower())
+        and "ci fix attempt" in n.lower()
+    ]
+    assert len(attempts) == 2
+    assert any("2/2" in a for a in attempts)
+    # the workflow continued on to review + reviewer notification with the
+    # "still failing" note carried from the exhausted ci_fix loop
+    assert any("still failing" in n.lower() for n in M.notifications)
+
+
+@pytest.mark.asyncio
+async def test_ci_fix_loop_dispatches_with_failure_details(reset_mocks):
+    """Each ci_fix dispatch carries the current failing check details in
+    TaskSpec.extra['ci_check_failures'] and is preceded by a queued comment."""
+    reset_mocks.plan_rounds = [_one_issue(1)]
+    reset_mocks.ci_poll_results = [
+        CIChecksResult(
+            all_passed=False,
+            failures=[CICheckFailure(name="pytest", conclusion="failure", summary="3 failed")],
+        ),
+        CIChecksResult(all_passed=True, failures=[]),
+    ]
+
+    result = await _env_and_run(DevLoopInput("omneval", ci_fix_max_iterations=5), [])
+
+    assert result.status == "completed"
+    ci_fix_specs = [s for s in M.dispatched_specs if s.get("phase") == "ci_fix"]
+    assert ci_fix_specs, "expected at least one ci_fix dispatch"
+    extra = ci_fix_specs[0]["extra"]
+    assert "ci_check_failures" in extra
+    failures = extra["ci_check_failures"]
+    assert failures and failures[0]["name"] == "pytest"
+    assert failures[0]["summary"] == "3 failed"
 
 
 @pytest.mark.asyncio

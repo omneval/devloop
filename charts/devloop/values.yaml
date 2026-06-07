@@ -107,6 +107,11 @@ temporalWorker:
   # Timeout, in seconds, for a mid-run clarifying question gate.
   # Mirrors DevLoopInput.question_timeout_seconds. Default: 14400 (4h).
   questionTimeoutSeconds: 14400
+  # Maximum number of Phase.CI_FIX retry attempts the _ci_fix_loop will spend
+  # trying to turn a PR's failing CI checks green before giving up and handing
+  # it to the human reviewer with a "CI still failing" note.
+  # Mirrors DevLoopInput.ci_fix_max_iterations. Default: 5.
+  ciFixMaxIterations: 5
   # Maximum number of Agent Execution Job dispatches (and LLM-bearing activities)
   # that may run concurrently across all workflow types and projects.
   # Forwarded to the job-dispatch Worker as MAX_CONCURRENT_JOBS.
