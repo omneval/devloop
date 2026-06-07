@@ -13,12 +13,7 @@ from __future__ import annotations
 
 import importlib
 import os
-import sys
-import threading
-from http.server import HTTPServer
 from unittest import mock
-
-import pytest
 
 from devloop.shared import JOB_DISPATCH_QUEUE, ORCHESTRATION_QUEUE
 from devloop import worker

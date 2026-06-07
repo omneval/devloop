@@ -30,7 +30,7 @@ jobs:
         run: uv sync --all-groups
 
       - name: Lint
-        run: uv run ruff check --fix .
+        run: uv run ruff check src/ tests/
 
   test:
     name: Test SDK

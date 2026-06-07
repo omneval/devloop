@@ -14,8 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import fields
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -241,8 +240,6 @@ def test_publish_summary_posts_to_webhook_when_env_set(monkeypatch):
     class FakeWebhookResp:
         def raise_for_status(self):
             pass
-
-    import httpx
 
     def fake_post(url, json=None, timeout=None):
         webhook_calls.append({"url": url, "json": json})

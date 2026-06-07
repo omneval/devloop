@@ -6,9 +6,7 @@ TDD: these tests are written before the implementation and should fail first.
 from __future__ import annotations
 
 from dataclasses import fields
-from unittest.mock import MagicMock, patch
-
-import pytest
+from unittest.mock import MagicMock
 
 from devloop.shared import GithubNotificationInput
 
