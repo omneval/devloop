@@ -14,7 +14,6 @@ Agent Job driven by a bundled prompt (plan/implement/review).
 
 from __future__ import annotations
 
-import asyncio
 from dataclasses import dataclass, field
 from datetime import timedelta
 
@@ -49,14 +48,16 @@ class DevLoopInput:
     project_id: str
     agent_label: str = "agent-ready"
     max_iterations: int = 30
-    # configurable down to seconds for tests
-    question_timeout_seconds: float = 14400.0  # 4h mid-run gate
     poll_interval_seconds: float = 5.0
     # Phase.CI_FIX loop: retry until CI is green or this many attempts are spent.
     ci_fix_max_iterations: int = 5
     # Execute phase: retry the dispatch this many times when it produces zero
     # commits before parking the issue with a "skipping this round" comment.
     execute_max_iterations: int = 1
+    # Mid-run AWAITING_HUMAN questions (#77): how many Phase.ANSWER jobs a single
+    # phase run may spawn before the workflow stops asking and tells the parked
+    # job to proceed with its best guess.
+    max_questions_per_phase: int = 3
 
     @classmethod
     def from_env(
@@ -69,18 +70,11 @@ class DevLoopInput:
         os.environ here is safe — the resolved values then travel inside the
         serialized input and the workflow itself never touches the environment.
 
-        ``QUESTION_TIMEOUT_SECONDS`` is wired by the Helm chart
-        (templates/temporal-worker-deployment.yaml). Falls back to the dataclass
-        default above, so the Helm value and the Python default stay in sync.
-        A missing or malformed value is tolerated and falls back.
+        Falls back to the dataclass defaults above, so the Helm values and the
+        Python defaults stay in sync. A missing or malformed value is tolerated
+        and falls back.
         """
         import os
-
-        def _seconds(name: str, default: float) -> float:
-            try:
-                return float(os.environ[name])
-            except (KeyError, ValueError):
-                return default
 
         def _int(name: str, default: int) -> int:
             try:
@@ -91,14 +85,14 @@ class DevLoopInput:
         return cls(
             project_id=project_id,
             agent_label=agent_label,
-            question_timeout_seconds=_seconds(
-                "QUESTION_TIMEOUT_SECONDS", cls.question_timeout_seconds
-            ),
             ci_fix_max_iterations=_int(
                 "CI_FIX_MAX_ITERATIONS", cls.ci_fix_max_iterations
             ),
             execute_max_iterations=_int(
                 "EXECUTE_MAX_ITERATIONS", cls.execute_max_iterations
+            ),
+            max_questions_per_phase=_int(
+                "MAX_QUESTIONS_PER_PHASE", cls.max_questions_per_phase
             ),
         )
 
@@ -125,14 +119,7 @@ def _as_int(value) -> int:
 @workflow.defn
 class DevLoopWorkflow:
     def __init__(self) -> None:
-        self._replies: list[str] = []
-        self._consumed = 0
-        self._ask_lock: asyncio.Lock | None = None
-
-    # ---- signals -------------------------------------------------------- #
-    @workflow.signal
-    def human_reply(self, text: str) -> None:
-        self._replies.append(text)
+        pass
 
     # ---- GitHub Issue comment helper ------------------------------------ #
     async def _comment(self, inp_project_id: str, issue_number: int, body: str) -> None:
@@ -147,24 +134,6 @@ class DevLoopWorkflow:
             start_to_close_timeout=_GITHUB_COMMENT_TIMEOUT,
             retry_policy=_RETRY,
         )
-
-    async def _await_reply(self, timeout: float | None = None) -> str | None:
-        """Block for the next unconsumed human reply. None on timeout.
-
-        Used only by ``_answer_questions`` for mid-run clarifying questions
-        (``Phase.ANSWER``); the plan and merge gates have been removed.
-        """
-        target = self._consumed + 1
-        try:
-            await workflow.wait_condition(
-                lambda: len(self._replies) >= target,
-                timeout=timedelta(seconds=timeout) if timeout else None,
-            )
-        except asyncio.TimeoutError:
-            return None
-        reply = self._replies[self._consumed]
-        self._consumed += 1
-        return reply
 
     async def _dispatch(
         self, inp: DevLoopInput, spec: TaskSpec, issue_number: int = 0
@@ -220,7 +189,6 @@ class DevLoopWorkflow:
     # ---- run ------------------------------------------------------------ #
     @workflow.run
     async def run(self, inp: DevLoopInput) -> DevLoopResult:
-        self._ask_lock = asyncio.Lock()
         queued: list[int] = []
 
         for rnd in range(1, inp.max_iterations + 1):
@@ -425,26 +393,70 @@ class DevLoopWorkflow:
 
         return True
 
+    async def _answer_via_agent(
+        self, inp: DevLoopInput, issue_no: int, question: str, branch: str
+    ) -> str:
+        """Spawn a fresh ``Phase.ANSWER`` Agent Execution Job to answer a
+        mid-run clarifying question (#77).
+
+        The job gets the question and working-branch access via ``TaskSpec`` so
+        it can investigate the codebase before answering; its
+        ``AgentJobResult.summary`` is returned as the best-informed answer.
+        """
+        await self._comment(
+            inp.project_id,
+            issue_no,
+            "⏳ queued — answering agent question",
+        )
+        spec = TaskSpec(
+            phase=Phase.ANSWER.value,
+            project_id=inp.project_id,
+            issue_number=issue_no,
+            branch=branch,
+            extra={"question": question},
+        )
+        answer_result = await self._dispatch(inp, spec, issue_number=issue_no)
+        answer = answer_result.summary or "proceed with your best guess"
+        await self._comment(
+            inp.project_id,
+            issue_no,
+            f"🤔 Agent asked: {question} → Auto-answered by agent: {answer}",
+        )
+        return answer
+
     async def _answer_questions(
         self, inp: DevLoopInput, issue_no: int, result: AgentJobResult
     ) -> AgentJobResult:
+        """Resolve mid-run ``AWAITING_HUMAN`` pauses without a human.
+
+        Each question dispatches a fresh ``Phase.ANSWER`` Agent Execution Job
+        (counted against ``maxConcurrentJobs`` via ``JOB_DISPATCH_QUEUE``) that
+        investigates the question with access to the working branch; its
+        answer is patched back into the paused job's ConfigMap via
+        ``answer_agent_job`` and the original job resumes via
+        ``await_agent_job``.
+
+        Once the phase run has spawned ``max_questions_per_phase`` answer jobs,
+        the workflow stops asking and tells the parked job to proceed with its
+        best guess directly (no further answer jobs spawned).
+        """
+        questions_asked = 0
         while result.status == JobStatus.AWAITING_HUMAN.value:
-            async with self._ask_lock:
+            question = result.question
+            if questions_asked >= inp.max_questions_per_phase:
+                answer = "proceed with your best guess"
                 await self._comment(
                     inp.project_id,
                     issue_no,
-                    f"❓ [#{issue_no}] {result.question}",
+                    "⚠️ Question limit reached — agent proceeding with best "
+                    f"guess. Question was: {question}",
                 )
-                answer = await self._await_reply(timeout=inp.question_timeout_seconds)
-            if answer is None:
-                answer = (
-                    "No human reply within the timeout — proceed with your best guess."
+            else:
+                questions_asked += 1
+                answer = await self._answer_via_agent(
+                    inp, issue_no, question, result.branch
                 )
-                await self._comment(
-                    inp.project_id,
-                    issue_no,
-                    f"⏱️ [#{issue_no}] no reply — proceeding with best-guess.",
-                )
+
             await workflow.execute_activity(
                 "answer_agent_job",
                 AnswerInput(result.job_name, answer),

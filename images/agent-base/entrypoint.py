@@ -332,6 +332,21 @@ def _extract_question(text: str) -> str | None:
     return None
 
 
+def _extract_answer(text: str) -> str:
+    """Pull the agent's final decision out of a ``Phase.ANSWER`` response.
+
+    Convention (mirrors ``QUESTION:``): the agent emits a line starting with
+    ``ANSWER:`` carrying its best-informed decision. Falls back to the full
+    response text when no such line is present, so the paused agent always
+    gets *something* usable back.
+    """
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("ANSWER:"):
+            return stripped[len("ANSWER:") :].strip()
+    return text.strip()
+
+
 # --------------------------------------------------------------------------- #
 # git / gh helpers
 # --------------------------------------------------------------------------- #
@@ -837,6 +852,7 @@ _PROMPT_FILES = {
     "merge": "merge.md",
     "diagnosis": "diagnosis.md",
     "ci_fix": "ci_fix.md",
+    "answer": "answer.md",
 }
 
 _PLACEHOLDER_RE = re.compile(r"\{\{[A-Z_]+\}\}")
@@ -918,6 +934,12 @@ def _prompt_variables(spec: TaskSpec) -> dict[str, str]:
             "SOURCE_BRANCH": base,
             "CI_CHECK_FAILURES": "\n".join(lines) or "- (no failure details provided)",
         }
+    if spec.phase == "answer":
+        return {
+            "BRANCH": spec.branch,
+            "SOURCE_BRANCH": base,
+            "QUESTION": spec.extra.get("question", ""),
+        }
     if spec.phase == "diagnosis":
         alert = spec.extra.get("alert", {}) or {}
         details = {
@@ -936,11 +958,14 @@ def _prompt_variables(spec: TaskSpec) -> dict[str, str]:
 def build_agent_message(spec: TaskSpec) -> str:
     """Build the prompt sent to the agent for this phase.
 
-    plan / execute / review / merge / diagnosis / ci_fix render the bundled
-    prompt templates (the diagnosis template asks for a structured
+    plan / execute / review / merge / diagnosis / ci_fix / answer render the
+    bundled prompt templates (the diagnosis template asks for a structured
     ``<diagnosis>`` JSON block so the Alert Response remediation phase gets
     executable actions; the ci_fix template targets minimal changes that turn
-    failing CI checks green — see ``Phase.CI_FIX`` / ``_ci_fix_loop``).
+    failing CI checks green — see ``Phase.CI_FIX`` / ``_ci_fix_loop``; the
+    answer template asks a fresh agent to investigate a paused agent's
+    mid-run question with branch access and return its best-informed
+    decision — see ``Phase.ANSWER`` / ``_answer_questions``).
     """
     if spec.phase in _PROMPT_FILES:
         return load_prompt(_PROMPT_FILES[spec.phase], _prompt_variables(spec))
@@ -1119,6 +1144,34 @@ def handle_review(spec: TaskSpec, tracer) -> dict:
     ).to_payload()
 
 
+def handle_answer(spec: TaskSpec, tracer) -> dict:
+    """Phase.ANSWER (#77): a fresh agent investigates a paused agent's mid-run
+    clarifying question with read access to the working branch and returns the
+    best-informed answer — no human interaction required.
+
+    The agent makes no commits; it only investigates and decides. Its decision
+    (the ``ANSWER:`` line, or the full response as a fallback) is returned in
+    ``AgentJobResult.summary`` and patched back into the paused job by the
+    workflow's ``_answer_questions``."""
+    workdir = os.getenv("WORKDIR", "/workspace/repo")
+    base = os.environ.get("DEFAULT_BRANCH", "main")
+    branch = spec.branch or base
+
+    with tracer.start_as_current_span("clone"):
+        clone_repo(os.environ["GITHUB_URL"], branch, workdir)
+    with tracer.start_as_current_span("install_deps"):
+        install_deps(workdir)
+
+    outcome = run_agent(spec, workdir, tracer)
+    answer = _extract_answer(outcome.summary)
+    return AgentJobResult(
+        status="complete",
+        issue_number=spec.issue_number,
+        branch=branch,
+        summary=answer,
+    ).to_payload()
+
+
 def handle_merge(spec: TaskSpec, tracer) -> dict:
     """Merge phase (PR-review model): open a *review* PR for each approved branch
     instead of merging it into the default branch directly.
@@ -1201,6 +1254,7 @@ _HANDLERS = {
     "review": handle_review,
     "merge": handle_merge,
     "diagnosis": handle_diagnosis,
+    "answer": handle_answer,
 }
 
 

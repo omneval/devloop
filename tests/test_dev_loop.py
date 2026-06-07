@@ -64,6 +64,9 @@ class Mocks:
     # ci_fix dispatch behavior: number of commits per attempt (cycles if shorter)
     ci_fix_commits: list = field(default_factory=lambda: [1])
     ci_fix_status: str = JobStatus.COMPLETE.value
+    # Phase.ANSWER dispatch behavior: summary returned as the answer, and status
+    answer_job_summary: str = "use lib A"
+    answer_job_status: str = JobStatus.COMPLETE.value
 
     @property
     def notifications(self):
@@ -141,6 +144,14 @@ def _make_activities():
                 issue_number=issue,
                 commits=M.review_commits,
                 review=M.review_payload,
+            )
+        if phase == "answer":
+            return AgentJobResult(
+                status=M.answer_job_status,
+                job_name=f"a{issue}",
+                issue_number=issue,
+                summary=M.answer_job_summary,
+                error="" if M.answer_job_status == JobStatus.COMPLETE.value else "boom",
             )
         if phase == "ci_fix":
             attempt = M.dispatched_phases.count("ci_fix") - 1
@@ -233,17 +244,18 @@ def reset_mocks():
     return M
 
 
-async def _run_devloop(client: Client, inp: DevLoopInput, replies: list[str]):
+async def _run_devloop(client: Client, inp: DevLoopInput):
     wf_id = f"devloop-test-{uuid.uuid4().hex[:8]}"
     handle = await client.start_workflow(
         DevLoopWorkflow.run, inp, id=wf_id, task_queue=ORCHESTRATION_QUEUE
     )
-    for r in replies:
-        await handle.signal(DevLoopWorkflow.human_reply, r)
     return await handle.result()
 
 
-async def _env_and_run(inp: DevLoopInput, replies: list[str]):
+async def _env_and_run(inp: DevLoopInput, replies: list[str] | None = None):
+    """Run the workflow to completion. ``replies`` is accepted (and ignored)
+    for backwards compatibility with older call sites — the human-reply loop
+    has been replaced by Phase.ANSWER agent jobs (#77)."""
     acts = _make_activities()
     async with await WorkflowEnvironment.start_time_skipping() as env:
         async with Worker(
@@ -257,7 +269,7 @@ async def _env_and_run(inp: DevLoopInput, replies: list[str]):
             workflows=[],
             activities=acts["dispatch"],
         ):
-            return await _run_devloop(env.client, inp, replies)
+            return await _run_devloop(env.client, inp)
 
 
 # --------------------------------------------------------------------------- #
@@ -285,7 +297,7 @@ async def test_plan_skips_issue_with_open_review_pr(reset_mocks):
     reset_mocks.plan_rounds = [_one_issue(1)]
     reset_mocks.open_agent_prs = [1]
     result = await _env_and_run(
-        DevLoopInput("omneval", question_timeout_seconds=1),
+        DevLoopInput("omneval"),
         [],  # no gates — runs autonomously
     )
     assert result.status == "completed"
@@ -301,7 +313,7 @@ async def test_autonomous_round_plan_execute_review_notify(reset_mocks):
     No human gates, no human replies needed. Result has queued_for_review."""
     reset_mocks.plan_rounds = [_one_issue(1)]  # round 1; round 2 plan is empty
     result = await _env_and_run(
-        DevLoopInput("omneval", question_timeout_seconds=1),
+        DevLoopInput("omneval"),
         [],  # no replies needed — fully autonomous
     )
     assert result.status == "completed"
@@ -392,41 +404,77 @@ async def test_execute_retry_succeeds_before_exhausting(reset_mocks):
 
 
 @pytest.mark.asyncio
-async def test_execute_mid_run_question_reply(reset_mocks):
+async def test_execute_mid_run_question_spawns_answer_job(reset_mocks):
+    """AWAITING_HUMAN dispatches a Phase.ANSWER job (question + branch in the
+    TaskSpec); its summary is patched back as the answer and the original job
+    resumes via await_agent_job."""
     reset_mocks.plan_rounds = [_one_issue(1)]
     reset_mocks.dispatch_behavior[("execute", 1)] = AgentJobResult(
         status=JobStatus.AWAITING_HUMAN.value,
         job_name="j1",
         issue_number=1,
         question="Use lib A or B?",
+        branch="agent/issue-1",
     )
-    result = await _env_and_run(
-        DevLoopInput("omneval", question_timeout_seconds=60),
-        ["use lib A"],  # answer to the mid-run question only
-    )
+    reset_mocks.answer_job_summary = "Use lib A — it matches existing conventions."
+    result = await _env_and_run(DevLoopInput("omneval"))
+
     assert result.status == "completed"
     assert result.queued_for_review == [1]
-    assert M.answers == ["use lib A"]
-    assert any("Use lib A or B?" in m for m in M.messages)
+
+    # A Phase.ANSWER job was dispatched on JOB_DISPATCH_QUEUE with question/branch
+    answer_specs = [s for s in M.dispatched_specs if s.get("phase") == "answer"]
+    assert len(answer_specs) == 1
+    assert answer_specs[0]["extra"].get("question") == "Use lib A or B?"
+    assert answer_specs[0]["branch"] == "agent/issue-1"
+
+    # the answer job's summary was patched back as the answer
+    assert M.answers == ["Use lib A — it matches existing conventions."]
+
+    # comments: queued before dispatch, and a record after completion
+    assert any(
+        "queued" in n.lower() and "answering agent question" in n.lower()
+        for n in M.notifications
+    )
+    assert any(
+        "agent asked" in n.lower()
+        and "use lib a or b?" in n.lower()
+        and "auto-answered by agent" in n.lower()
+        and "use lib a — it matches existing conventions." in n.lower()
+        for n in M.notifications
+    )
 
 
 @pytest.mark.asyncio
-async def test_execute_mid_run_question_timeout(reset_mocks):
+async def test_question_limit_reached_proceeds_with_best_guess(reset_mocks):
+    """Once the phase run hits max_questions_per_phase questions, the workflow
+    stops spawning answer jobs, answers with "proceed with your best guess",
+    and posts the question-limit-reached comment."""
     reset_mocks.plan_rounds = [_one_issue(1)]
-    reset_mocks.dispatch_behavior[("execute", 1)] = AgentJobResult(
+    awaiting = AgentJobResult(
         status=JobStatus.AWAITING_HUMAN.value,
         job_name="j1",
         issue_number=1,
         question="Which approach?",
+        branch="agent/issue-1",
     )
-    reset_mocks.await_status = JobStatus.FAILED.value  # best-guess answer then fails
-    result = await _env_and_run(
-        DevLoopInput("omneval", question_timeout_seconds=1),
-        [],  # no replies at all — question times out
-    )
+    reset_mocks.dispatch_behavior[("execute", 1)] = awaiting
+    # Force the cap to trigger on the very first question — no answer job is
+    # dispatched, the best-guess is patched directly, and await_agent_job
+    # resumes the original job to completion.
+    result = await _env_and_run(DevLoopInput("omneval", max_questions_per_phase=0))
+
     assert result.status == "completed"
-    assert M.answers and "best guess" in M.answers[0].lower()
-    assert any("best-guess" in n.lower() for n in M.notifications)
+    # No Phase.ANSWER job dispatched once the cap is reached
+    assert not [s for s in M.dispatched_specs if s.get("phase") == "answer"]
+    # best-guess answer patched back directly
+    assert M.answers and "best guess" in M.answers[-1].lower()
+    assert any(
+        "question limit reached" in n.lower()
+        and "which approach?" in n.lower()
+        and "best guess" in n.lower()
+        for n in M.notifications
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -464,24 +512,60 @@ def test_devloop_input_no_gate_timeout_or_replan_max():
 def test_from_env_no_gate_timeout(monkeypatch):
     """from_env should not read GATE_TIMEOUT_SECONDS."""
     monkeypatch.setenv("GATE_TIMEOUT_SECONDS", "600")
-    monkeypatch.setenv("QUESTION_TIMEOUT_SECONDS", "900")
     inp = DevLoopInput.from_env("omneval", "agent-ready")
     assert inp.project_id == "omneval"
     assert inp.agent_label == "agent-ready"
-    assert inp.question_timeout_seconds == 900.0
     # No gate_timeout_seconds field
     import dataclasses
     field_names = {f.name for f in dataclasses.fields(DevLoopInput)}
     assert "gate_timeout_seconds" not in field_names
 
 
-def test_from_env_falls_back_to_defaults(monkeypatch):
-    """Missing or malformed env values fall back to the dataclass defaults rather
-    than crashing the webhook/schedule path."""
-    monkeypatch.delenv("QUESTION_TIMEOUT_SECONDS", raising=False)
-    monkeypatch.setenv("QUESTION_TIMEOUT_SECONDS", "not-a-number")
+def test_devloop_input_no_question_timeout_seconds():
+    """question_timeout_seconds must be removed (#77 — replaced by Phase.ANSWER)."""
+    import dataclasses
+
+    field_names = {f.name for f in dataclasses.fields(DevLoopInput)}
+    assert "question_timeout_seconds" not in field_names
+
+
+def test_from_env_does_not_read_question_timeout_seconds(monkeypatch):
+    """QUESTION_TIMEOUT_SECONDS is no longer read by from_env (#77)."""
+    monkeypatch.setenv("QUESTION_TIMEOUT_SECONDS", "900")
     inp = DevLoopInput.from_env("omneval")
-    assert inp.question_timeout_seconds == DevLoopInput.question_timeout_seconds
+    assert not hasattr(inp, "question_timeout_seconds")
+
+
+# --------------------------------------------------------------------------- #
+# Phase.ANSWER + max_questions_per_phase (#77)
+# --------------------------------------------------------------------------- #
+def test_phase_enum_has_answer():
+    """Phase.ANSWER replaces the Discord-based human-reply loop."""
+    from devloop.shared import Phase
+
+    assert Phase.ANSWER.value == "answer"
+
+
+def test_devloop_input_has_max_questions_per_phase():
+    """max_questions_per_phase defaults to 3."""
+    import dataclasses
+
+    field_names = {f.name for f in dataclasses.fields(DevLoopInput)}
+    assert "max_questions_per_phase" in field_names
+    assert DevLoopInput("omneval").max_questions_per_phase == 3
+
+
+def test_from_env_reads_max_questions_per_phase(monkeypatch):
+    monkeypatch.setenv("MAX_QUESTIONS_PER_PHASE", "5")
+    inp = DevLoopInput.from_env("omneval")
+    assert inp.max_questions_per_phase == 5
+
+
+def test_from_env_max_questions_per_phase_falls_back_to_default(monkeypatch):
+    monkeypatch.delenv("MAX_QUESTIONS_PER_PHASE", raising=False)
+    monkeypatch.setenv("MAX_QUESTIONS_PER_PHASE", "not-a-number")
+    inp = DevLoopInput.from_env("omneval")
+    assert inp.max_questions_per_phase == DevLoopInput.max_questions_per_phase
 
 
 # --------------------------------------------------------------------------- #

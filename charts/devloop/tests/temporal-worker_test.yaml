@@ -100,7 +100,7 @@ tests:
             targetPort: webhook
             protocol: TCP
 
-  - it: defaults the question timeout to 14400 seconds
+  - it: defaults the max questions per phase to 3
     template: templates/temporal-worker-deployment.yaml
     set:
       temporalHost: "temporal-frontend.agents.svc:7233"
@@ -108,24 +108,28 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: QUESTION_TIMEOUT_SECONDS
-            value: "14400"
+            name: MAX_QUESTIONS_PER_PHASE
+            value: "3"
       - notContains:
           path: spec.template.spec.containers[0].env
           content:
             name: GATE_TIMEOUT_SECONDS
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: QUESTION_TIMEOUT_SECONDS
 
-  - it: renders the question timeout from values
+  - it: renders the max questions per phase from values
     template: templates/temporal-worker-deployment.yaml
     set:
       temporalHost: "temporal-frontend.agents.svc:7233"
-      temporalWorker.questionTimeoutSeconds: 900
+      temporalWorker.maxQuestionsPerPhase: 5
     asserts:
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: QUESTION_TIMEOUT_SECONDS
-            value: "900"
+            name: MAX_QUESTIONS_PER_PHASE
+            value: "5"
 
   - it: renders AGENT_SKILLS_BY_PHASE as JSON when skillsByPhase is set
     template: templates/temporal-worker-deployment.yaml

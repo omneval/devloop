@@ -35,6 +35,7 @@ class Phase(str, Enum):
     FIX_PASS = "fix_pass"
     CI_FIX = "ci_fix"
     SUMMARIZE = "summarize"
+    ANSWER = "answer"
 
 
 class JobStatus(str, Enum):

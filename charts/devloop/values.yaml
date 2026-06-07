@@ -104,9 +104,11 @@ temporalWorker:
   webhookPort: 8088
   # Path to projects registry file (mounted as ConfigMap or secret)
   projectsFile: "/etc/projects/projects.yaml"
-  # Timeout, in seconds, for a mid-run clarifying question gate.
-  # Mirrors DevLoopInput.question_timeout_seconds. Default: 14400 (4h).
-  questionTimeoutSeconds: 14400
+  # Maximum number of mid-run AWAITING_HUMAN questions a single phase run may
+  # spawn Phase.ANSWER agent jobs for before the workflow stops asking and
+  # tells the parked job to proceed with its best guess.
+  # Mirrors DevLoopInput.max_questions_per_phase. Default: 3.
+  maxQuestionsPerPhase: 3
   # Maximum number of Phase.CI_FIX retry attempts the _ci_fix_loop will spend
   # trying to turn a PR's failing CI checks green before giving up and handing
   # it to the human reviewer with a "CI still failing" note.
