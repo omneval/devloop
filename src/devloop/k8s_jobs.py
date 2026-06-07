@@ -170,6 +170,11 @@ def render_job(d: DispatchInput, job_name: str) -> dict:
         "AGENT_STUB",
         "GIT_AUTHOR_NAME",
         "GIT_AUTHOR_EMAIL",
+        # Forwarded so the spawned Job's write_output/cluster helpers target the
+        # same namespace the worker itself was deployed into (issue: jobs in a
+        # non-default AGENTS_NAMESPACE were writing result ConfigMaps to the
+        # "agents" default and getting 403 Forbidden from their scoped SA).
+        "AGENTS_NAMESPACE",
     ):
         val = os.environ.get(var)
         if val:

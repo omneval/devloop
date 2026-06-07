@@ -265,6 +265,53 @@ def test_structured_extractor_review_via_llm(monkeypatch):
     assert result.inline_comments[0].line == 3
 
 
+def test_structured_extractor_strips_provider_prefix_from_model(monkeypatch):
+    """AGENT_MODEL is configured litellm-style as "<provider>/<model>" (e.g.
+    "openai/qwen3.6-27b-mtp") for the OpenHands LLM/litellm stack. The raw
+    OpenAI SDK client used here talks directly to an OpenAI-compatible endpoint
+    and rejects that prefixed name with "model not found" (caught in
+    real-cluster testing of the github-webook-refactor branch — every
+    structured extraction call failed in production config). Confirm the
+    prefix is stripped before being sent to the client."""
+    from openai.types.chat import ChatCompletion, ChatCompletionMessage
+    from openai.types.chat.chat_completion import Choice
+
+    from entrypoint import PlanOutput
+
+    plan_json = json.dumps(
+        {"issues": [{"id": 1, "title": "x", "branch": "agent/issue-1"}]}
+    )
+    mock_response = ChatCompletion(
+        id="test",
+        created=0,
+        model="test",
+        object="chat.completion",
+        choices=[
+            Choice(
+                index=0,
+                finish_reason="stop",
+                message=ChatCompletionMessage(content=plan_json, role="assistant"),
+            )
+        ],
+    )
+
+    monkeypatch.setenv("AGENT_MODEL", "openai/qwen3.6-27b-mtp")
+    monkeypatch.setenv("AGENT_LLM_API_KEY", "fake-key")
+    monkeypatch.setenv("AGENT_LLM_BASE_URL", "http://fake")
+
+    from unittest.mock import MagicMock, patch
+
+    with patch.object(entrypoint, "_get_llm_client") as mock_client_fn:
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.return_value = mock_response
+        mock_client_fn.return_value = mock_client
+
+        entrypoint.structured_extractor("agent output text", PlanOutput)
+
+    _, kwargs = mock_client.chat.completions.create.call_args
+    assert kwargs["model"] == "qwen3.6-27b-mtp"
+
+
 def test_unknown_phase_writes_failure(tmp_path, monkeypatch):
     out_file = tmp_path / "out.json"
     monkeypatch.setenv("TASK_SPEC", json.dumps({"phase": "bogus", "project_id": "x"}))

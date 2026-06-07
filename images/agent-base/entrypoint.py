@@ -94,6 +94,18 @@ def _get_llm_client() -> _OpenAI:
     )
 
 
+def _strip_provider_prefix(model: str) -> str:
+    """Strip a litellm-style ``<provider>/<model>`` prefix from *model*.
+
+    ``AGENT_MODEL`` is configured using the provider-prefixed form (e.g.
+    ``openai/qwen3.6-27b-mtp``) that the OpenHands ``LLM``/litellm stack
+    expects for routing. The raw OpenAI SDK client used here talks directly
+    to an OpenAI-compatible endpoint and rejects that prefixed name with
+    "model not found", so it needs the bare model name instead.
+    """
+    return model.partition("/")[2] or model
+
+
 def structured_extractor(text: str, model_cls: type[_BaseModel]) -> _BaseModel:
     """Extract structured output from *text* using a single LLM call with
     ``response_format`` backed by a Pydantic model.
@@ -102,7 +114,7 @@ def structured_extractor(text: str, model_cls: type[_BaseModel]) -> _BaseModel:
     or cannot be parsed into *model_cls*.
     """
     client = _get_llm_client()
-    model = os.environ.get("AGENT_MODEL", "qwen3-27b")
+    model = _strip_provider_prefix(os.environ.get("AGENT_MODEL", "qwen3-27b"))
     schema = model_cls.model_json_schema()
     try:
         response = client.chat.completions.create(
