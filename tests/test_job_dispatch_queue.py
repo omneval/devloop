@@ -212,3 +212,16 @@ def test_worker_exposes_max_concurrent_jobs():
 def test_job_dispatch_queue_name_in_worker():
     """worker.py must import and use JOB_DISPATCH_QUEUE from shared."""
     assert hasattr(worker, "JOB_DISPATCH_QUEUE")
+
+
+def test_dispatch_worker_concurrency_kwarg_matches_sdk():
+    """The kwarg worker.py passes to cap dispatch concurrency must be one
+    temporalio.worker.Worker actually accepts — a name drift here raises
+    TypeError at startup (caught in real-cluster testing of #73)."""
+    import inspect
+    from temporalio.worker import Worker
+
+    params = inspect.signature(Worker.__init__).parameters
+    assert "max_concurrent_activities" in params
+    source = inspect.getsource(worker.main)
+    assert "max_concurrent_activities=MAX_CONCURRENT_JOBS" in source

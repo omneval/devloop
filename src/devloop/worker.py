@@ -80,7 +80,7 @@ except (ValueError, TypeError):
 
 # Activities that hold inference resources (LLM calls, agent job dispatches).
 # These are registered on JOB_DISPATCH_QUEUE so a dedicated Worker can enforce
-# a global concurrency cap via max_concurrent_activity_task_executions.
+# a global concurrency cap via max_concurrent_activities.
 DISPATCH_ACTIVITIES = [
     dispatch_agent_job,
     summarize_changes,
@@ -158,7 +158,7 @@ async def main() -> None:
         task_queue=JOB_DISPATCH_QUEUE,
         workflows=[],
         activities=DISPATCH_ACTIVITIES,
-        max_concurrent_activity_task_executions=MAX_CONCURRENT_JOBS,
+        max_concurrent_activities=MAX_CONCURRENT_JOBS,
     )
     logging.info(
         "Orchestration worker polling '%s' on %s; webhooks on :%d",

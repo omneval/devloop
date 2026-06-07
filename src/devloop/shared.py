@@ -16,7 +16,7 @@ from enum import Enum
 # Task queues — override via env vars to match helm chart values.
 ORCHESTRATION_QUEUE = os.getenv("ORCHESTRATION_QUEUE", "devloop-orchestration")
 # Dedicated queue for Agent Execution Job dispatches and LLM-bearing activities.
-# A separate Worker listens here with a configurable max_concurrent_activity_task_executions
+# A separate Worker listens here with a configurable max_concurrent_activities
 # to enforce a global concurrency cap across all workflow types and projects.
 JOB_DISPATCH_QUEUE = os.getenv("JOB_DISPATCH_QUEUE", "devloop-job-dispatch")
 
