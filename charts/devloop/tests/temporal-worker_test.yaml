@@ -100,34 +100,27 @@ tests:
             targetPort: webhook
             protocol: TCP
 
-  - it: defaults the gate and question timeouts to 14400 seconds
+  - it: defaults the question timeout to 14400 seconds
     template: templates/temporal-worker-deployment.yaml
     set:
       temporalHost: "temporal-frontend.agents.svc:7233"
     asserts:
-      - contains:
-          path: spec.template.spec.containers[0].env
-          content:
-            name: GATE_TIMEOUT_SECONDS
-            value: "14400"
       - contains:
           path: spec.template.spec.containers[0].env
           content:
             name: QUESTION_TIMEOUT_SECONDS
             value: "14400"
-
-  - it: renders the gate and question timeouts from values
-    template: templates/temporal-worker-deployment.yaml
-    set:
-      temporalHost: "temporal-frontend.agents.svc:7233"
-      temporalWorker.gateTimeoutSeconds: 600
-      temporalWorker.questionTimeoutSeconds: 900
-    asserts:
-      - contains:
+      - notContains:
           path: spec.template.spec.containers[0].env
           content:
             name: GATE_TIMEOUT_SECONDS
-            value: "600"
+
+  - it: renders the question timeout from values
+    template: templates/temporal-worker-deployment.yaml
+    set:
+      temporalHost: "temporal-frontend.agents.svc:7233"
+      temporalWorker.questionTimeoutSeconds: 900
+    asserts:
       - contains:
           path: spec.template.spec.containers[0].env
           content:

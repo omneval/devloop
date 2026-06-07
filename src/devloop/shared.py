@@ -27,7 +27,6 @@ class Phase(str, Enum):
     PLAN = "plan"
     EXECUTE = "execute"
     REVIEW = "review"
-    MERGE = "merge"
     DIAGNOSIS = "diagnosis"
     FIX_PASS = "fix_pass"
     REMEDIATION = "remediation"
@@ -224,3 +223,15 @@ class GithubNotificationInput:
     issue_number: int
     project_id: str
     body: str
+
+
+@dataclass
+class RequestReviewerInput:
+    """Input for the request_github_reviewer activity.
+
+    Requests a GitHub user as a reviewer on a PR.
+    """
+
+    project_id: str
+    pr_number: int
+    reviewer: str

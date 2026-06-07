@@ -48,8 +48,6 @@ spec:
               value: {{ .Values.temporalWorker.webhookPort | quote }}
             - name: PROJECTS_FILE
               value: {{ .Values.temporalWorker.projectsFile | quote }}
-            - name: GATE_TIMEOUT_SECONDS
-              value: {{ .Values.temporalWorker.gateTimeoutSeconds | quote }}
             - name: QUESTION_TIMEOUT_SECONDS
               value: {{ .Values.temporalWorker.questionTimeoutSeconds | quote }}
             {{- if .Values.skillsByPhase }}

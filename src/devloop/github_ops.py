@@ -18,7 +18,12 @@ from temporalio import activity
 
 from . import cluster
 from .projects import ProjectConfig, get_project, parse_github_repo
-from .shared import GithubNotificationInput, OpenAgentPRsInput, PostCommentsInput
+from .shared import (
+    GithubNotificationInput,
+    OpenAgentPRsInput,
+    PostCommentsInput,
+    RequestReviewerInput,
+)
 
 log = logging.getLogger(__name__)
 
@@ -173,6 +178,42 @@ async def post_github_comment(inp: GithubNotificationInput) -> None:
         "posted GitHub comment on %s#%d",
         repo,
         inp.issue_number,
+    )
+
+
+@activity.defn
+async def request_github_reviewer(inp: RequestReviewerInput) -> None:
+    """Request the project's configured ``pr_reviewer`` as a reviewer on a PR.
+
+    Called by DevLoopWorkflow after the review phase. The reviewer is resolved
+    from the project registry (``ProjectConfig.pr_reviewer``); the ``reviewer``
+    field on the input is used if non-empty, otherwise falls back to the
+    project's configured reviewer. A missing or empty reviewer is silently
+    skipped (not every project configures one).
+    """
+    cfg = get_project(inp.project_id)
+    reviewer = inp.reviewer or cfg.pr_reviewer
+    if not reviewer:
+        log.info("no pr_reviewer configured for project %s — skipping", inp.project_id)
+        return
+    if inp.pr_number <= 0:
+        log.info(
+            "request_github_reviewer: invalid pr_number %d for project %s — skipping",
+            inp.pr_number,
+            inp.project_id,
+        )
+        return
+    repo = parse_github_repo(cfg.github_url)
+    with _client(cfg) as c:
+        c.post(
+            f"/repos/{repo}/pulls/{inp.pr_number}/requested_reviewers",
+            json={"reviewers": [reviewer]},
+        ).raise_for_status()
+    log.info(
+        "requested %s as reviewer on %s#%d",
+        reviewer,
+        repo,
+        inp.pr_number,
     )
 
 

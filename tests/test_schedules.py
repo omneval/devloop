@@ -93,11 +93,11 @@ class _FakeClient:
         return handle
 
 
-def _desired_schedule(gate_timeout: float = 42.0) -> Schedule:
+def _desired_schedule(question_timeout: float = 42.0) -> Schedule:
     return Schedule(
         action=ScheduleActionStartWorkflow(
             "DevLoopWorkflow",
-            DevLoopInput(project_id="omneval", gate_timeout_seconds=gate_timeout),
+            DevLoopInput(project_id="omneval", question_timeout_seconds=question_timeout),
             id="devloop-nightly-omneval",
             task_queue="q",
         ),
@@ -116,11 +116,11 @@ async def test_ensure_creates_when_absent():
 @pytest.mark.asyncio
 async def test_ensure_updates_when_present_preserving_pause_state():
     # Live schedule the operator has paused (e.g. pause-on-failure) carrying a
-    # stale gate timeout; the desired schedule has a new one.
+    # stale question timeout; the desired schedule has a new one.
     current = Schedule(
         action=ScheduleActionStartWorkflow(
             "DevLoopWorkflow",
-            DevLoopInput(project_id="omneval", gate_timeout_seconds=9999.0),
+            DevLoopInput(project_id="omneval", question_timeout_seconds=9999.0),
             id="devloop-nightly-omneval",
             task_queue="q",
         ),
@@ -130,14 +130,14 @@ async def test_ensure_updates_when_present_preserving_pause_state():
     client = _FakeClient(already_running=True, current=current)
 
     await schedules._ensure(
-        client, "devloop-nightly-omneval", _desired_schedule(gate_timeout=42.0)
+        client, "devloop-nightly-omneval", _desired_schedule(question_timeout=42.0)
     )
 
     assert client.created == []  # create raised AlreadyRunning
     applied = client.handles["devloop-nightly-omneval"].applied
     assert applied is not None
     # New config reached the action args...
-    assert applied.action.args[0].gate_timeout_seconds == 42.0
+    assert applied.action.args[0].question_timeout_seconds == 42.0
     # ...while operator-owned runtime state was preserved.
     assert applied.state.paused is True
     assert applied.state.note == "paused by operator"

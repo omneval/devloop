@@ -37,6 +37,7 @@ from .github_ops import (
     open_agent_pr_issue_numbers,
     post_github_comment,
     post_pr_comments,
+    request_github_reviewer,
 )
 from .summarize_activities import summarize_changes
 
@@ -66,6 +67,7 @@ ACTIVITIES = [
     post_github_comment,
     file_issues,
     open_agent_pr_issue_numbers,
+    request_github_reviewer,
     summarize_changes,
 ]
 

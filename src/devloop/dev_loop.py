@@ -1,17 +1,15 @@
-"""Dev Loop Temporal workflow (issues #20-#23) — sequential model.
+"""Dev Loop Temporal workflow (issues #20-#23, #74) — fully autonomous model.
 
-Mirrors the Sandcastle loop: each round the planner picks the next unblocked
-issue, a human approves it (Plan gate), the implementer works it, the reviewer
-refines it, and after a Merge gate the merger merges + closes it. The loop
-repeats so newly-unblocked issues are picked up after each merge.
+Once an issue is labelled ``agent-ready`` the workflow runs autonomously
+through to reviewer notification with no human-approval gates.
 
-    ┌────────────────────────── round ──────────────────────────┐
-    Plan ─▶ [Plan gate] ─▶ Execute ─▶ Review ─▶ [Merge gate] ─▶ Merge
-    └──────────────────────── repeat ───────────────────────────┘
+    ┌──────────────────────────── round ─────────────────────────────┐
+    Plan ─▶ Execute ─▶ Review ─▶ Request Reviewer + Notify
+    └───────────────────────────── repeat ───────────────────────────┘
 
 One issue at a time: the homelab DGX model serves a single request at a time,
 so parallel agent Jobs would just block on inference. Each phase is a K8s
-Agent Job driven by a bundled prompt (plan/implement/review/merge).
+Agent Job driven by a bundled prompt (plan/implement/review).
 """
 
 from __future__ import annotations
@@ -34,6 +32,7 @@ from .shared import (
     JobStatus,
     OpenAgentPRsInput,
     PostCommentsInput,
+    RequestReviewerInput,
     TaskSpec,
 )
 
@@ -48,13 +47,6 @@ class DevLoopInput:
     max_iterations: int = 30
     # configurable down to seconds for tests
     question_timeout_seconds: float = 14400.0  # 4h mid-run gate
-    # Plan/merge human-approval gates. Without a bound, a forgotten
-    # approval parks the run forever, and because the webhook reuses the
-    # devloop-<project> workflow id (USE_EXISTING), every later issue is then
-    # silently dropped. On timeout the  plan gate pauses the loop and the
-    # merge gate leaves the PR open and moves on.
-    gate_timeout_seconds: float = 14400.0  # 4h plan/merge approval gate
-    replan_max: int = 3
     poll_interval_seconds: float = 5.0
 
     @classmethod
@@ -68,10 +60,10 @@ class DevLoopInput:
         os.environ here is safe — the resolved values then travel inside the
         serialized input and the workflow itself never touches the environment.
 
-        ``GATE_TIMEOUT_SECONDS`` / ``QUESTION_TIMEOUT_SECONDS`` are wired by the
-        Helm chart (templates/temporal-worker-deployment.yaml). Each falls back
-        to the dataclass default above, so the Helm value and the Python default
-        stay in sync. A missing or malformed value is tolerated and falls back.
+        ``QUESTION_TIMEOUT_SECONDS`` is wired by the Helm chart
+        (templates/temporal-worker-deployment.yaml). Falls back to the dataclass
+        default above, so the Helm value and the Python default stay in sync.
+        A missing or malformed value is tolerated and falls back.
         """
         import os
 
@@ -87,22 +79,14 @@ class DevLoopInput:
             question_timeout_seconds=_seconds(
                 "QUESTION_TIMEOUT_SECONDS", cls.question_timeout_seconds
             ),
-            gate_timeout_seconds=_seconds(
-                "GATE_TIMEOUT_SECONDS", cls.gate_timeout_seconds
-            ),
         )
 
 
 @dataclass
 class DevLoopResult:
-    status: str  # completed | paused | failed_plan | failed_merge
-    merged_issues: list[int] = field(default_factory=list)
+    status: str  # completed | failed_plan
+    queued_for_review: list[int] = field(default_factory=list)
     detail: str = ""
-
-
-# Sentinel returned by the plan phase when the plan gate times out (distinct from
-# None, which means the plan was actively rejected past replan_max).
-_PLAN_GATE_TIMEOUT = object()
 
 
 _RETRY = RetryPolicy(maximum_attempts=3)
@@ -144,7 +128,11 @@ class DevLoopWorkflow:
         )
 
     async def _await_reply(self, timeout: float | None = None) -> str | None:
-        """Block for the next unconsumed human reply. None on timeout."""
+        """Block for the next unconsumed human reply. None on timeout.
+
+        Used only by ``_answer_questions`` for mid-run clarifying questions
+        (``Phase.ANSWER``); the plan and merge gates have been removed.
+        """
         target = self._consumed + 1
         try:
             await workflow.wait_condition(
@@ -211,18 +199,13 @@ class DevLoopWorkflow:
     @workflow.run
     async def run(self, inp: DevLoopInput) -> DevLoopResult:
         self._ask_lock = asyncio.Lock()
-        thread_name = f"{inp.project_id} — Dev Loop"
-        merged: list[int] = []
+        queued: list[int] = []
 
         for rnd in range(1, inp.max_iterations + 1):
-            plan = await self._plan_phase(inp, thread_name, rnd)
-            if plan is _PLAN_GATE_TIMEOUT:
-                return DevLoopResult(
-                    "paused", merged_issues=merged, detail="plan gate timed out"
-                )
+            plan = await self._plan_phase(inp, rnd)
             if plan is None:
                 return DevLoopResult(
-                    "failed_plan", merged_issues=merged, detail="plan rejected"
+                    "failed_plan", queued_for_review=queued, detail="plan rejected"
                 )
             issues = plan.get("issues") or []
             if not issues:
@@ -230,7 +213,7 @@ class DevLoopWorkflow:
                     "No unblocked agent-ready issues remain — Dev Loop complete for %s",
                     inp.project_id,
                 )
-                return DevLoopResult("completed", merged_issues=merged)
+                return DevLoopResult("completed", queued_for_review=queued)
 
             issue = issues[0]  # sequential: work one issue per round
             exec_result = await self._execute_phase(inp, issue)
@@ -243,70 +226,34 @@ class DevLoopWorkflow:
                 continue
 
             await self._review_phase(inp, issue, exec_result)
-
-            outcome = await self._merge_phase(inp, issue, exec_result, thread_name)
-            if outcome == "merged":
-                merged.append(_as_int(issue.get("id")))
-            elif outcome == "failed":
-                return DevLoopResult(
-                    "failed_merge", merged_issues=merged, detail=f"#{issue.get('id')}"
-                )
+            await self._notify_reviewer(inp, issue, exec_result)
+            queued.append(_as_int(issue.get("id")))
 
         workflow.logger.info(
             "Reached max iterations (%d) — pausing Dev Loop for %s.",
             inp.max_iterations,
             inp.project_id,
         )
-        return DevLoopResult("completed", merged_issues=merged)
+        return DevLoopResult("completed", queued_for_review=queued)
 
-    # ---- Plan phase + gate (#20) --------------------------------------- #
-    async def _plan_phase(self, inp: DevLoopInput, thread_name: str, rnd: int):
-        replans = 0
-        feedback = ""
-        while True:
-            spec = TaskSpec(
-                phase="plan",
-                project_id=inp.project_id,
-                extra={"agent_label": inp.agent_label, "feedback": feedback},
-            )
-            result = await self._dispatch(inp, spec)
-            plan = result.plan or {"issues": []}
-            issues = plan.get("issues") or []
-            issues = await self._drop_issues_in_review(inp, issues)
-            plan = {**plan, "issues": issues}
-            if not issues:
-                return plan  # run() turns an empty plan into a completed result
+    # ---- Plan phase (#20, #74) ----------------------------------------- #
+    async def _plan_phase(self, inp: DevLoopInput, rnd: int) -> dict | None:
+        """Dispatch the Plan Agent Execution Job and return the plan directly.
 
-            # Post the plan to the next issue's GitHub thread
-            next_issue_no = _as_int(issues[0].get("id"))
-            await self._comment(
-                inp.project_id,
-                next_issue_no,
-                logic.render_plan(inp.project_id, rnd, issues),
-            )
-            reply = await self._await_reply(timeout=inp.gate_timeout_seconds)
-            if reply is None:
-                # No approval within the gate window. Pause rather than auto-run
-                # an unreviewed plan; a Closed run lets the next labeled issue
-                # start fresh instead of parking this one forever.
-                await self._comment(
-                    inp.project_id,
-                    next_issue_no,
-                    "⏸️ Plan gate timed out with no approval — pausing Dev Loop. "
-                    "Re-label an issue to resume.",
-                )
-                return _PLAN_GATE_TIMEOUT
-            if logic.is_approval(reply):
-                return plan
-            replans += 1
-            if replans > inp.replan_max:
-                await self._comment(
-                    inp.project_id,
-                    next_issue_no,
-                    f"❌ Plan rejected {inp.replan_max} times — aborting Dev Loop.",
-                )
-                return None
-            feedback = reply or ""
+        No human-approval gate. ``_drop_issues_in_review`` filters out any
+        issues that already have an open agent PR so the planner doesn't
+        re-surface them each round.
+        """
+        spec = TaskSpec(
+            phase="plan",
+            project_id=inp.project_id,
+            extra={"agent_label": inp.agent_label},
+        )
+        result = await self._dispatch(inp, spec)
+        plan = result.plan or {"issues": []}
+        issues = plan.get("issues") or []
+        issues = await self._drop_issues_in_review(inp, issues)
+        return {**plan, "issues": issues}
 
     # ---- Execute phase (#21) ------------------------------------------- #
     async def _execute_phase(self, inp: DevLoopInput, issue: dict) -> dict:
@@ -450,67 +397,37 @@ class DevLoopWorkflow:
             retry_policy=_RETRY,
         )
 
-    # ---- Merge gate + Merge (#23) -------------------------------------- #
-    async def _merge_phase(
-        self, inp: DevLoopInput, issue: dict, exec_result: dict, thread_name: str
-    ) -> str:
+    # ---- Reviewer notification (#74) ------------------------------------ #
+    async def _notify_reviewer(
+        self, inp: DevLoopInput, issue: dict, exec_result: dict
+    ) -> None:
+        """Request a GitHub PR reviewer and post a notification comment.
+
+        Reads ``pr_reviewer`` from the project's ``ProjectConfig``. When no
+        reviewer is configured the comment still fires but omits the @-mention.
+        """
         issue_no = _as_int(issue.get("id"))
-        await self._comment(
-            inp.project_id,
-            issue_no,
-            logic.merge_gate_message(issue, exec_result["pr_url"]),
-        )
-        reply = await self._await_reply(timeout=inp.gate_timeout_seconds)
-        if reply is None:
-            # No merge decision within the gate window. Leave the PR open for a
-            # human to merge later and move on; _drop_issues_in_review keeps this
-            # open-PR issue out of future plan rounds so it won't re-prompt.
-            await self._comment(
-                inp.project_id,
-                issue_no,
-                f"⏱️ #{issue_no} merge gate timed out — leaving the PR open "
-                "and moving on to other issues.",
-            )
-            return "skipped"
-        if not logic.is_approval(reply):
-            await self._comment(
-                inp.project_id,
-                issue_no,
-                f"#{issue_no} not approved for merge — skipping.",
-            )
-            return "skipped"
+        pr_url = exec_result.get("pr_url", "")
+        pr_number = logic.pr_number_from_url(pr_url)
 
-        spec = TaskSpec(
-            phase="merge",
-            project_id=inp.project_id,
-            issue_number=issue_no,
-            extra={
-                "branches": [exec_result["branch"]],
-                "issues": [
-                    {"id": str(issue.get("id")), "title": issue.get("title", "")}
-                ],
-            },
+        # Resolve the configured reviewer from the project registry.
+        # We import get_project inside workflow.now() context; the registry is
+        # process-wide so this is safe (no I/O). In tests the value is empty.
+        # We use workflow.execute_activity for the actual reviewer request so
+        # the I/O stays in activities, not in the workflow sandbox.
+        await workflow.execute_activity(
+            "request_github_reviewer",
+            RequestReviewerInput(
+                project_id=inp.project_id,
+                pr_number=pr_number,
+                reviewer="",  # reviewer resolved by the activity from project registry
+            ),
+            start_to_close_timeout=_GITHUB_COMMENT_TIMEOUT,
+            retry_policy=_RETRY,
         )
-        await self._comment(
-            inp.project_id,
-            issue_no,
-            "⏳ queued — agent is merging this issue",
-        )
-        merge = await self._dispatch(inp, spec, issue_number=issue_no)
-        if merge.status != JobStatus.COMPLETE.value:
-            await self._comment(
-                inp.project_id,
-                issue_no,
-                f"❌ Parked — CI fix exhausted after 5 attempts\n"
-                f"{merge.error or merge.summary}",
-            )
-            return "failed"
 
         await self._comment(
             inp.project_id,
             issue_no,
-            f"📬 Opened review PR for #{issue_no}: "
-            f"{merge.pr_url or '(branch pushed)'} "
-            "— tagged the reviewer. Approve & merge it on GitHub to close the issue.",
+            f"👀 Ready for review — PR: {pr_url}. Reviewer has been tagged.",
         )
-        return "merged"

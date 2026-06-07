@@ -104,14 +104,6 @@ temporalWorker:
   webhookPort: 8088
   # Path to projects registry file (mounted as ConfigMap or secret)
   projectsFile: "/etc/projects/projects.yaml"
-  # Human-approval gate timeout, in seconds, for the plan and merge gates.
-  # When a gate waits this long without a reply the loop stops blocking: the
-  # plan gate pauses the run and the merge gate leaves the PR open and moves on.
-  # Without it a forgotten approval parks the run forever and (because the
-  # webhook reuses the devloop-<project> workflow id) silently drops later
-  # issues. Mirrors DevLoopInput.gate_timeout_seconds — keep the two in sync.
-  # Default: 14400 (4h).
-  gateTimeoutSeconds: 14400
   # Timeout, in seconds, for a mid-run clarifying question gate.
   # Mirrors DevLoopInput.question_timeout_seconds. Default: 14400 (4h).
   questionTimeoutSeconds: 14400

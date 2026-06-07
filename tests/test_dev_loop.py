@@ -38,7 +38,6 @@ class Mocks:
     execute_status: str = JobStatus.COMPLETE.value
     review_commits: int = 1
     review_payload: dict | None = None  # AgentJobResult.review the review job returns
-    merge_status: str = JobStatus.COMPLETE.value
     await_status: str = JobStatus.COMPLETE.value
     # recorders
     github_comments: list = field(default_factory=list)  # GithubNotificationInput records
@@ -48,6 +47,8 @@ class Mocks:
     # issue numbers the "open_agent_pr_issue_numbers" activity reports as already
     # having an open review PR (planner should skip these)
     open_agent_prs: list = field(default_factory=list)
+    # reviewer requests recorded by request_github_reviewer mock
+    reviewer_requests: list = field(default_factory=list)
 
     @property
     def notifications(self):
@@ -120,16 +121,6 @@ def _make_activities():
                 commits=M.review_commits,
                 review=M.review_payload,
             )
-        if phase == "merge":
-            return AgentJobResult(
-                status=M.merge_status,
-                job_name="merge",
-                pr_url=f"https://github.com/omneval/omneval/pull/{issue}",
-                merged_issues=[issue],
-                error="merge conflict"
-                if M.merge_status != JobStatus.COMPLETE.value
-                else "",
-            )
         return AgentJobResult(status=JobStatus.COMPLETE.value, job_name="x")
 
     @activity.defn(name="answer_agent_job")
@@ -172,6 +163,10 @@ def _make_activities():
         M.dispatched_phases.append("post_pr_comments")
         M.post_comments.append(inp)
 
+    @activity.defn(name="request_github_reviewer")
+    async def request_github_reviewer(inp) -> None:
+        M.reviewer_requests.append(inp)
+
     return [
         dispatch_agent_job,
         answer_agent_job,
@@ -179,6 +174,7 @@ def _make_activities():
         open_agent_pr_issue_numbers,
         post_pr_comments,
         post_github_comment,
+        request_github_reviewer,
     ]
 
 
@@ -223,16 +219,10 @@ def test_render_plan_names_next_issue_and_candidates():
     assert "round 3" in text
     assert "#1 — First" in text and "agent/issue-1" in text
     assert "#2 — Second" in text  # listed as another candidate
-    assert "approve" in text.lower()
-
-
-def test_merge_gate_message_includes_pr():
-    text = logic.merge_gate_message({"id": "7", "title": "Thing"}, "https://x/pull/7")
-    assert "#7" in text and "https://x/pull/7" in text and "approve" in text.lower()
 
 
 # --------------------------------------------------------------------------- #
-# Plan phase + gate (#20)
+# Plan phase — no gate, runs directly (#74)
 # --------------------------------------------------------------------------- #
 @pytest.mark.asyncio
 async def test_plan_skips_issue_with_open_review_pr(reset_mocks):
@@ -243,57 +233,44 @@ async def test_plan_skips_issue_with_open_review_pr(reset_mocks):
     reset_mocks.open_agent_prs = [1]
     result = await _env_and_run(
         DevLoopInput("omneval", question_timeout_seconds=1),
-        [],  # no gates reached — nothing to approve
+        [],  # no gates — runs autonomously
     )
     assert result.status == "completed"
-    assert result.merged_issues == []
+    assert result.queued_for_review == []
     assert "plan" in M.dispatched_phases
     assert "execute" not in M.dispatched_phases
     assert any("skipping" in n.lower() and "#1" in n for n in M.notifications)
 
 
 @pytest.mark.asyncio
-async def test_plan_approve_runs_one_issue_to_merge(reset_mocks):
+async def test_autonomous_round_plan_execute_review_notify(reset_mocks):
+    """Full autonomous round: plan → execute → review → reviewer notification.
+    No human gates, no human replies needed. Result has queued_for_review."""
     reset_mocks.plan_rounds = [_one_issue(1)]  # round 1; round 2 plan is empty
     result = await _env_and_run(
         DevLoopInput("omneval", question_timeout_seconds=1),
-        ["approve", "approve"],  # plan gate, merge gate
+        [],  # no replies needed — fully autonomous
     )
     assert result.status == "completed"
-    assert result.merged_issues == [1]
-    assert M.dispatched_phases == ["plan", "execute", "review", "merge", "plan"]
+    assert result.queued_for_review == [1]
+    # plan then execute then review — no merge phase
+    assert M.dispatched_phases[:3] == ["plan", "execute", "review"]
+    assert "merge" not in M.dispatched_phases
+    # reviewer was requested
+    assert len(M.reviewer_requests) >= 1
+    # notification comment posted about reviewer
+    assert any("ready for review" in n.lower() for n in M.notifications)
 
 
 @pytest.mark.asyncio
-async def test_plan_replan_then_approve(reset_mocks):
-    # First plan offers #1 and #2; reviewer says drop #2; re-plan offers only #1.
-    reset_mocks.plan_rounds = [
-        {
-            "issues": [
-                {"id": "1", "title": "A", "branch": "agent/issue-1"},
-                {"id": "2", "title": "B", "branch": "agent/issue-2"},
-            ]
-        },
-        _one_issue(1),
-    ]
+async def test_plan_returns_empty_on_no_issues(reset_mocks):
+    """When the planner returns no issues, the loop completes immediately."""
     result = await _env_and_run(
-        DevLoopInput("omneval", question_timeout_seconds=1),
-        ["please drop #2", "approve", "approve"],
+        DevLoopInput("omneval"),
+        [],
     )
     assert result.status == "completed"
-    assert result.merged_issues == [1]
-    assert M.plan_calls == 3  # 2 in round 1 (reject+approve) + 1 empty round 2
-
-
-@pytest.mark.asyncio
-async def test_plan_replan_exhaustion_fails(reset_mocks):
-    reset_mocks.plan_default = _one_issue(1)  # planner always offers an issue
-    result = await _env_and_run(
-        DevLoopInput("omneval", replan_max=2),
-        ["no", "still no", "nope"],  # 3 rejections > replan_max(2)
-    )
-    assert result.status == "failed_plan"
-    assert any("rejected" in n.lower() for n in M.notifications)
+    assert result.queued_for_review == []
 
 
 # --------------------------------------------------------------------------- #
@@ -303,9 +280,9 @@ async def test_plan_replan_exhaustion_fails(reset_mocks):
 async def test_execute_no_commits_skips_to_next_round(reset_mocks):
     reset_mocks.plan_rounds = [_one_issue(1)]
     reset_mocks.execute_commits = 0
-    result = await _env_and_run(DevLoopInput("omneval"), ["approve"])
+    result = await _env_and_run(DevLoopInput("omneval"), [])
     assert result.status == "completed"
-    assert result.merged_issues == []
+    assert result.queued_for_review == []
     assert "review" not in M.dispatched_phases and "merge" not in M.dispatched_phases
     assert any("no commits" in n.lower() for n in M.notifications)
 
@@ -321,10 +298,10 @@ async def test_execute_mid_run_question_reply(reset_mocks):
     )
     result = await _env_and_run(
         DevLoopInput("omneval", question_timeout_seconds=60),
-        ["approve", "use lib A", "approve"],
+        ["use lib A"],  # answer to the mid-run question only
     )
     assert result.status == "completed"
-    assert result.merged_issues == [1]
+    assert result.queued_for_review == [1]
     assert M.answers == ["use lib A"]
     assert any("Use lib A or B?" in m for m in M.messages)
 
@@ -341,7 +318,7 @@ async def test_execute_mid_run_question_timeout(reset_mocks):
     reset_mocks.await_status = JobStatus.FAILED.value  # best-guess answer then fails
     result = await _env_and_run(
         DevLoopInput("omneval", question_timeout_seconds=1),
-        ["approve"],  # plan approval only; mid-run question times out
+        [],  # no replies at all — question times out
     )
     assert result.status == "completed"
     assert M.answers and "best guess" in M.answers[0].lower()
@@ -349,80 +326,72 @@ async def test_execute_mid_run_question_timeout(reset_mocks):
 
 
 # --------------------------------------------------------------------------- #
-# Merge gate + Merge (#23)
+# DevLoopResult shape (#74)
 # --------------------------------------------------------------------------- #
-@pytest.mark.asyncio
-async def test_merge_gate_skip(reset_mocks):
-    reset_mocks.plan_rounds = [_one_issue(1)]
-    result = await _env_and_run(DevLoopInput("omneval"), ["approve", "no"])
-    assert result.status == "completed"
-    assert result.merged_issues == []
-    assert any("not approved for merge" in n.lower() for n in M.notifications)
+def test_devloop_result_has_queued_for_review():
+    """DevLoopResult must have queued_for_review, not merged_issues."""
+    from devloop.dev_loop import DevLoopResult
+
+    r = DevLoopResult(status="completed", queued_for_review=[1, 2])
+    assert r.queued_for_review == [1, 2]
+    assert not hasattr(r, "merged_issues")
 
 
-@pytest.mark.asyncio
-async def test_merge_gate_timeout_leaves_pr_open_and_moves_on(reset_mocks):
-    """No merge decision within gate_timeout_seconds: the PR is left open, the
-    issue is not merged, and the loop moves on (round 2 plan is empty → done).
-    The merge agent Job is never dispatched."""
-    reset_mocks.plan_rounds = [_one_issue(1)]
-    result = await _env_and_run(
-        DevLoopInput("omneval", gate_timeout_seconds=1),
-        ["approve"],  # plan gate approved; merge gate gets no reply → times out
-    )
-    assert result.status == "completed"
-    assert result.merged_issues == []
-    assert "merge" not in M.dispatched_phases  # never dispatched the merge job
-    assert any(
-        "timed out" in n.lower() and "moving on" in n.lower() for n in M.notifications
-    )
+def test_devloop_result_status_values():
+    """Only 'completed' and 'failed_plan' are valid statuses."""
+    from devloop.dev_loop import DevLoopResult
+
+    # These should be constructable without error
+    DevLoopResult(status="completed")
+    DevLoopResult(status="failed_plan")
+    # 'paused' and 'failed_merge' are removed
 
 
-@pytest.mark.asyncio
-async def test_plan_gate_timeout_pauses(reset_mocks):
-    """No approval within gate_timeout_seconds at the plan gate pauses the loop
-    (status 'paused') without running any unreviewed work."""
-    reset_mocks.plan_rounds = [_one_issue(1)]
-    result = await _env_and_run(
-        DevLoopInput("omneval", gate_timeout_seconds=1),
-        [],  # nobody approves the plan
-    )
-    assert result.status == "paused"
-    assert result.merged_issues == []
-    assert "execute" not in M.dispatched_phases
-    assert any("plan gate timed out" in n.lower() for n in M.notifications)
+def test_devloop_input_no_gate_timeout_or_replan_max():
+    """DevLoopInput must not have gate_timeout_seconds or replan_max fields."""
+    import dataclasses
+    from devloop.dev_loop import DevLoopInput
+
+    field_names = {f.name for f in dataclasses.fields(DevLoopInput)}
+    assert "gate_timeout_seconds" not in field_names
+    assert "replan_max" not in field_names
 
 
-def test_from_env_reads_timeout_overrides(monkeypatch):
-    """The webhook/schedule entry points build the input via from_env, which
-    sources the gate/question timeouts from the worker environment (wired by the
-    Helm chart) and leaves other fields at their dataclass defaults."""
+def test_from_env_no_gate_timeout(monkeypatch):
+    """from_env should not read GATE_TIMEOUT_SECONDS."""
     monkeypatch.setenv("GATE_TIMEOUT_SECONDS", "600")
     monkeypatch.setenv("QUESTION_TIMEOUT_SECONDS", "900")
     inp = DevLoopInput.from_env("omneval", "agent-ready")
     assert inp.project_id == "omneval"
     assert inp.agent_label == "agent-ready"
-    assert inp.gate_timeout_seconds == 600.0
     assert inp.question_timeout_seconds == 900.0
+    # No gate_timeout_seconds field
+    import dataclasses
+    field_names = {f.name for f in dataclasses.fields(DevLoopInput)}
+    assert "gate_timeout_seconds" not in field_names
 
 
 def test_from_env_falls_back_to_defaults(monkeypatch):
     """Missing or malformed env values fall back to the dataclass defaults rather
     than crashing the webhook/schedule path."""
-    monkeypatch.delenv("GATE_TIMEOUT_SECONDS", raising=False)
+    monkeypatch.delenv("QUESTION_TIMEOUT_SECONDS", raising=False)
     monkeypatch.setenv("QUESTION_TIMEOUT_SECONDS", "not-a-number")
     inp = DevLoopInput.from_env("omneval")
-    assert inp.gate_timeout_seconds == DevLoopInput.gate_timeout_seconds == 14400.0
     assert inp.question_timeout_seconds == DevLoopInput.question_timeout_seconds
 
 
-@pytest.mark.asyncio
-async def test_merge_failure_terminates(reset_mocks):
-    reset_mocks.plan_rounds = [_one_issue(1)]
-    reset_mocks.merge_status = JobStatus.FAILED.value
-    result = await _env_and_run(DevLoopInput("omneval"), ["approve", "approve"])
-    assert result.status == "failed_merge"
-    assert any("parked" in n.lower() for n in M.notifications)
+# --------------------------------------------------------------------------- #
+# Phase enum — no MERGE (#74)
+# --------------------------------------------------------------------------- #
+def test_phase_enum_no_merge():
+    """Phase.MERGE must be removed from the Phase enum."""
+    from devloop.shared import Phase
+
+    assert not hasattr(Phase, "MERGE")
+    # Other phases still present
+    assert hasattr(Phase, "PLAN")
+    assert hasattr(Phase, "EXECUTE")
+    assert hasattr(Phase, "REVIEW")
 
 
 # --------------------------------------------------------------------------- #
@@ -439,7 +408,7 @@ async def test_review_posts_findings_to_pr(reset_mocks):
         "summary": "looks good, tightened error handling",
         "inline_comments": [{"file": "a.py", "line": 3, "body": "nit"}],
     }
-    result = await _env_and_run(DevLoopInput("omneval"), ["approve", "approve"])
+    result = await _env_and_run(DevLoopInput("omneval"), [])
     assert result.status == "completed"
     assert "post_pr_comments" in M.dispatched_phases
     posted = M.post_comments[0]
@@ -452,6 +421,32 @@ async def test_review_posts_findings_to_pr(reset_mocks):
 async def test_review_no_findings_skips_post(reset_mocks):
     reset_mocks.plan_rounds = [_one_issue(1)]
     reset_mocks.review_payload = None  # reviewer returned no structured findings
-    result = await _env_and_run(DevLoopInput("omneval"), ["approve", "approve"])
+    result = await _env_and_run(DevLoopInput("omneval"), [])
     assert result.status == "completed"
     assert "post_pr_comments" not in M.dispatched_phases
+
+
+# --------------------------------------------------------------------------- #
+# Reviewer notification after review (#74)
+# --------------------------------------------------------------------------- #
+@pytest.mark.asyncio
+async def test_reviewer_notification_comment_after_review(reset_mocks):
+    """After the review phase, a GitHub comment is posted with the PR URL and
+    @mentions the pr_reviewer."""
+    reset_mocks.plan_rounds = [_one_issue(1)]
+    result = await _env_and_run(DevLoopInput("omneval"), [])
+    assert result.status == "completed"
+    # The notification comment mentions "ready for review"
+    assert any("ready for review" in n.lower() for n in M.notifications)
+    # The reviewer activity was called
+    assert len(M.reviewer_requests) >= 1
+
+
+@pytest.mark.asyncio
+async def test_multiple_rounds_accumulate_queued_for_review(reset_mocks):
+    """Each completed issue is added to queued_for_review across rounds."""
+    reset_mocks.plan_rounds = [_one_issue(1), _one_issue(2)]
+    result = await _env_and_run(DevLoopInput("omneval", max_iterations=5), [])
+    assert result.status == "completed"
+    assert 1 in result.queued_for_review
+    assert 2 in result.queued_for_review
