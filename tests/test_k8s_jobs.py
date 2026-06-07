@@ -114,7 +114,9 @@ def _dispatch_input(**kw):
 # --------------------------------------------------------------------------- #
 # render_job
 # --------------------------------------------------------------------------- #
-def test_render_job_sets_otlp_and_secret_env():
+def test_render_job_sets_otlp_and_secret_env(monkeypatch):
+    monkeypatch.delenv("OTEL_EXPORTER_OTLP_HEADERS", raising=False)
+    monkeypatch.delenv("OTEL_EXPORTER_OTLP_ENDPOINT", raising=False)
     d = _dispatch_input()
     manifest = k8s_jobs.render_job(d, "agent-omneval-execute-42-a1")
     container = manifest["spec"]["template"]["spec"]["containers"][0]

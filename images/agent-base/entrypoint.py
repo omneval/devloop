@@ -868,6 +868,7 @@ _PROMPT_FILES = {
     "ci_fix": "ci_fix.md",
     "answer": "answer.md",
     "pr_comment": "pr_comment.md",
+    "remediation": "remediation.md",
 }
 
 _PLACEHOLDER_RE = re.compile(r"\{\{[A-Z_]+\}\}")
@@ -977,6 +978,11 @@ def _prompt_variables(spec: TaskSpec) -> dict[str, str]:
             "ALERT_SEVERITY": str(alert.get("severity", "") or "warning"),
             "ALERT_NAMESPACE": str(alert.get("namespace", "") or "(unknown)"),
             "ALERT_DETAILS": json.dumps(details),
+        }
+    if spec.phase == "remediation":
+        return {
+            "BRANCH": spec.branch,
+            "CI_CHECK_FAILURES": spec.extra.get("ci_check_failures", "none"),
         }
     return {}
 
@@ -1352,6 +1358,53 @@ def handle_diagnosis(spec: TaskSpec, tracer) -> dict:
     return AgentJobResult(status="complete", diagnosis=diagnosis).to_payload()
 
 
+def handle_remediation(spec: TaskSpec, tracer) -> dict:
+    """Remediation phase: diagnose and fix failing CI checks on the PR branch.
+
+    Clones the branch, runs the agent with the remediation prompt (which includes
+    the CI check failure output), commits any fixes, and pushes back.  Returns
+    the number of commits produced so the workflow can decide whether the
+    remediation succeeded.
+    """
+    workdir = os.getenv("WORKDIR", "/workspace/repo")
+    github_url = os.environ["GITHUB_URL"]
+    branch = spec.branch
+
+    with tracer.start_as_current_span("clone"):
+        clone_repo(github_url, branch, workdir)
+    with tracer.start_as_current_span("install_deps"):
+        install_deps(workdir)
+
+    base_sha = _run(["git", "rev-parse", "HEAD"], cwd=workdir).strip()
+    outcome = run_agent(spec, workdir, tracer)
+
+    # Sweep up any uncommitted changes the agent left behind.
+    _run(["git", "add", "-A"], cwd=workdir)
+    if _run(["git", "status", "--porcelain"], cwd=workdir).strip():
+        _run(
+            [
+                "git",
+                "commit",
+                "-m",
+                f"fix: remediate CI checks for #{spec.issue_number}",
+            ],
+            cwd=workdir,
+        )
+
+    commits = _commit_count(workdir, base_sha)
+    if commits > 0:
+        with tracer.start_as_current_span("push"):
+            push_branch(workdir, branch, force=True)
+
+    return AgentJobResult(
+        status="complete",
+        issue_number=spec.issue_number,
+        branch=branch,
+        commits=commits,
+        summary=outcome.summary,
+    ).to_payload()
+
+
 _HANDLERS = {
     "plan": handle_plan,
     "execute": handle_execute,
@@ -1361,6 +1414,7 @@ _HANDLERS = {
     "diagnosis": handle_diagnosis,
     "answer": handle_answer,
     "pr_comment": handle_pr_comment,
+    "remediation": handle_remediation,
 }
 
 

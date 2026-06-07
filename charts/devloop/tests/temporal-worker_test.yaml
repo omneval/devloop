@@ -149,6 +149,25 @@ tests:
             name: AGENT_SKILLS_BY_PHASE
             value: '{"execute":["tdd","code-review"],"plan":[],"review":["code-review"]}'
 
+  - it: renders remediation in skillsByPhase
+    template: templates/temporal-worker-deployment.yaml
+    set:
+      temporalHost: "temporal-frontend.agents.svc:7233"
+      skillsByPhase:
+        plan: []
+        execute:
+          - tdd
+        remediation:
+          - tdd
+        review:
+          - code-review
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: AGENT_SKILLS_BY_PHASE
+            value: '{"execute":["tdd"],"plan":[],"remediation":["tdd"],"review":["code-review"]}'
+
   - it: omits AGENT_SKILLS_BY_PHASE when skillsByPhase is empty (default)
     template: templates/temporal-worker-deployment.yaml
     set:

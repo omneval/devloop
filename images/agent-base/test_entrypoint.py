@@ -195,6 +195,27 @@ def test_build_agent_message_scopes_plan_to_triggering_issue(monkeypatch):
     assert "{{" not in msg
 
 
+def test_remediation_prompt_renders_with_ci_check_failures(monkeypatch):
+    """The remediation prompt is loaded from the bundled template and the
+    {{BRANCH}}/{{CI_CHECK_FAILURES}} placeholders are substituted."""
+    prompts_dir = Path(__file__).parent / "prompts"
+    monkeypatch.setenv("AGENT_PROMPTS_DIR", str(prompts_dir))
+    spec = entrypoint.TaskSpec(
+        phase="remediation",
+        project_id="omneval",
+        issue_number=42,
+        branch="agent/issue-42",
+        extra={
+            "ci_check_failures": "test-unit: exit code 1\nlint: exit code 2",
+        },
+    )
+    msg = entrypoint.build_agent_message(spec)
+    assert "agent/issue-42" in msg
+    assert "test-unit" in msg
+    assert "lint" in msg
+    assert "{{" not in msg  # every placeholder substituted or stripped
+
+
 def test_structured_extractor_plan_via_llm(monkeypatch):
     """structured_extractor extracts PlanOutput from LLM response with response_format."""
     from openai.types.chat import ChatCompletion, ChatCompletionMessage
@@ -431,3 +452,121 @@ class TestLoadSkillsAllowlist:
         monkeypatch.setenv("AGENT_SKILLS_ENABLED", "a,,b")
         result = entrypoint._load_skills_allowlist("execute")
         assert result == {"execute": ["a", "b"]}
+
+
+def test_remediation_phase_pushes_fix(tmp_path, monkeypatch):
+    """Remediation handler clones the branch, runs the agent, commits fixes,
+    and pushes back when commits are produced."""
+    workdir = tmp_path / "repo"
+    out_file = tmp_path / "out.json"
+    bare = tmp_path / "origin.git"
+    bare.mkdir()
+    _git("init", "--bare", "-b", "main", cwd=bare)
+
+    # Seed repo with a branch that has a bug
+    seed = tmp_path / "seed"
+    seed.mkdir()
+    _git("init", "-b", "main", cwd=seed)
+    _git("config", "user.email", "t@t.com", cwd=seed)
+    _git("config", "user.name", "t", cwd=seed)
+    (seed / "README.md").write_text("hello\n")
+    _git("add", "-A", cwd=seed)
+    _git("commit", "-m", "init", cwd=seed)
+    _git("checkout", "-b", "agent/issue-42", cwd=seed)
+    (seed / "buggy.py").write_text("def broken(): pass\n")
+    _git("add", "-A", cwd=seed)
+    _git("commit", "-m", "wip", cwd=seed)
+    _git("remote", "add", "origin", str(bare), cwd=seed)
+    _git("push", "origin", "main", cwd=seed)
+    _git("push", "origin", "agent/issue-42", cwd=seed)
+
+    def fake_run_agent(spec, wd, tracer):
+        Path(wd, "buggy.py").write_text("def fixed(): return True\n")
+        return entrypoint.AgentOutcome(summary="Fixed the bug", files_changed=True)
+
+    monkeypatch.setattr(entrypoint, "run_agent", fake_run_agent)
+
+    monkeypatch.setenv(
+        "TASK_SPEC",
+        json.dumps(
+            {
+                "phase": "remediation",
+                "project_id": "omneval",
+                "issue_number": 42,
+                "title": "Fix CI",
+                "branch": "agent/issue-42",
+                "extra": {"ci_check_failures": "test-unit: exit code 1"},
+            }
+        ),
+    )
+    monkeypatch.setenv("GITHUB_URL", str(bare))
+    monkeypatch.setenv("DEFAULT_BRANCH", "main")
+    monkeypatch.setenv("WORKDIR", str(workdir))
+    monkeypatch.setenv("OUTPUT_CONFIGMAP", "agent-omneval-remediation-42-a1")
+    monkeypatch.setenv("OUTPUT_FILE", str(out_file))
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+
+    rc = entrypoint.main()
+    assert rc == 0
+
+    payload = json.loads(out_file.read_text())
+    assert payload["status"] == "complete"
+    assert payload["commits"] == 1
+    assert payload["branch"] == "agent/issue-42"
+
+
+def test_remediation_phase_no_fix_no_push(tmp_path, monkeypatch):
+    """When the remediation agent produces no commits, the branch is not
+    pushed and commits==0 in the result."""
+    workdir = tmp_path / "repo"
+    out_file = tmp_path / "out.json"
+    bare = tmp_path / "origin.git"
+    bare.mkdir()
+    _git("init", "--bare", "-b", "main", cwd=bare)
+
+    # Seed repo with a branch
+    seed = tmp_path / "seed"
+    seed.mkdir()
+    _git("init", "-b", "main", cwd=seed)
+    _git("config", "user.email", "t@t.com", cwd=seed)
+    _git("config", "user.name", "t", cwd=seed)
+    (seed / "README.md").write_text("hello\n")
+    _git("add", "-A", cwd=seed)
+    _git("commit", "-m", "init", cwd=seed)
+    _git("checkout", "-b", "agent/issue-42", cwd=seed)
+    _git("remote", "add", "origin", str(bare), cwd=seed)
+    _git("push", "origin", "main", cwd=seed)
+    _git("push", "origin", "agent/issue-42", cwd=seed)
+
+    def fake_run_agent(spec, wd, tracer):
+        # Agent makes no changes
+        return entrypoint.AgentOutcome(summary="Could not fix", files_changed=False)
+
+    monkeypatch.setattr(entrypoint, "run_agent", fake_run_agent)
+
+    monkeypatch.setenv(
+        "TASK_SPEC",
+        json.dumps(
+            {
+                "phase": "remediation",
+                "project_id": "omneval",
+                "issue_number": 42,
+                "title": "Fix CI",
+                "branch": "agent/issue-42",
+                "extra": {"ci_check_failures": "lint: exit code 1"},
+            }
+        ),
+    )
+    monkeypatch.setenv("GITHUB_URL", str(bare))
+    monkeypatch.setenv("DEFAULT_BRANCH", "main")
+    monkeypatch.setenv("WORKDIR", str(workdir))
+    monkeypatch.setenv("OUTPUT_CONFIGMAP", "agent-omneval-remediation-42-a1")
+    monkeypatch.setenv("OUTPUT_FILE", str(out_file))
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+
+    rc = entrypoint.main()
+    assert rc == 0
+
+    payload = json.loads(out_file.read_text())
+    assert payload["status"] == "complete"
+    assert payload["commits"] == 0

@@ -1,3 +1,4 @@
+<!-- devloop-test: this file is the target of an automated end-to-end test run; safe to ignore/revert -->
 # Getting Started with devloop
 
 This guide walks you through the full path to running your first Dev Loop:
