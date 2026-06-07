@@ -9,7 +9,7 @@ See [docs/getting-started.md](docs/getting-started.md) for full setup instructio
 
 ### Why workflows stop processing open issues
 
-The devloop-poller persists every forwarded issue number to a state file (ADR-0009). Once an issue is forwarded, it is never forwarded again — even after the workflow completes, fails, or is parked by a gate timeout. When the `DevLoopWorkflow` finishes a run while open `agent-ready` issues remain in the repository, those issues are silently skipped until a new trigger is sent.
+devloop is triggered by GitHub webhook events. When a Dev Loop workflow finishes while open `agent-ready` issues remain in the repository, those issues are silently skipped until a new webhook trigger is received.
 
 Because the webhook uses `WorkflowIDConflictPolicy.USE_EXISTING`, a single POST per project is sufficient to restart the loop: the workflow self-discovers all open `agent-ready` issues on each run.
 
@@ -26,10 +26,10 @@ kubectl exec -n <namespace> <temporal-admintools-pod> -- \
 
 If `devloop-<project-id>` appears as **Completed** or **Failed** but open `agent-ready` issues exist in the repository, the workflow needs a fresh trigger.
 
-Also check the poller logs to confirm issues were found but not re-forwarded:
+Also check the temporal-worker logs to confirm the webhook was received:
 
 ```bash
-kubectl logs -n <namespace> -l app.kubernetes.io/component=poller --tail=50
+kubectl logs -n <namespace> -l app.kubernetes.io/component=temporal-worker --tail=50
 ```
 
 ### Restarting with the helper script

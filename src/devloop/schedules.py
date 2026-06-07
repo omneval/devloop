@@ -1,8 +1,12 @@
-"""Temporal Schedules for the Dev Loop nightly sweep and weekly summary.
+"""Temporal Schedules for the weekly Summarization workflow.
 
-* Nightly (03:00): start a Dev Loop per enrolled project. The Plan phase no-ops
-  cleanly when a project has no open agent-ready issues (issue #20).
 * Weekly (Mon 08:00): start a Summarization workflow per project (issue #24).
+
+Note: the nightly DevLoop sweep (devloop-nightly-*) was removed in favour of
+GitHub webhook ingress as the sole trigger (ADR-0011). GitHub's built-in 3-day
+delivery retry makes a polling sweep redundant. Any existing devloop-nightly-*
+schedules left in a running Temporal cluster should be deleted manually by the
+operator (e.g. ``tctl schedule delete --sid devloop-nightly-<project-id>``).
 """
 
 from __future__ import annotations
@@ -32,10 +36,9 @@ async def _ensure(client: Client, schedule_id: str, schedule: Schedule) -> None:
     """Create the schedule, or update an existing one to match ``schedule``.
 
     ``ensure_schedules`` runs on every worker startup, so updating in place is
-    how config changes propagate to the nightly sweep — e.g. a changed gate
-    timeout in the workflow input (DevLoopInput.from_env) or a changed cron spec.
-    Without this, the first create would win forever and later config edits would
-    silently never reach the schedule.
+    how config changes propagate to scheduled workflows — e.g. a changed cron
+    spec or workflow input.  Without this, the first create would win forever
+    and later config edits would silently never reach the schedule.
 
     Code owns the action, spec, and policy; the operator owns runtime state, so
     whether the schedule is paused, its note, and any remaining-action limit are
@@ -81,30 +84,9 @@ async def _ensure(client: Client, schedule_id: str, schedule: Schedule) -> None:
 
 
 async def ensure_schedules(client: Client, projects: list[ProjectConfig]) -> None:
-    from .dev_loop import DevLoopInput
     from .summarization import SummarizeInput
 
     for p in projects:
-        await _ensure(
-            client,
-            f"devloop-nightly-{p.id}",
-            Schedule(
-                action=ScheduleActionStartWorkflow(
-                    "DevLoopWorkflow",
-                    DevLoopInput.from_env(p.id, p.agent_label),
-                    id=f"devloop-nightly-{p.id}",
-                    task_queue=ORCHESTRATION_QUEUE,
-                ),
-                spec=ScheduleSpec(
-                    calendars=[
-                        ScheduleCalendarSpec(
-                            hour=[ScheduleRange(3)],
-                            minute=[ScheduleRange(0)],
-                        )
-                    ]
-                ),
-            ),
-        )
         await _ensure(
             client,
             f"summarize-weekly-{p.id}",

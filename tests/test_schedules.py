@@ -1,9 +1,7 @@
 """Tests for the Temporal Schedule reconciliation in ``schedules.py``.
 
 ``ensure_schedules`` runs on every worker startup and must converge an existing
-schedule to the code-defined desired state — otherwise config changes (e.g. a
-gate timeout sourced from the worker environment) would never reach the nightly
-sweep, since the first ``create_schedule`` would win forever.
+schedule to the code-defined desired state.
 
 Strategy: a fake Temporal client records ``create_schedule`` calls and hands out
 a fake schedule handle whose ``update`` captures and invokes the updater, so we
@@ -147,18 +145,27 @@ async def test_ensure_updates_when_present_preserving_pause_state():
 
 
 @pytest.mark.asyncio
-async def test_ensure_schedules_wires_env_timeout_into_schedule(monkeypatch):
-    """End-to-end: an env-configured gate timeout flows through from_env into the
-    nightly schedule's workflow input."""
-    monkeypatch.setenv("GATE_TIMEOUT_SECONDS", "600")
+async def test_ensure_schedules_does_not_create_nightly():
+    """ensure_schedules must NOT create any devloop-nightly-* schedules (ADR-0011:
+    GitHub webhook is the sole trigger; nightly sweep removed)."""
     client = _FakeClient(already_running=False)
 
     await schedules.ensure_schedules(client, [_project("omneval")])
 
-    nightly = next(
-        sched for sid, sched in client.created if sid == "devloop-nightly-omneval"
-    )
-    assert nightly.action.args[0].gate_timeout_seconds == 600.0
+    nightly_ids = [sid for sid, _ in client.created if sid.startswith("devloop-nightly-")]
+    assert nightly_ids == [], f"unexpected nightly schedules created: {nightly_ids}"
+
+
+@pytest.mark.asyncio
+async def test_ensure_schedules_still_creates_weekly_summary():
+    """The weekly Summarization schedule must still be created (unaffected by
+    removal of the nightly DevLoop sweep)."""
+    client = _FakeClient(already_running=False)
+
+    await schedules.ensure_schedules(client, [_project("omneval")])
+
+    weekly_ids = [sid for sid, _ in client.created if sid.startswith("summarize-weekly-")]
+    assert "summarize-weekly-omneval" in weekly_ids
 
 
 @pytest.mark.asyncio
@@ -183,19 +190,31 @@ async def test_ensure_schedules_survives_reconciliation_timeout():
 
     This is the regression behind the homelab crash — before the fix the RPC
     timeout propagated out of ``main`` and CrashLooped the worker."""
+    from devloop.summarization import SummarizeInput
+
+    # Build a plausible current schedule for the update path (weekly summary).
+    current = Schedule(
+        action=ScheduleActionStartWorkflow(
+            "SummarizationWorkflow",
+            SummarizeInput(project_id="omneval", trigger="weekly"),
+            id="summarize-weekly-omneval",
+            task_queue="q",
+        ),
+        spec=ScheduleSpec(),
+    )
     client = _FakeClient(
         already_running=True,
-        current=_desired_schedule(),
+        current=current,
         update_raises=RPCError("Timeout expired", RPCStatusCode.DEADLINE_EXCEEDED, b""),
     )
 
     # Must not raise despite every update timing out.
     await schedules.ensure_schedules(client, [_project("omneval"), _project("devloop")])
 
-    # Every schedule (nightly + weekly, per project) was still attempted.
+    # Only weekly schedules are now attempted (nightly removed).
     assert set(client.handles) == {
-        "devloop-nightly-omneval",
         "summarize-weekly-omneval",
-        "devloop-nightly-devloop",
         "summarize-weekly-devloop",
     }
+    # No nightly handles created.
+    assert not any(k.startswith("devloop-nightly-") for k in client.handles)

@@ -1,10 +1,10 @@
 """Restart stuck Dev Loop workflows.
 
-The devloop-poller tracks seen issue numbers permanently (ADR-0009). Once issues
-are forwarded, re-labeling them or letting the workflow complete does not cause
-them to be re-processed. Use this script to send a fresh trigger to the
-Temporal Orchestration Worker webhook so the DevLoopWorkflow resumes for each
-affected project.
+When a Dev Loop workflow completes or fails while open `agent-ready` issues
+remain in the repository, those issues are silently skipped until a new webhook
+trigger is received. Use this script to send a fresh trigger to the Temporal
+Orchestration Worker webhook so the DevLoopWorkflow resumes for each affected
+project.
 
 Because the webhook uses WorkflowIDConflictPolicy.USE_EXISTING, posting once
 per project is safe: running workflows are not disturbed. When a workflow is
