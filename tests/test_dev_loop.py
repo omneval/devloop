@@ -15,6 +15,7 @@ from temporalio.worker import Worker
 from devloop import dev_loop_logic as logic
 from devloop.dev_loop import DevLoopInput, DevLoopWorkflow
 from devloop.shared import (
+    JOB_DISPATCH_QUEUE,
     ORCHESTRATION_QUEUE,
     AgentJobResult,
     GithubNotificationInput,
@@ -167,15 +168,20 @@ def _make_activities():
     async def request_github_reviewer(inp) -> None:
         M.reviewer_requests.append(inp)
 
-    return [
-        dispatch_agent_job,
-        answer_agent_job,
-        await_agent_job,
-        open_agent_pr_issue_numbers,
-        post_pr_comments,
-        post_github_comment,
-        request_github_reviewer,
-    ]
+    # dispatch_agent_job is dispatched on JOB_DISPATCH_QUEUE (issue #73); the
+    # rest stay on ORCHESTRATION_QUEUE. Returned as two lists so the test
+    # harness can register each with the Worker polling its queue.
+    return {
+        "dispatch": [dispatch_agent_job],
+        "orchestration": [
+            answer_agent_job,
+            await_agent_job,
+            open_agent_pr_issue_numbers,
+            post_pr_comments,
+            post_github_comment,
+            request_github_reviewer,
+        ],
+    }
 
 
 @pytest.fixture
@@ -202,7 +208,12 @@ async def _env_and_run(inp: DevLoopInput, replies: list[str]):
             env.client,
             task_queue=ORCHESTRATION_QUEUE,
             workflows=[DevLoopWorkflow],
-            activities=acts,
+            activities=acts["orchestration"],
+        ), Worker(
+            env.client,
+            task_queue=JOB_DISPATCH_QUEUE,
+            workflows=[],
+            activities=acts["dispatch"],
         ):
             return await _run_devloop(env.client, inp, replies)
 
