@@ -891,6 +891,45 @@ async def test_ci_fix_loop_waits_on_pending_checks_without_dispatching_fix(reset
 
 
 @pytest.mark.asyncio
+async def test_ci_fix_loop_comments_post_to_pr_number_not_issue_number(reset_mocks):
+    """CI-fix-loop status comments ("queued — CI fix attempt...", "pushed N
+    commit(s)", "failed") narrate work happening on the PR — they must land on
+    the PR thread (PR #501), not the original issue (#1), even though the two
+    are distinct numbers."""
+    reset_mocks.plan_rounds = [_one_issue(1)]
+    reset_mocks.dispatch_behavior[("execute", 1)] = AgentJobResult(
+        status=JobStatus.COMPLETE.value,
+        job_name="j1",
+        issue_number=1,
+        branch="agent/issue-1",
+        pr_url="https://github.com/omneval/omneval/pull/501",
+        commits=1,
+        tests_passed=True,
+    )
+    reset_mocks.ci_poll_results = [
+        CIChecksResult(
+            all_passed=False,
+            failures=[CICheckFailure(name="pytest", conclusion="failure")],
+        ),
+        CIChecksResult(all_passed=True, failures=[]),
+    ]
+    result = await _env_and_run(
+        DevLoopInput("omneval", ci_fix_max_iterations=5),
+        [],
+    )
+    assert result.status == "completed"
+
+    ci_fix_comments = [
+        c for c in M.github_comments if "ci fix attempt" in c.body.lower()
+    ]
+    assert ci_fix_comments, "expected CI-fix-loop comments to be posted"
+    assert all(c.issue_number == 501 for c in ci_fix_comments), (
+        "CI-fix-loop comments must target the PR (#501), not the issue (#1) — "
+        f"got issue_numbers {[c.issue_number for c in ci_fix_comments]}"
+    )
+
+
+@pytest.mark.asyncio
 async def test_multiple_rounds_accumulate_queued_for_review(reset_mocks):
     """Each completed issue is added to queued_for_review across rounds."""
     reset_mocks.plan_rounds = [_one_issue(1), _one_issue(2)]
