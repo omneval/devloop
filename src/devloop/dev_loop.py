@@ -54,6 +54,9 @@ class DevLoopInput:
     poll_interval_seconds: float = 5.0
     # Phase.CI_FIX loop: retry until CI is green or this many attempts are spent.
     ci_fix_max_iterations: int = 5
+    # Execute phase: retry the dispatch this many times when it produces zero
+    # commits before parking the issue with a "skipping this round" comment.
+    execute_max_iterations: int = 1
 
     @classmethod
     def from_env(
@@ -93,6 +96,9 @@ class DevLoopInput:
             ),
             ci_fix_max_iterations=_int(
                 "CI_FIX_MAX_ITERATIONS", cls.ci_fix_max_iterations
+            ),
+            execute_max_iterations=_int(
+                "EXECUTE_MAX_ITERATIONS", cls.execute_max_iterations
             ),
         )
 
@@ -234,11 +240,8 @@ class DevLoopWorkflow:
             issue = issues[0]  # sequential: work one issue per round
             exec_result = await self._execute_phase(inp, issue)
             if not exec_result["commits"]:
-                await self._comment(
-                    inp.project_id,
-                    _as_int(issue.get("id")),
-                    f"⚠️ #{issue.get('id')} produced no commits — skipping this round.",
-                )
+                # _execute_phase already posted the failure/exhaustion comment
+                # and parked the issue — move on to the next issue this round.
                 continue
 
             await self._review_phase(inp, issue, exec_result)
@@ -271,8 +274,18 @@ class DevLoopWorkflow:
         issues = await self._drop_issues_in_review(inp, issues)
         return {**plan, "issues": issues}
 
-    # ---- Execute phase (#21) ------------------------------------------- #
+    # ---- Execute phase (#21, #75) --------------------------------------- #
     async def _execute_phase(self, inp: DevLoopInput, issue: dict) -> dict:
+        """Dispatch the Execute Agent Execution Job, retrying on zero commits.
+
+        If the dispatch produces zero commits, the workflow retries up to
+        ``execute_max_iterations`` times — each attempt preceded by a "⏳
+        queued" comment. Once an attempt produces commits (or fails outright),
+        the retry loop stops and the result is processed normally (including
+        the CI fix loop). If every attempt produces zero commits, the issue is
+        parked with a "❌ Execute exhausted ..." comment and the round moves on
+        to the next issue (no CI fix loop, no reviewer notification).
+        """
         issue_no = _as_int(issue.get("id"))
         spec = TaskSpec(
             phase="execute",
@@ -281,13 +294,21 @@ class DevLoopWorkflow:
             title=issue.get("title", ""),
             branch=issue.get("branch", ""),
         )
-        await self._comment(
-            inp.project_id,
-            issue_no,
-            "⏳ queued — agent is working on this issue",
-        )
-        result = await self._dispatch(inp, spec, issue_number=issue_no)
-        result = await self._answer_questions(inp, issue_no, result)
+
+        max_iters = inp.execute_max_iterations
+        result = None
+        for attempt in range(1, max_iters + 1):
+            await self._comment(
+                inp.project_id,
+                issue_no,
+                "⏳ queued — agent is working on this issue",
+            )
+            result = await self._dispatch(inp, spec, issue_number=issue_no)
+            result = await self._answer_questions(inp, issue_no, result)
+
+            if result.status != JobStatus.COMPLETE.value or result.commits:
+                break
+            # Zero commits and status == COMPLETE — retry (loop continues).
 
         if result.status != JobStatus.COMPLETE.value:
             await self._comment(
@@ -302,12 +323,27 @@ class DevLoopWorkflow:
                 "commits": 0,
                 "exhausted": False,
             }
-        if result.commits:
+
+        if not result.commits:
             await self._comment(
                 inp.project_id,
                 issue_no,
-                f"✅ Implemented — PR: {result.pr_url or result.branch}",
+                f"❌ Execute exhausted {max_iters} attempts with no commits"
+                " — skipping this round",
             )
+            return {
+                "issue_id": issue_no,
+                "branch": "",
+                "pr_url": "",
+                "commits": 0,
+                "exhausted": False,
+            }
+
+        await self._comment(
+            inp.project_id,
+            issue_no,
+            f"✅ Implemented — PR: {result.pr_url or result.branch}",
+        )
         exec_result = {
             "issue_id": issue_no,
             "branch": result.branch,

@@ -38,6 +38,9 @@ class Mocks:
         default_factory=dict
     )  # (phase, issue) -> AgentJobResult
     execute_commits: int = 1
+    # when set, overrides execute_commits with a per-attempt sequence (one
+    # entry consumed per "execute" dispatch for a given issue; last repeats)
+    execute_commits_seq: list | None = None
     execute_status: str = JobStatus.COMPLETE.value
     review_commits: int = 1
     review_payload: dict | None = None  # AgentJobResult.review the review job returns
@@ -113,7 +116,13 @@ def _make_activities():
                     issue_number=issue,
                     error="boom",
                 )
-            has = M.execute_commits > 0
+            if M.execute_commits_seq is not None:
+                attempt = M.dispatched_phases.count("execute") - 1
+                seq = M.execute_commits_seq or [0]
+                commits = seq[min(attempt, len(seq) - 1)]
+            else:
+                commits = M.execute_commits
+            has = commits > 0
             return AgentJobResult(
                 status=JobStatus.COMPLETE.value,
                 job_name=f"j{issue}",
@@ -122,7 +131,7 @@ def _make_activities():
                 pr_url=f"https://github.com/omneval/omneval/pull/{issue}"
                 if has
                 else "",
-                commits=M.execute_commits,
+                commits=commits,
                 tests_passed=True,
             )
         if phase == "review":
@@ -322,13 +331,64 @@ async def test_plan_returns_empty_on_no_issues(reset_mocks):
 # --------------------------------------------------------------------------- #
 @pytest.mark.asyncio
 async def test_execute_no_commits_skips_to_next_round(reset_mocks):
+    """With execute_max_iterations=1 (default) a zero-commit result exhausts
+    immediately, posts the "exhausted" comment, and the round continues."""
     reset_mocks.plan_rounds = [_one_issue(1)]
     reset_mocks.execute_commits = 0
     result = await _env_and_run(DevLoopInput("omneval"), [])
     assert result.status == "completed"
     assert result.queued_for_review == []
     assert "review" not in M.dispatched_phases and "merge" not in M.dispatched_phases
-    assert any("no commits" in n.lower() for n in M.notifications)
+    assert M.dispatched_phases.count("execute") == 1
+    assert any(
+        "exhausted 1 attempts with no commits" in n.lower() for n in M.notifications
+    )
+
+
+@pytest.mark.asyncio
+async def test_execute_retries_zero_commit_result_then_parks(reset_mocks):
+    """Zero commits on every attempt — the dispatch is retried up to
+    execute_max_iterations times, each preceded by a "queued" comment, then the
+    issue is parked with the "exhausted" comment and the round continues."""
+    reset_mocks.plan_rounds = [_one_issue(1)]
+    reset_mocks.execute_commits_seq = [0, 0, 0]
+    result = await _env_and_run(
+        DevLoopInput("omneval", execute_max_iterations=3),
+        [],
+    )
+    assert result.status == "completed"
+    assert result.queued_for_review == []
+    assert "review" not in M.dispatched_phases and "merge" not in M.dispatched_phases
+    assert M.dispatched_phases.count("execute") == 3
+    queued = [
+        n
+        for n in M.notifications
+        if "queued" in n.lower() and "working on this issue" in n.lower()
+    ]
+    assert len(queued) == 3
+    assert any(
+        "❌ execute exhausted 3 attempts with no commits — skipping this round"
+        in n.lower()
+        for n in M.notifications
+    )
+
+
+@pytest.mark.asyncio
+async def test_execute_retry_succeeds_before_exhausting(reset_mocks):
+    """A later retry produces commits — the loop stops retrying and proceeds
+    normally into review (not parked, no "exhausted" comment)."""
+    reset_mocks.plan_rounds = [_one_issue(1)]
+    reset_mocks.execute_commits_seq = [0, 0, 2]
+    result = await _env_and_run(
+        DevLoopInput("omneval", execute_max_iterations=5),
+        [],
+    )
+    assert result.status == "completed"
+    assert result.queued_for_review == [1]
+    assert M.dispatched_phases.count("execute") == 3
+    assert "review" in M.dispatched_phases
+    assert not any("exhausted" in n.lower() for n in M.notifications)
+    assert any("✅ implemented" in n.lower() for n in M.notifications)
 
 
 @pytest.mark.asyncio
@@ -495,6 +555,28 @@ def test_phase_enum_has_ci_fix_no_remediation():
 
     assert Phase.CI_FIX.value == "ci_fix"
     assert not hasattr(Phase, "REMEDIATION")
+
+
+def test_devloop_input_has_execute_max_iterations():
+    """execute_max_iterations defaults to 1."""
+    import dataclasses
+
+    field_names = {f.name for f in dataclasses.fields(DevLoopInput)}
+    assert "execute_max_iterations" in field_names
+    assert DevLoopInput("omneval").execute_max_iterations == 1
+
+
+def test_from_env_reads_execute_max_iterations(monkeypatch):
+    monkeypatch.setenv("EXECUTE_MAX_ITERATIONS", "4")
+    inp = DevLoopInput.from_env("omneval")
+    assert inp.execute_max_iterations == 4
+
+
+def test_from_env_execute_max_iterations_falls_back_to_default(monkeypatch):
+    monkeypatch.delenv("EXECUTE_MAX_ITERATIONS", raising=False)
+    monkeypatch.setenv("EXECUTE_MAX_ITERATIONS", "not-a-number")
+    inp = DevLoopInput.from_env("omneval")
+    assert inp.execute_max_iterations == DevLoopInput.execute_max_iterations
 
 
 def test_devloop_input_has_ci_fix_max_iterations():

@@ -112,6 +112,11 @@ temporalWorker:
   # it to the human reviewer with a "CI still failing" note.
   # Mirrors DevLoopInput.ci_fix_max_iterations. Default: 5.
   ciFixMaxIterations: 5
+  # Maximum number of Execute Agent Execution Job dispatch attempts the
+  # _execute_phase retry loop will spend when a dispatch produces zero commits,
+  # before parking the issue with a "skipping this round" comment.
+  # Mirrors DevLoopInput.execute_max_iterations. Default: 1.
+  executeMaxIterations: 1
   # Maximum number of Agent Execution Job dispatches (and LLM-bearing activities)
   # that may run concurrently across all workflow types and projects.
   # Forwarded to the job-dispatch Worker as MAX_CONCURRENT_JOBS.
