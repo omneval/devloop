@@ -1172,6 +1172,40 @@ def handle_answer(spec: TaskSpec, tracer) -> dict:
     ).to_payload()
 
 
+def handle_ci_fix(spec: TaskSpec, tracer) -> dict:
+    """Phase.CI_FIX (#76): make minimal targeted changes to turn failing CI
+    checks green. Runs on the existing branch; any pushed commits are picked
+    up by the workflow's `_ci_fix_loop`, which re-polls CI and re-dispatches
+    up to `ci_fix_max_iterations` until checks pass or attempts are exhausted."""
+    workdir = os.getenv("WORKDIR", "/workspace/repo")
+    with tracer.start_as_current_span("clone"):
+        clone_repo(os.environ["GITHUB_URL"], spec.branch, workdir)
+    with tracer.start_as_current_span("install_deps"):
+        install_deps(workdir)
+
+    base_sha = _run(["git", "rev-parse", "HEAD"], cwd=workdir).strip()
+    outcome = run_agent(spec, workdir, tracer)
+
+    _run(["git", "add", "-A"], cwd=workdir)
+    if _run(["git", "status", "--porcelain"], cwd=workdir).strip():
+        _run(
+            ["git", "commit", "-m", f"ci_fix: address failing checks on #{spec.issue_number}"],
+            cwd=workdir,
+        )
+
+    fixes = _commit_count(workdir, base_sha)
+    if fixes:
+        with tracer.start_as_current_span("push"):
+            push_branch(workdir, spec.branch, force=True)
+    return AgentJobResult(
+        status="complete",
+        issue_number=spec.issue_number,
+        branch=spec.branch,
+        commits=fixes,
+        summary=outcome.summary,
+    ).to_payload()
+
+
 def handle_merge(spec: TaskSpec, tracer) -> dict:
     """Merge phase (PR-review model): open a *review* PR for each approved branch
     instead of merging it into the default branch directly.
@@ -1252,6 +1286,7 @@ _HANDLERS = {
     "plan": handle_plan,
     "execute": handle_execute,
     "review": handle_review,
+    "ci_fix": handle_ci_fix,
     "merge": handle_merge,
     "diagnosis": handle_diagnosis,
     "answer": handle_answer,
