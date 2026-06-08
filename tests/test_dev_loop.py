@@ -47,7 +47,9 @@ class Mocks:
     review_payload: dict | None = None  # AgentJobResult.review the review job returns
     await_status: str = JobStatus.COMPLETE.value
     # recorders
-    github_comments: list = field(default_factory=list)  # GithubNotificationInput records
+    github_comments: list = field(
+        default_factory=list
+    )  # GithubNotificationInput records
     answers: list = field(default_factory=list)
     post_comments: list = field(default_factory=list)
     dispatched_phases: list = field(default_factory=list)
@@ -105,7 +107,9 @@ def _make_activities():
         phase = spec["phase"] if isinstance(spec, dict) else spec.phase
         issue = inp["issue_number"] if isinstance(inp, dict) else inp.issue_number
         M.dispatched_phases.append(phase)
-        M.dispatched_specs.append(spec if isinstance(spec, dict) else dataclasses_asdict(spec))
+        M.dispatched_specs.append(
+            spec if isinstance(spec, dict) else dataclasses_asdict(spec)
+        )
         key = (phase, issue)
         if key in M.dispatch_behavior:
             return M.dispatch_behavior[key]
@@ -279,16 +283,19 @@ async def _env_and_run(inp: DevLoopInput, replies: list[str] | None = None):
     has been replaced by Phase.ANSWER agent jobs (#77)."""
     acts = _make_activities()
     async with await WorkflowEnvironment.start_time_skipping() as env:
-        async with Worker(
-            env.client,
-            task_queue=ORCHESTRATION_QUEUE,
-            workflows=[DevLoopWorkflow],
-            activities=acts["orchestration"],
-        ), Worker(
-            env.client,
-            task_queue=JOB_DISPATCH_QUEUE,
-            workflows=[],
-            activities=acts["dispatch"],
+        async with (
+            Worker(
+                env.client,
+                task_queue=ORCHESTRATION_QUEUE,
+                workflows=[DevLoopWorkflow],
+                activities=acts["orchestration"],
+            ),
+            Worker(
+                env.client,
+                task_queue=JOB_DISPATCH_QUEUE,
+                workflows=[],
+                activities=acts["dispatch"],
+            ),
         ):
             return await _run_devloop(env.client, inp)
 
@@ -555,6 +562,7 @@ def test_from_env_no_gate_timeout(monkeypatch):
     assert inp.agent_label == "agent-ready"
     # No gate_timeout_seconds field
     import dataclasses
+
     field_names = {f.name for f in dataclasses.fields(DevLoopInput)}
     assert "gate_timeout_seconds" not in field_names
 
@@ -669,7 +677,9 @@ async def test_reviewer_notification_comment_after_review(reset_mocks):
 
 
 @pytest.mark.asyncio
-async def test_notify_reviewer_does_not_claim_tagged_when_no_reviewer_configured(reset_mocks):
+async def test_notify_reviewer_does_not_claim_tagged_when_no_reviewer_configured(
+    reset_mocks,
+):
     """issue #88: when request_github_reviewer reports it skipped the request
     (e.g. no pr_reviewer configured for the project), the 'ready for review'
     comment must not claim a reviewer was tagged — that would mislead the
@@ -765,7 +775,9 @@ async def test_ci_fix_loop_exits_early_when_ci_passes_on_second_iteration(reset_
     assert M.dispatched_phases.count("ci_fix") == 1
     assert len(M.ci_polls) == 2
     # queued comment precedes the dispatch
-    queued = [n for n in M.notifications if "queued" in n.lower() and "ci fix" in n.lower()]
+    queued = [
+        n for n in M.notifications if "queued" in n.lower() and "ci fix" in n.lower()
+    ]
     assert len(queued) == 1
     assert "1/5" in queued[0]
     # result comment reports attempt N/max with the commit count
@@ -848,7 +860,9 @@ async def test_ci_fix_loop_dispatches_with_failure_details(reset_mocks):
     reset_mocks.ci_poll_results = [
         CIChecksResult(
             all_passed=False,
-            failures=[CICheckFailure(name="pytest", conclusion="failure", summary="3 failed")],
+            failures=[
+                CICheckFailure(name="pytest", conclusion="failure", summary="3 failed")
+            ],
         ),
         CIChecksResult(all_passed=True, failures=[]),
     ]

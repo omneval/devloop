@@ -392,9 +392,7 @@ def _describe_exception(exc: BaseException) -> str:
 # Test-suite discovery and execution
 # --------------------------------------------------------------------------- #
 _NPM_DEFAULT_PLACEHOLDER = 'echo "Error: no test specified" && exit 1'
-_MAX_TEST_OUTPUT = (
-    4096  # bytes kept in result payload (truncated for Temporal UI)
-)
+_MAX_TEST_OUTPUT = 4096  # bytes kept in result payload (truncated for Temporal UI)
 
 
 def run_project_tests(workdir: str, timeout: int = 300) -> tuple[bool, str]:
@@ -903,6 +901,10 @@ def run_agent(spec: TaskSpec, workdir: str, tracer) -> AgentOutcome:
         structured = diag.model_dump()
     else:
         structured = None
+
+    if _skip_notice:
+        text = f"{text}\n\n{_skip_notice}"
+
     return AgentOutcome(summary=text, structured=structured)
 
 
@@ -1275,7 +1277,12 @@ def handle_ci_fix(spec: TaskSpec, tracer) -> dict:
     _run(["git", "add", "-A"], cwd=workdir)
     if _run(["git", "status", "--porcelain"], cwd=workdir).strip():
         _run(
-            ["git", "commit", "-m", f"ci_fix: address failing checks on #{spec.issue_number}"],
+            [
+                "git",
+                "commit",
+                "-m",
+                f"ci_fix: address failing checks on #{spec.issue_number}",
+            ],
             cwd=workdir,
         )
 
@@ -1315,7 +1322,9 @@ def handle_pr_comment(spec: TaskSpec, tracer) -> dict:
         install_deps(workdir)
 
     pr_number = int(spec.extra.get("pr_number", 0) or 0)
-    spec.extra["pr_diff"] = _fetch_pr_diff(repo_slug(os.environ["GITHUB_URL"]), pr_number)
+    spec.extra["pr_diff"] = _fetch_pr_diff(
+        repo_slug(os.environ["GITHUB_URL"]), pr_number
+    )
 
     base_sha = _run(["git", "rev-parse", "HEAD"], cwd=workdir).strip()
     outcome = run_agent(spec, workdir, tracer)
@@ -1323,7 +1332,12 @@ def handle_pr_comment(spec: TaskSpec, tracer) -> dict:
     _run(["git", "add", "-A"], cwd=workdir)
     if _run(["git", "status", "--porcelain"], cwd=workdir).strip():
         _run(
-            ["git", "commit", "-m", f"pr_comment: address feedback on #{spec.issue_number}"],
+            [
+                "git",
+                "commit",
+                "-m",
+                f"pr_comment: address feedback on #{spec.issue_number}",
+            ],
             cwd=workdir,
         )
 

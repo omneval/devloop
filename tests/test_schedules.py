@@ -151,7 +151,9 @@ async def test_ensure_schedules_does_not_create_nightly():
 
     await schedules.ensure_schedules(client, [_project("omneval")])
 
-    nightly_ids = [sid for sid, _ in client.created if sid.startswith("devloop-nightly-")]
+    nightly_ids = [
+        sid for sid, _ in client.created if sid.startswith("devloop-nightly-")
+    ]
     assert nightly_ids == [], f"unexpected nightly schedules created: {nightly_ids}"
 
 
@@ -163,7 +165,9 @@ async def test_ensure_schedules_still_creates_weekly_summary():
 
     await schedules.ensure_schedules(client, [_project("omneval")])
 
-    weekly_ids = [sid for sid, _ in client.created if sid.startswith("summarize-weekly-")]
+    weekly_ids = [
+        sid for sid, _ in client.created if sid.startswith("summarize-weekly-")
+    ]
     assert "summarize-weekly-omneval" in weekly_ids
 
 

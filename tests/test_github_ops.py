@@ -95,7 +95,9 @@ def _async_client_factory(make_client):
 async def test_file_issues_applies_agent_label(monkeypatch):
     posts = []
     monkeypatch.setattr(
-        github_ops, "_client", _async_client_factory(lambda: FakeClient(post_capture=posts))
+        github_ops,
+        "_client",
+        _async_client_factory(lambda: FakeClient(post_capture=posts)),
     )
     created = await ActivityEnvironment().run(
         file_issues, FileIssuesInput("omneval", [NewIssue("t", "b")])
@@ -108,7 +110,9 @@ async def test_file_issues_applies_agent_label(monkeypatch):
 async def test_post_pr_comments_posts_summary(monkeypatch):
     posts = []
     monkeypatch.setattr(
-        github_ops, "_client", _async_client_factory(lambda: FakeClient(post_capture=posts))
+        github_ops,
+        "_client",
+        _async_client_factory(lambda: FakeClient(post_capture=posts)),
     )
     await ActivityEnvironment().run(
         post_pr_comments, PostCommentsInput("omneval", 7, "looks good", [])
@@ -120,7 +124,9 @@ async def test_post_pr_comments_posts_summary(monkeypatch):
 @pytest.mark.asyncio
 async def test_post_pr_comments_raises_on_empty_summary_no_inline(monkeypatch):
     """An empty summary with no inline comments must raise — never silently skip."""
-    monkeypatch.setattr(github_ops, "_client", _async_client_factory(lambda: FakeClient()))
+    monkeypatch.setattr(
+        github_ops, "_client", _async_client_factory(lambda: FakeClient())
+    )
     with pytest.raises(ValueError, match="summary"):
         await ActivityEnvironment().run(
             post_pr_comments, PostCommentsInput("omneval", 7, "", [])
@@ -130,7 +136,9 @@ async def test_post_pr_comments_raises_on_empty_summary_no_inline(monkeypatch):
 @pytest.mark.asyncio
 async def test_post_pr_comments_raises_on_zero_pr_number(monkeypatch):
     """A pr_number of 0 (unparseable URL) must raise — never silently skip."""
-    monkeypatch.setattr(github_ops, "_client", _async_client_factory(lambda: FakeClient()))
+    monkeypatch.setattr(
+        github_ops, "_client", _async_client_factory(lambda: FakeClient())
+    )
     with pytest.raises(ValueError, match="pr_number"):
         await ActivityEnvironment().run(
             post_pr_comments, PostCommentsInput("omneval", 0, "review ok", [])
@@ -223,7 +231,9 @@ async def test_post_github_comment_degrades_gracefully_on_404(monkeypatch):
     swallowed — not raised — so a transient GitHub-side hiccup doesn't sink
     the whole DevLoopWorkflow round."""
     monkeypatch.setattr(
-        github_ops, "_client", _async_client_factory(lambda: ErrorClient(404, "Not Found"))
+        github_ops,
+        "_client",
+        _async_client_factory(lambda: ErrorClient(404, "Not Found")),
     )
 
     # Must not raise.
@@ -241,7 +251,9 @@ async def test_request_github_reviewer_degrades_gracefully_on_403(monkeypatch):
     project_with_reviewer = dataclasses.replace(_PROJECT, pr_reviewer="alice")
     monkeypatch.setattr(github_ops, "get_project", lambda pid: project_with_reviewer)
     monkeypatch.setattr(
-        github_ops, "_client", _async_client_factory(lambda: ErrorClient(403, "rate limited"))
+        github_ops,
+        "_client",
+        _async_client_factory(lambda: ErrorClient(403, "rate limited")),
     )
 
     result = await ActivityEnvironment().run(
@@ -260,7 +272,9 @@ async def test_poll_ci_checks_degrades_gracefully_on_404(monkeypatch):
     re-polls instead of mistaking a transient hiccup for a genuine CI
     failure and burning a fix attempt on it."""
     monkeypatch.setattr(
-        github_ops, "_client", _async_client_factory(lambda: ErrorClient(404, "Not Found"))
+        github_ops,
+        "_client",
+        _async_client_factory(lambda: ErrorClient(404, "Not Found")),
     )
 
     result = await ActivityEnvironment().run(

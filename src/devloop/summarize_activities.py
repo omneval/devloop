@@ -123,7 +123,11 @@ def _ensure_label(c, repo: str) -> None:
     if r.status_code == 404:
         c.post(
             f"/repos/{repo}/labels",
-            json={"name": SUMMARY_LABEL, "color": "0075ca", "description": "Weekly devloop summary"},
+            json={
+                "name": SUMMARY_LABEL,
+                "color": "0075ca",
+                "description": "Weekly devloop summary",
+            },
         ).raise_for_status()
         log.info("created label %r on %s", SUMMARY_LABEL, repo)
 
@@ -131,6 +135,7 @@ def _ensure_label(c, repo: str) -> None:
 # --------------------------------------------------------------------------- #
 # Activities
 # --------------------------------------------------------------------------- #
+
 
 @activity.defn
 async def summarize_changes(inp: SummarizeInput) -> SummarizeResult:

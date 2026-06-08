@@ -6,8 +6,10 @@ output sink writes to a local file (OUTPUT_FILE) instead of a ConfigMap.
 """
 
 import json
+import sys
 import subprocess
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -570,3 +572,151 @@ def test_remediation_phase_no_fix_no_push(tmp_path, monkeypatch):
     payload = json.loads(out_file.read_text())
     assert payload["status"] == "complete"
     assert payload["commits"] == 0
+
+
+# --------------------------------------------------------------------------- #
+# Skipped-skills notice in phase summary (issue #35)
+# --------------------------------------------------------------------------- #
+
+
+class TestSkippedSkillsNotice:
+    """Tests that skipped skills produce a one-line notice appended to the
+    phase summary that reaches Discord/PR, and that no notice is added when
+    no skills are skipped (backward-compat no-op).
+
+    These tests exercise run_agent through the public entrypoint by mocking
+    the openhands SDK (so the agent never runs) and the skills module (so
+    we control the skipped report).
+    """
+
+    def _fake_sdk(self, monkeypatch, tmp_path):
+        """Mock the openhands SDK so run_agent returns a successful outcome
+        without touching the network or filesystem beyond the workspace."""
+        mock_conversation = MagicMock()
+        mock_conversation.state.events = []
+
+        monkeypatch.setattr(
+            entrypoint,
+            "build_agent",
+            lambda **kw: MagicMock(),
+        )
+        monkeypatch.setenv("AGENT_STUB", "0")
+
+        # Ensure workdir exists for the conversation
+        (tmp_path / "repo").mkdir(exist_ok=True)
+
+        # Patch the SDK imports inside run_agent's lazy import block
+        mock_sdk = MagicMock()
+        mock_sdk.AgentContext = MagicMock
+        mock_sdk.LLM = MagicMock
+        mock_sdk.LocalConversation = MagicMock(return_value=mock_conversation)
+        monkeypatch.setitem(sys.modules, "openhands.sdk", mock_sdk)
+        mock_conv_mod = MagicMock()
+        mock_conv_mod.get_agent_final_response = lambda events: "agent did the work"
+        monkeypatch.setitem(sys.modules, "openhands.sdk.conversation", mock_conv_mod)
+
+    def test_skipped_notice_appended_to_successful_summary(self, monkeypatch, tmp_path):
+        """When skills are skipped, the one-line notice is appended to the
+        phase summary on the success path (not just error/empty paths)."""
+        self._fake_sdk(monkeypatch, tmp_path)
+
+        workdir = str(tmp_path / "repo")
+
+        # Mock skills.resolve_skills to return one resolved + one skipped skill
+        def fake_resolve(phase, allowlist, _loader=None):
+            return (
+                [MagicMock(name="good-skill")],
+                [{"name": "bad-skill", "reason": "malformed: no name attribute"}],
+            )
+
+        monkeypatch.setattr(
+            entrypoint.skills,
+            "resolve_skills",
+            fake_resolve,
+        )
+        monkeypatch.delenv("AGENT_SKILLS_ENABLED", raising=False)
+
+        tracer = entrypoint.setup_tracing()
+        spec = entrypoint.TaskSpec(
+            phase="execute",
+            project_id="test",
+            issue_number=1,
+            title="test",
+            branch="agent/issue-1",
+        )
+
+        outcome = entrypoint.run_agent(spec, workdir, tracer)
+
+        assert "agent did the work" in outcome.summary
+        assert "⚠ 1 skill(s) not loaded:" in outcome.summary
+        assert "bad-skill" in outcome.summary
+
+    def test_no_skipped_skills_no_notice(self, monkeypatch, tmp_path):
+        """When no skills are skipped, the summary is unchanged — no notice
+        line is appended (backward-compat no-op)."""
+        self._fake_sdk(monkeypatch, tmp_path)
+
+        workdir = str(tmp_path / "repo")
+
+        def fake_resolve(phase, allowlist, _loader=None):
+            return (
+                [MagicMock(name="good-skill")],
+                [],
+            )
+
+        monkeypatch.setattr(
+            entrypoint.skills,
+            "resolve_skills",
+            fake_resolve,
+        )
+        monkeypatch.delenv("AGENT_SKILLS_ENABLED", raising=False)
+
+        tracer = entrypoint.setup_tracing()
+        spec = entrypoint.TaskSpec(
+            phase="execute",
+            project_id="test",
+            issue_number=1,
+            title="test",
+            branch="agent/issue-1",
+        )
+
+        outcome = entrypoint.run_agent(spec, workdir, tracer)
+
+        assert outcome.summary == "agent did the work"
+
+    def test_multiple_skipped_skills_listed(self, monkeypatch, tmp_path):
+        """When multiple skills are skipped, all appear in the notice."""
+        self._fake_sdk(monkeypatch, tmp_path)
+
+        workdir = str(tmp_path / "repo")
+
+        def fake_resolve(phase, allowlist, _loader=None):
+            return (
+                [],
+                [
+                    {"name": "alpha", "reason": "not in allowlist for phase 'execute'"},
+                    {"name": "beta", "reason": "malformed: no name attribute"},
+                ],
+            )
+
+        monkeypatch.setattr(
+            entrypoint.skills,
+            "resolve_skills",
+            fake_resolve,
+        )
+        monkeypatch.delenv("AGENT_SKILLS_ENABLED", raising=False)
+
+        tracer = entrypoint.setup_tracing()
+        spec = entrypoint.TaskSpec(
+            phase="execute",
+            project_id="test",
+            issue_number=1,
+            title="test",
+            branch="agent/issue-1",
+        )
+
+        outcome = entrypoint.run_agent(spec, workdir, tracer)
+
+        assert "⚠ 2 skill(s) not loaded:" in outcome.summary
+        assert "alpha" in outcome.summary
+        assert "beta" in outcome.summary

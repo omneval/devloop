@@ -221,7 +221,9 @@ class DevLoopWorkflow(_WorkflowCommon):
             issue_number=inp.triggering_issue,
             extra={"agent_label": inp.agent_label},
         )
-        result = await self._dispatch(inp.project_id, spec, poll_interval_seconds=inp.poll_interval_seconds)
+        result = await self._dispatch(
+            inp.project_id, spec, poll_interval_seconds=inp.poll_interval_seconds
+        )
         plan = result.plan or {"issues": []}
         issues = plan.get("issues") or []
         issues = await self._drop_issues_in_review(inp, issues)
@@ -256,7 +258,12 @@ class DevLoopWorkflow(_WorkflowCommon):
                 issue_no,
                 "⏳ queued — agent is working on this issue",
             )
-            result = await self._dispatch(inp.project_id, spec, issue_number=issue_no, poll_interval_seconds=inp.poll_interval_seconds)
+            result = await self._dispatch(
+                inp.project_id,
+                spec,
+                issue_number=issue_no,
+                poll_interval_seconds=inp.poll_interval_seconds,
+            )
             result = await self._answer_questions(inp, issue_no, result)
 
             if result.status != JobStatus.COMPLETE.value or result.commits:
@@ -336,7 +343,12 @@ class DevLoopWorkflow(_WorkflowCommon):
             branch=branch,
             extra={"question": question},
         )
-        answer_result = await self._dispatch(inp.project_id, spec, issue_number=issue_no, poll_interval_seconds=inp.poll_interval_seconds)
+        answer_result = await self._dispatch(
+            inp.project_id,
+            spec,
+            issue_number=issue_no,
+            poll_interval_seconds=inp.poll_interval_seconds,
+        )
         answer = answer_result.summary or "proceed with your best guess"
         await self._comment(
             inp.project_id,
@@ -443,7 +455,10 @@ class DevLoopWorkflow(_WorkflowCommon):
             },
         )
         result = await self._dispatch(
-            inp.project_id, spec, issue_number=issue_no, poll_interval_seconds=inp.poll_interval_seconds
+            inp.project_id,
+            spec,
+            issue_number=issue_no,
+            poll_interval_seconds=inp.poll_interval_seconds,
         )
 
         # If remediation produced no commits or failed, park the issue
@@ -485,7 +500,12 @@ class DevLoopWorkflow(_WorkflowCommon):
             issue_no,
             "⏳ queued — agent is reviewing this issue",
         )
-        result = await self._dispatch(inp.project_id, spec, issue_number=issue_no, poll_interval_seconds=inp.poll_interval_seconds)
+        result = await self._dispatch(
+            inp.project_id,
+            spec,
+            issue_number=issue_no,
+            poll_interval_seconds=inp.poll_interval_seconds,
+        )
         if result.commits:
             await self._comment(
                 inp.project_id,

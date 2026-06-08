@@ -194,9 +194,7 @@ class AlertResponseWorkflow:
         """Handle an AWAITING_HUMAN result: wait for signal, then resume polling."""
         while result.status == JobStatus.AWAITING_HUMAN.value:
             async with self._ask_lock:
-                workflow.logger.info(
-                    "❓ [%s] %s", inp.alert_name, result.question
-                )
+                workflow.logger.info("❓ [%s] %s", inp.alert_name, result.question)
                 answer = await self._await_reply(
                     timeout=inp.approval_timeout_seconds
                     if inp.approval_timeout_seconds > 0

@@ -148,7 +148,9 @@ def test_post_github_comment_uses_correct_repo(monkeypatch):
     )
     asyncio.run(post_github_comment(inp))
 
-    assert any("someorg/somerepo" in u and "/issues/99/comments" in u for u in urls_called)
+    assert any(
+        "someorg/somerepo" in u and "/issues/99/comments" in u for u in urls_called
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -172,9 +174,7 @@ def test_dev_loop_does_not_import_discord_constants():
                     "SendMessageInput",
                     "SendNotificationInput",
                     "CHANNEL_APPROVALS",
-                ), (
-                    f"dev_loop.py still imports messaging-bridge-era name '{alias.name}'"
-                )
+                ), f"dev_loop.py still imports messaging-bridge-era name '{alias.name}'"
 
 
 def test_dev_loop_imports_github_notification_input():
@@ -202,9 +202,9 @@ def test_dev_loop_imports_github_notification_input():
         return False
 
     direct = _imports("src/devloop/dev_loop.py", "GithubNotificationInput")
-    via_mixin = _imports(
-        "src/devloop/dev_loop.py", "_WorkflowCommon"
-    ) and _imports("src/devloop/_workflow_common.py", "GithubNotificationInput")
+    via_mixin = _imports("src/devloop/dev_loop.py", "_WorkflowCommon") and _imports(
+        "src/devloop/_workflow_common.py", "GithubNotificationInput"
+    )
     assert direct or via_mixin, (
         "dev_loop.py's GitHub-comment path must use GithubNotificationInput "
         "(directly or via the shared _WorkflowCommon mixin)"
