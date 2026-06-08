@@ -39,6 +39,7 @@ from .projects import ProjectConfig, get_project, parse_github_repo
 from .shared import (
     CICheckFailure,
     CIChecksResult,
+    GetPRDiffInput,
     GithubNotificationInput,
     OpenAgentPRsInput,
     PollCIChecksInput,
@@ -474,6 +475,30 @@ async def request_github_reviewer(inp: RequestReviewerInput) -> ReviewerRequestR
         inp.pr_number,
     )
     return ReviewerRequestResult(requested=True)
+
+
+@activity.defn
+async def get_pr_diff(inp: GetPRDiffInput) -> str:
+    """Fetch the unified diff for a PR via the GitHub REST API.
+
+    Standalone activity kept for downstream consumers that register it
+    directly on their own task queues — devloop's own ``PRCommentWorkflow``
+    no longer calls it (the agent fetches the diff itself via ``gh pr diff``,
+    issue #98). Returns ``""`` for an unresolvable PR number rather than
+    raising, so a transient diff-fetch hiccup doesn't sink a caller's workflow.
+    """
+    if inp.pr_number <= 0:
+        return ""
+    cfg = get_project(inp.project_id)
+    repo = parse_github_repo(cfg.github_url)
+    headers = dict(_headers(await _resolve_token(cfg)))
+    headers["Accept"] = "application/vnd.github.v3.diff"
+    import httpx
+
+    with httpx.Client(base_url=GITHUB_API, headers=headers, timeout=30.0) as c:
+        resp = c.get(f"/repos/{repo}/pulls/{inp.pr_number}")
+        resp.raise_for_status()
+        return resp.text
 
 
 _TERMINAL_CONCLUSIONS = {
