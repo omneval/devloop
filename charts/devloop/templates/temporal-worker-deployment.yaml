@@ -24,6 +24,12 @@ spec:
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      {{- with .Values.temporalWorker.projectsConfigMap.name }}
+      volumes:
+        - name: projects-config
+          configMap:
+            name: {{ . }}
+      {{- end }}
       containers:
         - name: temporal-worker
           image: "{{ .Values.temporalWorker.image.repository }}:{{ .Values.temporalWorker.image.tag }}"
@@ -132,6 +138,12 @@ spec:
             {{- with .Values.temporalWorker.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
+          {{- with .Values.temporalWorker.projectsConfigMap.name }}
+          volumeMounts:
+            - name: projects-config
+              mountPath: {{ $.Values.temporalWorker.projectsFile | quote }}
+              subPath: {{ $.Values.temporalWorker.projectsConfigMap.key | default "projects.yaml" | quote }}
+          {{- end }}
           {{- include "devloop.healthProbes" . | nindent 10 }}
           {{- if .Values.temporalWorker.resources }}
           resources:

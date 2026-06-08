@@ -516,6 +516,55 @@ tests:
           content:
             name: SUMMARIZATION_WEBHOOK_URL
 
+  - it: omits the projects-config volume and mount when projectsConfigMap.name is not set
+    template: templates/temporal-worker-deployment.yaml
+    set:
+      temporalHost: "temporal-frontend.agents.svc:7233"
+    asserts:
+      - notContains:
+          path: spec.template.spec.volumes
+          content:
+            name: projects-config
+      - notContains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content:
+            name: projects-config
+
+  - it: mounts projects.yaml from a ConfigMap at projectsFile when projectsConfigMap.name is set (issue #101)
+    template: templates/temporal-worker-deployment.yaml
+    set:
+      temporalHost: "temporal-frontend.agents.svc:7233"
+      temporalWorker.projectsFile: "/etc/projects/projects.yaml"
+      temporalWorker.projectsConfigMap:
+        name: devloop-projects
+        key: projects.yaml
+    asserts:
+      - contains:
+          path: spec.template.spec.volumes
+          content:
+            name: projects-config
+            configMap:
+              name: devloop-projects
+      - contains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content:
+            name: projects-config
+            mountPath: "/etc/projects/projects.yaml"
+            subPath: projects.yaml
+
+  - it: defaults the projectsConfigMap key to projects.yaml when only the name is set (issue #101)
+    template: templates/temporal-worker-deployment.yaml
+    set:
+      temporalHost: "temporal-frontend.agents.svc:7233"
+      temporalWorker.projectsConfigMap.name: devloop-projects
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content:
+            name: projects-config
+            mountPath: "/etc/projects/projects.yaml"
+            subPath: projects.yaml
+
   - it: renders SUMMARIZATION_CRON_SCHEDULE and SUMMARIZATION_WEBHOOK_URL from summarization values (issue #93)
     template: templates/temporal-worker-deployment.yaml
     set:

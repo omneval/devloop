@@ -105,6 +105,14 @@ temporalWorker:
   webhookPort: 8088
   # Path to projects registry file (mounted as ConfigMap or secret)
   projectsFile: "/etc/projects/projects.yaml"
+  # ConfigMap supplying the projects.yaml the chart mounts at .projectsFile —
+  # the chart-native alternative to baking a registry into a custom image.
+  # When name is set, the chart mounts key (a single-file subPath) at
+  # .projectsFile; when unset, the operator is responsible for getting a file
+  # to that path themselves (e.g. a custom image, as before this was added).
+  projectsConfigMap:
+    name: ""
+    key: "projects.yaml"
   # Maximum number of mid-run AWAITING_HUMAN questions a single phase run may
   # spawn Phase.ANSWER agent jobs for before the workflow stops asking and
   # tells the parked job to proceed with its best guess.
