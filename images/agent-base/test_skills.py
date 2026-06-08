@@ -474,9 +474,7 @@ def test_install_configmap_skills_returns_empty_when_staging_missing(
     assert installed == []
 
 
-def test_install_configmap_skills_skips_subdirs_without_skill_md(
-    monkeypatch, tmp_path
-):
+def test_install_configmap_skills_skips_subdirs_without_skill_md(monkeypatch, tmp_path):
     """Subdirectories without a SKILL.md file are skipped."""
     skills_mod = _import_skills()
     monkeypatch.delenv("AGENT_SKILLS_DIR", raising=False)
