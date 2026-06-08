@@ -81,7 +81,5 @@ class SummarizationWorkflow:
             retry_policy=_RETRY,
             task_queue=ORCHESTRATION_QUEUE,
         )
-        workflow.logger.info(
-            "summary published for %s (%s)", inp.project_id, date_str
-        )
+        workflow.logger.info("summary published for %s (%s)", inp.project_id, date_str)
         return result

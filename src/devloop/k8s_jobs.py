@@ -58,6 +58,9 @@ AGENT_BASE_IMAGE = os.getenv(
 
 JOB_ACTIVE_DEADLINE = int(os.getenv("AGENT_JOB_ACTIVE_DEADLINE", "7200"))
 
+# Mount path where ConfigMap skills are staged for the entrypoint to install.
+SKILLS_STAGING_DIR = "/etc/agent-skills/staging"
+
 
 # --------------------------------------------------------------------------- #
 # Job spec rendering
@@ -214,6 +217,18 @@ def render_job(d: DispatchInput, job_name: str) -> dict:
     _selection_mode = os.environ.get("AGENT_SKILLS_SELECTION_MODE", "triggers")
     env.append({"name": "AGENT_SKILLS_SELECTION_MODE", "value": _selection_mode})
 
+    # ConfigMap skills delivery (issue #34). When AGENT_SKILLS_CONFIGMAP is set
+    # by the worker (from the Helm chart), forward it to the Job so the
+    # entrypoint can stage-and-install the skills at pod start.
+    _skills_configmap = os.environ.get("AGENT_SKILLS_CONFIGMAP")
+    if _skills_configmap:
+        env.append(
+            {
+                "name": "AGENT_SKILLS_CONFIGMAP",
+                "value": _skills_configmap,
+            }
+        )
+
     # Reviewer the merge phase tags on the PR it opens (assignee + @-mention).
     # Sourced from the registry; absent for non-registry (alert-response) jobs.
     try:
@@ -251,6 +266,44 @@ def render_job(d: DispatchInput, job_name: str) -> dict:
             ]
         )
 
+    # ConfigMap skills volume and mount (issue #34). When a ConfigMap-backed
+    # skills delivery is configured, mount the ConfigMap read-only at the
+    # staging path so the entrypoint can install skills at pod start.
+    _pod_volumes: list[dict] = []
+    _container_mounts: list[dict] = []
+    if _skills_configmap:
+        _pod_volumes.append(
+            {
+                "name": "skills-configmap",
+                "configMap": {"name": _skills_configmap},
+            }
+        )
+        _container_mounts.append(
+            {
+                "name": "skills-configmap",
+                "mountPath": SKILLS_STAGING_DIR,
+                "readOnly": True,
+            }
+        )
+
+    pod_spec: dict = {
+        "restartPolicy": "Never",
+        "serviceAccountName": d.service_account_override or SERVICE_ACCOUNT,
+        "containers": [
+            {
+                "name": "agent",
+                "image": image,
+                "command": ["python", "/usr/local/bin/agent-entrypoint.py"],
+                "env": env,
+                "resources": _job_resources(),
+            }
+        ],
+    }
+    if _pod_volumes:
+        pod_spec["volumes"] = _pod_volumes
+    if _container_mounts:
+        pod_spec["containers"][0]["volumeMounts"] = _container_mounts
+
     return {
         "apiVersion": "batch/v1",
         "kind": "Job",
@@ -271,19 +324,7 @@ def render_job(d: DispatchInput, job_name: str) -> dict:
                 "metadata": {
                     "labels": {"agents.homelab/project": d.project_id},
                 },
-                "spec": {
-                    "restartPolicy": "Never",
-                    "serviceAccountName": d.service_account_override or SERVICE_ACCOUNT,
-                    "containers": [
-                        {
-                            "name": "agent",
-                            "image": image,
-                            "command": ["python", "/usr/local/bin/agent-entrypoint.py"],
-                            "env": env,
-                            "resources": _job_resources(),
-                        }
-                    ],
-                },
+                "spec": pod_spec,
             },
         },
     }

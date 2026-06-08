@@ -123,7 +123,9 @@ def test_github_app_doc_anchor_links_resolve_to_real_headings():
     anchors = {_heading_to_anchor(h) for h in headings}
 
     links = re.findall(r"\(getting-started\.md#([\w-]+)\)", github_app_text)
-    assert links, "expected at least one anchor link from github-app.md into getting-started.md"
+    assert links, (
+        "expected at least one anchor link from github-app.md into getting-started.md"
+    )
     for anchor in links:
         assert anchor in anchors, (
             f"github-app.md links to getting-started.md#{anchor}, "

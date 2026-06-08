@@ -1,0 +1,92 @@
+suite: skills configmap
+templates:
+  - templates/skills-configmap.yaml
+tests:
+  - it: renders a ConfigMap with skills as <name>/SKILL.md keys when skills are provided
+    set:
+      temporalHost: "temporal-frontend.agents.svc:7233"
+      skills:
+        tdd: |
+          ---
+          name: tdd
+          description: Test-driven development
+          ---
+          # TDD content
+        code-review: |
+          ---
+          name: code-review
+          description: Code review skill
+          ---
+          # Code review content
+    asserts:
+      - hasDocuments:
+          count: 1
+      - isKind:
+          of: ConfigMap
+      - equal:
+          path: metadata.name
+          value: RELEASE-NAME-skills
+      - equal:
+          path: data["tdd/SKILL.md"]
+          value: |
+            ---
+            name: tdd
+            description: Test-driven development
+            ---
+            # TDD content
+      - equal:
+          path: data["code-review/SKILL.md"]
+          value: |
+            ---
+            name: code-review
+            description: Code review skill
+            ---
+            # Code review content
+
+  - it: renders ConfigMap in agentsNamespace when set
+    set:
+      temporalHost: "temporal-frontend.agents.svc:7233"
+      agentsNamespace: "agent-jobs"
+      skills:
+        tdd: |
+          ---
+          name: tdd
+          description: Test skill
+          ---
+          Content
+    asserts:
+      - equal:
+          path: metadata.namespace
+          value: agent-jobs
+
+  - it: renders ConfigMap in release namespace when agentsNamespace is empty
+    set:
+      temporalHost: "temporal-frontend.agents.svc:7233"
+      skills:
+        tdd: |
+          ---
+          name: tdd
+          description: Test skill
+          ---
+          Content
+    release:
+      namespace: default-ns
+    asserts:
+      - equal:
+          path: metadata.namespace
+          value: default-ns
+
+  - it: renders no document when skills value is empty
+    set:
+      temporalHost: "temporal-frontend.agents.svc:7233"
+      skills: {}
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: renders no document when skills value is not set
+    set:
+      temporalHost: "temporal-frontend.agents.svc:7233"
+    asserts:
+      - hasDocuments:
+          count: 0

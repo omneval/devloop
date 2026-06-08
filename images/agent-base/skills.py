@@ -209,18 +209,39 @@ def install_configmap_skills(staging_path: str) -> list[str]:
 
     installed: list[str] = []
     for entry in sorted(staging.iterdir()):
-        if not entry.is_file():
-            continue
-        skill_name = entry.name
-        dest_dir = convergence / skill_name
-        dest_dir.mkdir(parents=True, exist_ok=True)
-        dest = dest_dir / "SKILL.md"
-        try:
-            shutil.copy2(entry, dest)
-            installed.append(skill_name)
-            log.info("installed ConfigMap skill %r → %s", skill_name, dest)
-        except OSError as exc:
-            log.warning(
-                "failed to write SKILL.md for skill %r: %s — skipping", skill_name, exc
-            )
+        if entry.is_file():
+            # Flat-file layout (e.g. staging/tdd) — copy directly as SKILL.md
+            skill_name = entry.name
+            dest_dir = convergence / skill_name
+            dest_dir.mkdir(parents=True, exist_ok=True)
+            dest = dest_dir / "SKILL.md"
+            try:
+                shutil.copy2(entry, dest)
+                installed.append(skill_name)
+                log.info("installed ConfigMap skill %r → %s", skill_name, dest)
+            except OSError as exc:
+                log.warning(
+                    "failed to write SKILL.md for skill %r: %s — skipping",
+                    skill_name,
+                    exc,
+                )
+        elif entry.is_dir():
+            # ConfigMap mount layout: staging/<name>/SKILL.md created by K8s
+            # when the ConfigMap key contains a slash.
+            skill_md = entry / "SKILL.md"
+            if skill_md.is_file():
+                skill_name = entry.name
+                dest_dir = convergence / skill_name
+                dest_dir.mkdir(parents=True, exist_ok=True)
+                dest = dest_dir / "SKILL.md"
+                try:
+                    shutil.copy2(skill_md, dest)
+                    installed.append(skill_name)
+                    log.info("installed ConfigMap skill %r → %s", skill_name, dest)
+                except OSError as exc:
+                    log.warning(
+                        "failed to write SKILL.md for skill %r: %s — skipping",
+                        skill_name,
+                        exc,
+                    )
     return installed

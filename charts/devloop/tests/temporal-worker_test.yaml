@@ -582,3 +582,30 @@ tests:
           content:
             name: SUMMARIZATION_WEBHOOK_URL
             value: "https://example.com/hook"
+
+  - it: renders AGENT_SKILLS_CONFIGMAP when skills value is non-empty (issue #34)
+    template: templates/temporal-worker-deployment.yaml
+    set:
+      temporalHost: "temporal-frontend.agents.svc:7233"
+      skills:
+        tdd: |
+          ---
+          name: tdd
+          ---
+          Content
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: AGENT_SKILLS_CONFIGMAP
+            value: "RELEASE-NAME-skills"
+
+  - it: omits AGENT_SKILLS_CONFIGMAP when skills value is empty (issue #34)
+    template: templates/temporal-worker-deployment.yaml
+    set:
+      temporalHost: "temporal-frontend.agents.svc:7233"
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: AGENT_SKILLS_CONFIGMAP

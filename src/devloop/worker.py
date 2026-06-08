@@ -63,7 +63,9 @@ PROJECTS_FILE = os.getenv("PROJECTS_FILE", "./projects.yaml")
 
 # Summarization schedule config (issue #79) — forwarded from Helm values
 # summarization.enabled / summarization.cronSchedule / summarization.webhookUrl.
-SUMMARIZATION_ENABLED = os.getenv("SUMMARIZATION_ENABLED", "true").strip().lower() not in (
+SUMMARIZATION_ENABLED = os.getenv(
+    "SUMMARIZATION_ENABLED", "true"
+).strip().lower() not in (
     "false",
     "0",
     "",

@@ -96,9 +96,9 @@ class FakeAppHTTPClient:
         self.requests: list[tuple[str, str, dict | None]] = []
         self._token_response = token_response or {
             "token": "ghs_fake_installation_token",
-            "expires_at": (
-                datetime.now(timezone.utc) + timedelta(hours=1)
-            ).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "expires_at": (datetime.now(timezone.utc) + timedelta(hours=1)).strftime(
+                "%Y-%m-%dT%H:%M:%SZ"
+            ),
         }
         FakeAppHTTPClient.instances.append(self)
 
@@ -224,20 +224,22 @@ async def test_installation_token_is_cached_between_calls(app_env, monkeypatch):
     assert len(FakeAppHTTPClient.instances[0].requests) == 1
 
 
-async def test_installation_token_is_refreshed_five_minutes_before_expiry(app_env, monkeypatch):
+async def test_installation_token_is_refreshed_five_minutes_before_expiry(
+    app_env, monkeypatch
+):
     # First token expires in 4 minutes — within the 5-minute refresh window —
     # so the very next call must mint a fresh one rather than reuse the cache.
     soon_expiring = {
         "token": "ghs_almost_expired",
-        "expires_at": (
-            datetime.now(timezone.utc) + timedelta(minutes=4)
-        ).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=4)).strftime(
+            "%Y-%m-%dT%H:%M:%SZ"
+        ),
     }
     fresh = {
         "token": "ghs_fresh_token",
-        "expires_at": (
-            datetime.now(timezone.utc) + timedelta(hours=1)
-        ).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "expires_at": (datetime.now(timezone.utc) + timedelta(hours=1)).strftime(
+            "%Y-%m-%dT%H:%M:%SZ"
+        ),
     }
     responses = iter([soon_expiring, fresh])
     monkeypatch.setattr(
@@ -254,14 +256,16 @@ async def test_installation_token_is_refreshed_five_minutes_before_expiry(app_en
     assert len(FakeAppHTTPClient.instances) == 2
 
 
-async def test_installation_token_reused_when_comfortably_within_expiry(app_env, monkeypatch):
+async def test_installation_token_reused_when_comfortably_within_expiry(
+    app_env, monkeypatch
+):
     # Token still has 30 minutes left — well outside the 5-minute refresh
     # window — so it must be reused, not regenerated.
     long_lived = {
         "token": "ghs_long_lived",
-        "expires_at": (
-            datetime.now(timezone.utc) + timedelta(minutes=30)
-        ).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=30)).strftime(
+            "%Y-%m-%dT%H:%M:%SZ"
+        ),
     }
     monkeypatch.setattr(
         github_ops,
@@ -293,8 +297,7 @@ async def test_concurrent_calls_mint_token_only_once(app_env, monkeypatch):
     assert len(FakeAppHTTPClient.instances) == 1
     assert len(FakeAppHTTPClient.instances[0].requests) == 1
     assert (
-        github_ops._installation_token_cache["token"]
-        == "ghs_fake_installation_token"
+        github_ops._installation_token_cache["token"] == "ghs_fake_installation_token"
     )
     assert github_ops._installation_token_cache["expires_at"] is not None
 
@@ -313,7 +316,9 @@ async def test_resolve_token_uses_github_app_when_configured(app_env, monkeypatc
     monkeypatch.setattr(
         github_ops.cluster,
         "read_secret_value",
-        lambda *a, **k: (_ for _ in ()).throw(AssertionError("PAT path should not run")),
+        lambda *a, **k: (_ for _ in ()).throw(
+            AssertionError("PAT path should not run")
+        ),
     )
 
     token = await github_ops._resolve_token(_PROJECT)
@@ -359,7 +364,9 @@ async def test_client_uses_pat_when_github_app_not_configured(monkeypatch):
     assert captured == {"name": "omneval-agent-github-token", "key": "GITHUB_TOKEN"}
 
 
-async def test_client_uses_installation_token_when_github_app_configured(app_env, monkeypatch):
+async def test_client_uses_installation_token_when_github_app_configured(
+    app_env, monkeypatch
+):
     monkeypatch.setattr(
         github_ops,
         "_app_http_client",
@@ -368,7 +375,9 @@ async def test_client_uses_installation_token_when_github_app_configured(app_env
     monkeypatch.setattr(
         github_ops.cluster,
         "read_secret_value",
-        lambda *a, **k: (_ for _ in ()).throw(AssertionError("PAT path should not run")),
+        lambda *a, **k: (_ for _ in ()).throw(
+            AssertionError("PAT path should not run")
+        ),
     )
 
     client = await github_ops._client(_PROJECT)

@@ -97,6 +97,10 @@ spec:
             {{- end }}
             - name: AGENT_SKILLS_SELECTION_MODE
               value: {{ .Values.skillsSelectionMode | default "triggers" | quote }}
+            {{- if .Values.skills }}
+            - name: AGENT_SKILLS_CONFIGMAP
+              value: {{ printf "%s-skills" .Release.Name | quote }}
+            {{- end }}
             - name: ORCHESTRATION_QUEUE
               value: {{ .Values.temporalWorker.taskQueue | quote }}
             - name: AGENT_JOB_SERVICE_ACCOUNT

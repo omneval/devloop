@@ -570,3 +570,114 @@ def test_remediation_phase_no_fix_no_push(tmp_path, monkeypatch):
     payload = json.loads(out_file.read_text())
     assert payload["status"] == "complete"
     assert payload["commits"] == 0
+
+
+# --------------------------------------------------------------------------- #
+# ConfigMap skills install at startup (issue #34)
+# --------------------------------------------------------------------------- #
+
+
+def test_main_installs_configmap_skills_when_configured(origin, tmp_path, monkeypatch):
+    """When AGENT_SKILLS_CONFIGMAP is set, entrypoint installs staged skills."""
+    staging = tmp_path / "staging"
+    staging.mkdir()
+    (staging / "deploy-review").write_text("# ConfigMap Skill\n")
+    convergence = tmp_path / "convergence"
+    convergence.mkdir()
+
+    workdir = tmp_path / "repo"
+    out_file = tmp_path / "out.json"
+
+    monkeypatch.setenv(
+        "TASK_SPEC",
+        json.dumps(
+            {
+                "phase": "execute",
+                "project_id": "omneval",
+                "issue_number": 5,
+                "title": "Test",
+                "body": "test",
+                "instructions": "go",
+            }
+        ),
+    )
+    monkeypatch.setenv("GITHUB_URL", str(origin))
+    monkeypatch.setenv("DEFAULT_BRANCH", "main")
+    monkeypatch.setenv("WORKDIR", str(workdir))
+    monkeypatch.setenv("OUTPUT_CONFIGMAP", "agent-omneval-execute-5-a1")
+    monkeypatch.setenv("OUTPUT_FILE", str(out_file))
+    monkeypatch.setenv("AGENT_SKILLS_CONFIGMAP", "devloop-skills")
+    monkeypatch.setenv("AGENT_SKILLS_STAGING_DIR", str(staging))
+    monkeypatch.setenv("AGENT_SKILLS_DIR", str(convergence))
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+
+    # Mock run_agent so main() doesn't block on real agent work
+    monkeypatch.setattr(
+        entrypoint,
+        "run_agent",
+        lambda spec, wd, tracer: entrypoint.AgentOutcome(
+            summary="test", files_changed=False
+        ),
+    )
+
+    # Capture calls to install_configmap_skills
+    install_calls = []
+    real_fn = entrypoint.skills.install_configmap_skills
+
+    def tracking_install(path):
+        install_calls.append(path)
+        return real_fn(path)
+
+    monkeypatch.setattr(entrypoint.skills, "install_configmap_skills", tracking_install)
+
+    rc = entrypoint.main()
+    assert rc == 0
+    assert len(install_calls) == 1
+    assert install_calls[0] == str(staging)
+
+
+def test_main_skips_configmap_install_when_not_configured(
+    origin, tmp_path, monkeypatch
+):
+    """When AGENT_SKILLS_CONFIGMAP is unset, entrypoint does not install skills."""
+    workdir = tmp_path / "repo"
+    out_file = tmp_path / "out.json"
+
+    monkeypatch.setenv(
+        "TASK_SPEC",
+        json.dumps(
+            {
+                "phase": "execute",
+                "project_id": "omneval",
+                "issue_number": 5,
+                "title": "Test",
+                "body": "test",
+                "instructions": "go",
+            }
+        ),
+    )
+    monkeypatch.setenv("GITHUB_URL", str(origin))
+    monkeypatch.setenv("DEFAULT_BRANCH", "main")
+    monkeypatch.setenv("WORKDIR", str(workdir))
+    monkeypatch.setenv("OUTPUT_CONFIGMAP", "agent-omneval-execute-5-a1")
+    monkeypatch.setenv("OUTPUT_FILE", str(out_file))
+    monkeypatch.delenv("AGENT_SKILLS_CONFIGMAP", raising=False)
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+
+    install_called = []
+
+    def fake_install(path):
+        install_called.append(path)
+        return []
+
+    monkeypatch.setattr(entrypoint.skills, "install_configmap_skills", fake_install)
+
+    def fake_run_agent(spec, wd, tracer):
+        Path(wd, "feature.txt").write_text("test\n")
+        return entrypoint.AgentOutcome(summary="test", files_changed=True)
+
+    monkeypatch.setattr(entrypoint, "run_agent", fake_run_agent)
+
+    rc = entrypoint.main()
+    assert rc == 0
+    assert install_called == [], "install_configmap_skills should not be called"

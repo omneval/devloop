@@ -142,16 +142,19 @@ async def _run_pr_comment(client: Client, inp: PRCommentInput):
 async def _env_and_run(inp: PRCommentInput):
     acts = _make_activities()
     async with await WorkflowEnvironment.start_time_skipping() as env:
-        async with Worker(
-            env.client,
-            task_queue=ORCHESTRATION_QUEUE,
-            workflows=[PRCommentWorkflow],
-            activities=acts["orchestration"],
-        ), Worker(
-            env.client,
-            task_queue=JOB_DISPATCH_QUEUE,
-            workflows=[],
-            activities=acts["dispatch"],
+        async with (
+            Worker(
+                env.client,
+                task_queue=ORCHESTRATION_QUEUE,
+                workflows=[PRCommentWorkflow],
+                activities=acts["orchestration"],
+            ),
+            Worker(
+                env.client,
+                task_queue=JOB_DISPATCH_QUEUE,
+                workflows=[],
+                activities=acts["dispatch"],
+            ),
         ):
             return await _run_pr_comment(env.client, inp)
 

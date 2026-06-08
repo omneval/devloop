@@ -158,7 +158,9 @@ def _parse_github_timestamp(value: str) -> datetime:
     return datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
 
 
-def _mint_installation_token(installation_id: str, app_jwt: str) -> tuple[str, datetime]:
+def _mint_installation_token(
+    installation_id: str, app_jwt: str
+) -> tuple[str, datetime]:
     """Blocking HTTP round trip that exchanges an app JWT for an installation
     access token. Run off the event loop via ``asyncio.to_thread`` — this is
     the only network I/O in the mint flow, and it's a regular blocking
@@ -227,6 +229,7 @@ async def _resolve_token(cfg: ProjectConfig) -> str:
     if _github_app_configured():
         return await _get_installation_token()
     return cluster.read_secret_value(cfg.github_token_secret, "GITHUB_TOKEN")
+
 
 # Agent issue branches are named ``agent/issue-<N>[-slug]`` (see entrypoint.py).
 _AGENT_BRANCH = re.compile(r"^agent/issue-(\d+)")

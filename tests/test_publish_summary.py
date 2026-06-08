@@ -112,9 +112,15 @@ def _make_fake_client(issue_responses=None, label_responses=None):
         def post(self, url, json=None, **kwargs):
             recorded["posts"].append({"url": url, "json": json})
             if "/labels" in url and "/issues" not in url:
-                return FakeResponse(status_code=201, json_data={"name": "devloop-summary"})
+                return FakeResponse(
+                    status_code=201, json_data={"name": "devloop-summary"}
+                )
             return FakeResponse(
-                status_code=201, json_data={"number": 99, "html_url": "https://github.com/x/y/issues/99"}
+                status_code=201,
+                json_data={
+                    "number": 99,
+                    "html_url": "https://github.com/x/y/issues/99",
+                },
             )
 
     return FakeClient(), recorded
@@ -131,7 +137,9 @@ def test_publish_summary_creates_github_issue(monkeypatch):
     """publish_summary must create a GitHub Issue with the correct title and label."""
     from devloop.summarize_activities import publish_summary, PublishSummaryInput
 
-    monkeypatch.setattr("devloop.summarize_activities.get_project", lambda pid: _fake_project())
+    monkeypatch.setattr(
+        "devloop.summarize_activities.get_project", lambda pid: _fake_project()
+    )
     monkeypatch.delenv("SUMMARIZATION_WEBHOOK_URL", raising=False)
 
     fake_client, recorded = _make_fake_client()
@@ -144,7 +152,11 @@ def test_publish_summary_creates_github_issue(monkeypatch):
     )
     asyncio.run(publish_summary(inp))
 
-    issue_posts = [p for p in recorded["posts"] if "/issues" in p["url"] and "/labels" not in p["url"]]
+    issue_posts = [
+        p
+        for p in recorded["posts"]
+        if "/issues" in p["url"] and "/labels" not in p["url"]
+    ]
     assert len(issue_posts) == 1, f"expected 1 issue POST, got {issue_posts}"
 
     post = issue_posts[0]
@@ -160,7 +172,9 @@ def test_publish_summary_creates_label_if_missing(monkeypatch):
     """publish_summary must create the 'devloop-summary' label if it does not exist."""
     from devloop.summarize_activities import publish_summary, PublishSummaryInput
 
-    monkeypatch.setattr("devloop.summarize_activities.get_project", lambda pid: _fake_project())
+    monkeypatch.setattr(
+        "devloop.summarize_activities.get_project", lambda pid: _fake_project()
+    )
     monkeypatch.delenv("SUMMARIZATION_WEBHOOK_URL", raising=False)
 
     fake_client, recorded = _make_fake_client()
@@ -169,7 +183,11 @@ def test_publish_summary_creates_label_if_missing(monkeypatch):
     inp = PublishSummaryInput(project_id="omneval", summary="digest", date="2026-06-06")
     asyncio.run(publish_summary(inp))
 
-    label_posts = [p for p in recorded["posts"] if "/labels" in p["url"] and "/issues" not in p["url"]]
+    label_posts = [
+        p
+        for p in recorded["posts"]
+        if "/labels" in p["url"] and "/issues" not in p["url"]
+    ]
     assert len(label_posts) == 1, f"expected 1 label create POST, got {label_posts}"
     assert label_posts[0]["json"]["name"] == "devloop-summary"
 
@@ -178,7 +196,9 @@ def test_publish_summary_skips_label_create_if_exists(monkeypatch):
     """publish_summary must NOT create the label when it already exists (GET 200)."""
     from devloop.summarize_activities import publish_summary, PublishSummaryInput
 
-    monkeypatch.setattr("devloop.summarize_activities.get_project", lambda pid: _fake_project())
+    monkeypatch.setattr(
+        "devloop.summarize_activities.get_project", lambda pid: _fake_project()
+    )
     monkeypatch.delenv("SUMMARIZATION_WEBHOOK_URL", raising=False)
 
     class FakeResponse:
@@ -208,15 +228,22 @@ def test_publish_summary_skips_label_create_if_exists(monkeypatch):
         def post(self, url, json=None, **kwargs):
             recorded["posts"].append({"url": url, "json": json})
             return FakeResponse(
-                status_code=201, json_data={"number": 7, "html_url": "https://github.com/x/y/issues/7"}
+                status_code=201,
+                json_data={"number": 7, "html_url": "https://github.com/x/y/issues/7"},
             )
 
-    monkeypatch.setattr("devloop.summarize_activities._client", lambda cfg: FakeClient())
+    monkeypatch.setattr(
+        "devloop.summarize_activities._client", lambda cfg: FakeClient()
+    )
 
     inp = PublishSummaryInput(project_id="omneval", summary="digest", date="2026-06-06")
     asyncio.run(publish_summary(inp))
 
-    label_posts = [p for p in recorded["posts"] if "/labels" in p["url"] and "/issues" not in p["url"]]
+    label_posts = [
+        p
+        for p in recorded["posts"]
+        if "/labels" in p["url"] and "/issues" not in p["url"]
+    ]
     assert label_posts == [], "should not create label when it already exists"
 
 
@@ -229,7 +256,9 @@ def test_publish_summary_posts_to_webhook_when_env_set(monkeypatch):
     """publish_summary must POST JSON to SUMMARIZATION_WEBHOOK_URL when set."""
     from devloop.summarize_activities import publish_summary, PublishSummaryInput
 
-    monkeypatch.setattr("devloop.summarize_activities.get_project", lambda pid: _fake_project())
+    monkeypatch.setattr(
+        "devloop.summarize_activities.get_project", lambda pid: _fake_project()
+    )
     monkeypatch.setenv("SUMMARIZATION_WEBHOOK_URL", "https://hooks.example.com/devloop")
 
     fake_client, recorded = _make_fake_client()
@@ -247,7 +276,9 @@ def test_publish_summary_posts_to_webhook_when_env_set(monkeypatch):
 
     monkeypatch.setattr("httpx.post", fake_post)
 
-    inp = PublishSummaryInput(project_id="omneval", summary="Weekly digest.", date="2026-06-06")
+    inp = PublishSummaryInput(
+        project_id="omneval", summary="Weekly digest.", date="2026-06-06"
+    )
     asyncio.run(publish_summary(inp))
 
     assert len(webhook_calls) == 1
@@ -262,7 +293,9 @@ def test_publish_summary_no_webhook_when_env_empty(monkeypatch):
     """publish_summary must NOT POST to a webhook when SUMMARIZATION_WEBHOOK_URL is empty."""
     from devloop.summarize_activities import publish_summary, PublishSummaryInput
 
-    monkeypatch.setattr("devloop.summarize_activities.get_project", lambda pid: _fake_project())
+    monkeypatch.setattr(
+        "devloop.summarize_activities.get_project", lambda pid: _fake_project()
+    )
     monkeypatch.setenv("SUMMARIZATION_WEBHOOK_URL", "")
 
     fake_client, recorded = _make_fake_client()
@@ -285,7 +318,9 @@ def test_publish_summary_webhook_failure_logged_not_raised(monkeypatch, caplog):
     """Webhook POST failure must be logged (not raised) — fire-and-forget."""
     from devloop.summarize_activities import publish_summary, PublishSummaryInput
 
-    monkeypatch.setattr("devloop.summarize_activities.get_project", lambda pid: _fake_project())
+    monkeypatch.setattr(
+        "devloop.summarize_activities.get_project", lambda pid: _fake_project()
+    )
     monkeypatch.setenv("SUMMARIZATION_WEBHOOK_URL", "https://dead.example.com/hook")
 
     fake_client, recorded = _make_fake_client()

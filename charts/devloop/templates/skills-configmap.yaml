@@ -1,0 +1,15 @@
+{{- if .Values.skills }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-skills
+  namespace: {{ .Values.agentsNamespace | default .Release.Namespace }}
+  labels:
+    {{- include "devloop.labels" . | nindent 4 }}
+    app.kubernetes.io/component: skills
+data:
+  {{- range $name, $content := .Values.skills }}
+  {{ $name }}/SKILL.md: |
+    {{- $content | nindent 4 }}
+  {{- end }}
+{{- end }}

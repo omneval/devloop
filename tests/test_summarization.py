@@ -120,4 +120,6 @@ def test_summarize_input_rejects_post_merge_trigger():
     """SummarizeInput no longer accepts 'post-merge' (issue #79: SummarizationWorkflow
     is no longer invoked from DevLoopWorkflow as a post-merge child workflow)."""
     with pytest.raises(ValueError):
-        SummarizeInput("omneval", trigger="post-merge", head_sha="abc", closed_issues=[1, 2])
+        SummarizeInput(
+            "omneval", trigger="post-merge", head_sha="abc", closed_issues=[1, 2]
+        )

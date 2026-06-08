@@ -392,9 +392,7 @@ def _describe_exception(exc: BaseException) -> str:
 # Test-suite discovery and execution
 # --------------------------------------------------------------------------- #
 _NPM_DEFAULT_PLACEHOLDER = 'echo "Error: no test specified" && exit 1'
-_MAX_TEST_OUTPUT = (
-    4096  # bytes kept in result payload (truncated for Temporal UI)
-)
+_MAX_TEST_OUTPUT = 4096  # bytes kept in result payload (truncated for Temporal UI)
 
 
 def run_project_tests(workdir: str, timeout: int = 300) -> tuple[bool, str]:
@@ -1275,7 +1273,12 @@ def handle_ci_fix(spec: TaskSpec, tracer) -> dict:
     _run(["git", "add", "-A"], cwd=workdir)
     if _run(["git", "status", "--porcelain"], cwd=workdir).strip():
         _run(
-            ["git", "commit", "-m", f"ci_fix: address failing checks on #{spec.issue_number}"],
+            [
+                "git",
+                "commit",
+                "-m",
+                f"ci_fix: address failing checks on #{spec.issue_number}",
+            ],
             cwd=workdir,
         )
 
@@ -1323,7 +1326,12 @@ def handle_pr_comment(spec: TaskSpec, tracer) -> dict:
     _run(["git", "add", "-A"], cwd=workdir)
     if _run(["git", "status", "--porcelain"], cwd=workdir).strip():
         _run(
-            ["git", "commit", "-m", f"pr_comment: address feedback on #{spec.issue_number}"],
+            [
+                "git",
+                "commit",
+                "-m",
+                f"pr_comment: address feedback on #{spec.issue_number}",
+            ],
             cwd=workdir,
         )
 
@@ -1476,8 +1484,44 @@ _HANDLERS = {
 }
 
 
+# --------------------------------------------------------------------------- #
+# ConfigMap skill installation (issue #34)
+# --------------------------------------------------------------------------- #
+
+SKILLS_STAGING_DIR_DEFAULT = "/etc/agent-skills/staging"
+
+
+def _install_configmap_skills() -> None:
+    """Install ConfigMap-delivered skills into the convergence directory.
+
+    Reads ``AGENT_SKILLS_CONFIGMAP`` to determine whether skills are available.
+    When set, copies staged files from ``AGENT_SKILLS_STAGING_DIR`` (or the
+    default path) into the skills convergence directory. Best-effort: a
+    failure for one skill is logged and skipped, never failing the phase
+    (ADR-0008).
+    """
+    configmap_name = os.environ.get("AGENT_SKILLS_CONFIGMAP")
+    if not configmap_name:
+        return
+
+    staging_dir = os.environ.get("AGENT_SKILLS_STAGING_DIR", SKILLS_STAGING_DIR_DEFAULT)
+    installed = skills.install_configmap_skills(staging_dir)
+    if installed:
+        log.info(
+            "installed %d ConfigMap skill(s) from %s: %s",
+            len(installed),
+            staging_dir,
+            ", ".join(installed),
+        )
+
+
 def main() -> int:
     tracer = setup_tracing()
+
+    # Install ConfigMap-delivered skills before the agent phase runs
+    # (ADR-0008: ConfigMap-wins precedence on name collision).
+    _install_configmap_skills()
+
     spec = load_task_spec()
     log.info(
         "phase=%s project=%s issue=%s", spec.phase, spec.project_id, spec.issue_number

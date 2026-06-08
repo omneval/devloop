@@ -553,3 +553,60 @@ def test_render_job_handles_invalid_by_phase_json_gracefully(monkeypatch):
     # Must not raise
     env_names = _job_env_names()
     assert "AGENT_SKILLS_ENABLED" not in env_names
+
+
+# --------------------------------------------------------------------------- #
+# ConfigMap skills delivery (issue #34)
+# --------------------------------------------------------------------------- #
+
+
+def _job_manifest(d=None, job_name="agent-omneval-execute-42-a1"):
+    """Helper: render and return the full Job manifest."""
+    if d is None:
+        d = _dispatch_input()
+    return k8s_jobs.render_job(d, job_name)
+
+
+def test_render_job_forwards_agent_skills_configmap_env(monkeypatch):
+    """When AGENT_SKILLS_CONFIGMAP is set, render_job must forward it to the
+    Job so the entrypoint knows which ConfigMap to stage."""
+    monkeypatch.setenv("AGENT_SKILLS_CONFIGMAP", "my-release-skills")
+    env = _job_env()
+    assert env["AGENT_SKILLS_CONFIGMAP"] == "my-release-skills"
+
+
+def test_render_job_adds_skills_volume_and_mount(monkeypatch):
+    """When AGENT_SKILLS_CONFIGMAP is set, render_job must add a ConfigMap
+    volume and a read-only volumeMount at the skills staging path."""
+    monkeypatch.setenv("AGENT_SKILLS_CONFIGMAP", "my-release-skills")
+    manifest = _job_manifest()
+    pod_spec = manifest["spec"]["template"]["spec"]
+    container = pod_spec["containers"][0]
+
+    # Volume
+    volumes = {v["name"]: v for v in pod_spec.get("volumes", [])}
+    assert "skills-configmap" in volumes
+    assert volumes["skills-configmap"]["configMap"]["name"] == "my-release-skills"
+
+    # VolumeMount
+    mounts = {m["name"]: m for m in container.get("volumeMounts", [])}
+    assert "skills-configmap" in mounts
+    assert mounts["skills-configmap"]["mountPath"] == "/etc/agent-skills/staging"
+    assert mounts["skills-configmap"]["readOnly"] is True
+
+
+def test_render_job_omits_skills_volume_when_configmap_unset(monkeypatch):
+    """When AGENT_SKILLS_CONFIGMAP is not set, render_job must NOT add any
+    ConfigMap volume, volumeMount, or env — the manifest is unchanged."""
+    monkeypatch.delenv("AGENT_SKILLS_CONFIGMAP", raising=False)
+    manifest = _job_manifest()
+    pod_spec = manifest["spec"]["template"]["spec"]
+    container = pod_spec["containers"][0]
+
+    vol_names = {v["name"] for v in pod_spec.get("volumes", [])}
+    mount_names = {m["name"] for m in container.get("volumeMounts", [])}
+    env_names = _job_env_names()
+
+    assert "skills-configmap" not in vol_names
+    assert "skills-configmap" not in mount_names
+    assert "AGENT_SKILLS_CONFIGMAP" not in env_names
