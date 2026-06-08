@@ -80,7 +80,7 @@ def test_llm_summary_uses_agent_llm_base_url(monkeypatch):
     fake_response = MagicMock()
     fake_response.raise_for_status = MagicMock()
     fake_response.json.return_value = {
-        "choices": [{"message": {"content": "summary text"}}]
+        "choices": [{"message": {"content": '{"summary": "summary text"}'}}]
     }
 
     with patch("httpx.post", return_value=fake_response) as mock_post:

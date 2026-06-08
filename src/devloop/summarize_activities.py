@@ -13,6 +13,7 @@ import json
 import logging
 import os
 
+from pydantic import BaseModel
 from temporalio import activity
 
 from . import cluster
@@ -20,6 +21,12 @@ from .github_ops import _client  # reuse the authed httpx client
 from .projects import get_project, parse_github_repo
 from .shared import PublishSummaryInput
 from .summarization import SummarizeInput, SummarizeResult
+
+
+class SummaryOutput(BaseModel):
+    """Structured output for the weekly digest LLM call."""
+
+    summary: str
 
 log = logging.getLogger(__name__)
 
@@ -104,17 +111,27 @@ def _fetch_changes(
 def _llm_summary(prompt: str) -> str:
     import httpx
 
+    schema = SummaryOutput.model_json_schema()
     resp = httpx.post(
         f"{LLM_BASE_URL}/chat/completions",
         json={
             "model": SUMMARY_MODEL,
             "messages": [{"role": "user", "content": prompt}],
             "temperature": 0.3,
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": SummaryOutput.__name__,
+                    "schema": schema,
+                },
+            },
         },
         timeout=120.0,
     )
     resp.raise_for_status()
-    return resp.json()["choices"][0]["message"]["content"].strip()
+    raw = resp.json()["choices"][0]["message"]["content"].strip()
+    model = SummaryOutput.model_validate_json(raw)
+    return model.summary
 
 
 def _ensure_label(c, repo: str) -> None:
