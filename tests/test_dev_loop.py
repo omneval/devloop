@@ -75,7 +75,6 @@ class Mocks:
     answer_job_summary: str = "use lib A"
     answer_job_status: str = JobStatus.COMPLETE.value
     # remediation phase
-    poll_pr_checks_result: dict = field(default_factory=lambda: {"failures": []})
     remediation_commits: int = 1
     remediation_status: str = JobStatus.COMPLETE.value
 
@@ -97,10 +96,6 @@ def _one_issue(num=1):
 
 
 def _make_activities():
-    @activity.defn(name="poll_pr_checks")
-    async def poll_pr_checks(inp):
-        return M.poll_pr_checks_result
-
     @activity.defn(name="dispatch_agent_job")
     async def dispatch_agent_job(inp) -> AgentJobResult:
         spec = inp["task_spec"] if isinstance(inp, dict) else inp.task_spec
@@ -250,7 +245,6 @@ def _make_activities():
     return {
         "dispatch": [dispatch_agent_job],
         "orchestration": [
-            poll_pr_checks,
             answer_agent_job,
             await_agent_job,
             open_agent_pr_issue_numbers,
@@ -773,7 +767,7 @@ async def test_ci_fix_loop_exits_early_when_ci_passes_on_second_iteration(reset_
     assert result.status == "completed"
     # CI went green on the second poll — only one fix attempt was dispatched
     assert M.dispatched_phases.count("ci_fix") == 1
-    assert len(M.ci_polls) == 2
+    assert len(M.ci_polls) == 3  # 2 from _ci_fix_loop + 1 from _remediation_phase
     # queued comment precedes the dispatch
     queued = [
         n for n in M.notifications if "queued" in n.lower() and "ci fix" in n.lower()
@@ -848,7 +842,7 @@ async def test_ci_fix_loop_not_exhausted_when_final_attempt_fixes_ci(reset_mocks
     assert result.status == "completed"
     # both allotted attempts were dispatched, then a final re-poll found CI green
     assert M.dispatched_phases.count("ci_fix") == 2
-    assert len(M.ci_polls) == 3
+    assert len(M.ci_polls) == 4  # 3 from _ci_fix_loop + 1 from _remediation_phase
     assert not any("still failing" in n.lower() for n in M.notifications)
 
 
@@ -898,7 +892,7 @@ async def test_ci_fix_loop_waits_on_pending_checks_without_dispatching_fix(reset
     assert result.status == "completed"
     # no fix attempt was dispatched — CI was merely slow, never genuinely red
     assert M.dispatched_phases.count("ci_fix") == 0
-    assert len(M.ci_polls) == 3
+    assert len(M.ci_polls) == 4  # 3 from _ci_fix_loop + 1 from _remediation_phase
     assert not any("ci fix attempt" in n.lower() for n in M.notifications)
     assert not any("queued — ci fix" in n.lower() for n in M.notifications)
     assert not any("still failing" in n.lower() for n in M.notifications)
@@ -960,7 +954,10 @@ async def test_multiple_rounds_accumulate_queued_for_review(reset_mocks):
 async def test_remediation_dispatched_between_execute_and_review(reset_mocks):
     """Remediation is inserted between Execute and Review in the workflow."""
     reset_mocks.plan_rounds = [_one_issue(1)]
-    reset_mocks.poll_pr_checks_result = {"failures": ["lint failed"]}
+    reset_mocks.ci_poll_results = [
+        CIChecksResult(all_passed=True, failures=[]),  # ci_fix_loop sees passing
+        CIChecksResult(all_passed=False, failures=[CICheckFailure(name="lint")]),
+    ]
     result = await _env_and_run(DevLoopInput("omneval"), ["approve", "approve"])
     assert result.status == "completed"
     assert result.queued_for_review == [1]
@@ -976,7 +973,7 @@ async def test_remediation_dispatched_between_execute_and_review(reset_mocks):
 async def test_remediation_no_op_when_checks_pass(reset_mocks):
     """When all CI checks pass, remediation is a no-op (no agent dispatched)."""
     reset_mocks.plan_rounds = [_one_issue(1)]
-    reset_mocks.poll_pr_checks_result = {"failures": []}  # all checks pass
+    # ci_poll_results defaults to returning all_passed=True when empty
     result = await _env_and_run(DevLoopInput("omneval"), ["approve", "approve"])
     assert result.status == "completed"
     phases = M.dispatched_phases
@@ -988,7 +985,10 @@ async def test_remediation_parks_issue_on_failure(reset_mocks):
     """When remediation produces zero commits, the issue is parked with a
     notification comment and the review phase is skipped for that round."""
     reset_mocks.plan_rounds = [_one_issue(1)]
-    reset_mocks.poll_pr_checks_result = {"failures": ["check-a failed"]}
+    reset_mocks.ci_poll_results = [
+        CIChecksResult(all_passed=True, failures=[]),  # ci_fix_loop sees passing
+        CIChecksResult(all_passed=False, failures=[CICheckFailure(name="check-a")]),
+    ]
     reset_mocks.remediation_commits = 0  # remediation produced no fix
     result = await _env_and_run(DevLoopInput("omneval"), ["approve", "approve"])
     assert result.status == "completed"

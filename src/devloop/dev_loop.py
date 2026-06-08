@@ -26,11 +26,12 @@ from .shared import (
     AgentJobResult,
     AnswerInput,
     AwaitInput,
+    CIChecksResult,
     InlineComment,
     JobStatus,
     OpenAgentPRsInput,
     Phase,
-    PollPRChecksInput,
+    PollCIChecksInput,
     PostCommentsInput,
     TaskSpec,
 )
@@ -428,19 +429,17 @@ class DevLoopWorkflow(_WorkflowCommon):
 
         # Poll CI check runs on the PR
         checks = await workflow.execute_activity(
-            "poll_pr_checks",
-            PollPRChecksInput(
-                inp.project_id,
-                pr_number,
-                timeout_seconds=inp.poll_interval_seconds,
-            ),
-            result_type=dict,
-            start_to_close_timeout=timedelta(minutes=2),
+            "poll_ci_checks",
+            PollCIChecksInput(project_id=inp.project_id, pr_number=pr_number),
+            result_type=CIChecksResult,
+            start_to_close_timeout=timedelta(minutes=5),
             retry_policy=_RETRY,
         )
 
-        # No-op when all checks pass or no checks exist
-        failures = checks.get("failures", [])
+        # No-op when all checks pass or none exist yet
+        if checks.all_passed or checks.pending:
+            return False
+        failures = [f.name for f in (checks.failures or [])]
         if not failures:
             return False
 
