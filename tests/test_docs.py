@@ -7,7 +7,9 @@ import pytest
 import yaml
 
 
-DOCS_DIR = Path(__file__).resolve().parent.parent / "docs"
+ROOT_DIR = Path(__file__).resolve().parent.parent
+DOCS_DIR = ROOT_DIR / "docs"
+README_PATH = ROOT_DIR / "README.md"
 
 EXPECTED_DOCS = [
     "getting-started.md",
@@ -123,9 +125,31 @@ def test_github_app_doc_anchor_links_resolve_to_real_headings():
     anchors = {_heading_to_anchor(h) for h in headings}
 
     links = re.findall(r"\(getting-started\.md#([\w-]+)\)", github_app_text)
-    assert links, "expected at least one anchor link from github-app.md into getting-started.md"
+    assert links, (
+        "expected at least one anchor link from github-app.md into getting-started.md"
+    )
     for anchor in links:
         assert anchor in anchors, (
             f"github-app.md links to getting-started.md#{anchor}, "
             f"but no heading in getting-started.md slugifies to that anchor"
         )
+
+
+# ---------------------------------------------------------------------------
+# README.md — issue #57
+# ---------------------------------------------------------------------------
+
+
+def test_readme_documents_response_format_requirement():
+    """README.md must document the response_format consumer constraint (issue #57)."""
+    text = README_PATH.read_text()
+    assert "response_format" in text, (
+        "README.md should document the response_format requirement for model endpoints"
+    )
+
+
+def test_readme_documents_skills_by_phase_remediation_and_fix_pass():
+    """README.md must document skillsByPhase.remediation and skillsByPhase.fix_pass (issue #57)."""
+    text = README_PATH.read_text()
+    assert "remediation" in text, "README.md should document skillsByPhase.remediation"
+    assert "fix_pass" in text, "README.md should document skillsByPhase.fix_pass"

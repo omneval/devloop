@@ -5,6 +5,65 @@ See [docs/getting-started.md](docs/getting-started.md) for full setup instructio
 
 ---
 
+## Model Endpoint Requirements
+
+### `response_format` with JSON Schema
+
+The structured output extractor (introduced in #53) requires the model endpoint to support
+`response_format` with JSON Schema. Without this, the agent cannot produce the structured
+outputs needed for plan generation, code editing, and review comments.
+
+**Compatible endpoints:**
+
+| Endpoint | Requirement |
+|----------|-------------|
+| OpenAI (official) | Native support — no extra flags needed |
+| vLLM | Requires the guided decoding backend (e.g. `--enable-guided-decoding` or equivalent). Check the vLLM startup logs for the flag. |
+| Ollama | Supported natively on models that expose the response_format parameter |
+
+If your endpoint does not support `response_format` with JSON Schema, the structured
+extractor will fall back to unstructured text parsing, which is significantly less
+reliable and may cause agent failures.
+
+See [CONTEXT.md](CONTEXT.md) for the full domain glossary and deeper explanation of the
+consumer constraint.
+
+### Per-Phase Skill Configuration (`skillsByPhase`)
+
+The `skillsByPhase` Helm value lets you control which skills are available to the agent
+during each phase of the Dev Loop. This is set in the `devloop` ConfigMap and forwarded
+to Agent Execution Jobs as the `AGENT_SKILLS_BY_PHASE` environment variable.
+
+Key phases include:
+
+| Phase | Purpose |
+|-------|---------|
+| `plan` | Analysis and planning phase |
+| `execute` | Primary implementation phase |
+| `remediation` | Runs when the Execute phase produces no commits; the agent revisits the issue with a fresh approach |
+| `fix_pass` | Runs after CI checks fail on the PR; the agent iterates to turn red CI green |
+| `review` | PR review phase |
+
+**Example Helm values:**
+
+```yaml
+skillsByPhase:
+  execute: [tdd, code-review]
+  remediation: [tdd]
+  fix_pass: [tdd]
+  review: [code-review]
+```
+
+- **Key absent** → all installed skills are available for that phase.
+- **Key = `[]`** → no skills available for that phase.
+- **Key = list** → exactly those skills are available.
+
+When `remediation` or `fix_pass` are not explicitly configured, they inherit the full set
+of installed skills. Set them explicitly if you want to restrict which tools the agent
+has during recovery passes.
+
+---
+
 ## Troubleshooting: Restarting Stuck Workflows
 
 ### Why workflows stop processing open issues
