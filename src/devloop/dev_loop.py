@@ -420,6 +420,7 @@ class DevLoopWorkflow(_WorkflowCommon):
                 start_to_close_timeout=_ACTIVITY_TIMEOUT,
                 retry_policy=_RETRY,
             )
+        await self._cleanup(result.job_name)
         return result
 
     # ---- Remediation phase (#56) --------------------------------------- #

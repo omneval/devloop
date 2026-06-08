@@ -132,6 +132,13 @@ def test_answer_agent_job_in_orchestration_activities():
     assert answer_agent_job in worker.ORCHESTRATION_ACTIVITIES
 
 
+def test_cleanup_configmap_in_orchestration_activities():
+    """cleanup_configmap must be in ORCHESTRATION_ACTIVITIES."""
+    from devloop.k8s_jobs import cleanup_configmap
+
+    assert cleanup_configmap in worker.ORCHESTRATION_ACTIVITIES
+
+
 def test_await_agent_job_not_in_dispatch_activities():
     """await_agent_job must NOT be in DISPATCH_ACTIVITIES."""
     from devloop.k8s_jobs import await_agent_job

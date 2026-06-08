@@ -18,7 +18,8 @@ Design notes
   #21) the activity returns that result *without* deleting the Job — it stays
   Running, polling its input ConfigMap for the answer. The workflow then calls
   :func:`answer_agent_job` and :func:`await_agent_job`.
-* ``cleanup_agent_job`` deletes the Job and ConfigMap after a retention window.
+* ``cleanup_configmap`` deletes the output ConfigMap once the workflow has consumed
+  the result. The Job is cleaned up natively by Kubernetes via ``ttlSecondsAfterFinished``.
 """
 
 from __future__ import annotations
@@ -439,20 +440,15 @@ async def await_agent_job(inp: AwaitInput) -> AgentJobResult:
 
 
 @activity.defn
-async def cleanup_agent_job(job_name: str) -> None:
-    """Delete the Job and its output ConfigMap (best-effort)."""
-    from kubernetes.client import V1DeleteOptions
+async def cleanup_configmap(job_name: str) -> None:
+    """Delete the output ConfigMap for a completed Agent Execution Job.
+
+    The K8s Job itself is cleaned up natively via ttlSecondsAfterFinished.
+    """
     from kubernetes.client.exceptions import ApiException
 
-    batch, core = cluster.batch(), cluster.core()
-    for fn in (
-        lambda: batch.delete_namespaced_job(
-            job_name, NAMESPACE, body=V1DeleteOptions(propagation_policy="Background")
-        ),
-        lambda: core.delete_namespaced_config_map(job_name, NAMESPACE),
-    ):
-        try:
-            fn()
-        except ApiException as exc:
-            if getattr(exc, "status", None) != 404:
-                log.warning("cleanup error for %s: %s", job_name, exc)
+    try:
+        cluster.core().delete_namespaced_config_map(job_name, NAMESPACE)
+    except ApiException as exc:
+        if getattr(exc, "status", None) != 404:
+            log.warning("cleanup error for %s: %s", job_name, exc)

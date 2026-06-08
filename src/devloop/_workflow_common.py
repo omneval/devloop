@@ -33,6 +33,7 @@ from .shared import (
 _RETRY = RetryPolicy(maximum_attempts=3)
 _ACTIVITY_TIMEOUT = timedelta(hours=2)
 _GITHUB_COMMENT_TIMEOUT = timedelta(seconds=60)
+_CLEANUP_RETRY = RetryPolicy(maximum_attempts=1)
 
 # Bounded backoff for "CI still pending" re-polls within a single ci_fix
 # attempt slot — caps how long _ci_fix_loop waits on a CI run that never
@@ -48,6 +49,25 @@ class _WorkflowCommon:
     hold no state (Temporal workflow instances are re-hydrated from history,
     so state must live in the workflow's own ``__init__``/run-local scope).
     """
+
+    # ---- ConfigMap cleanup (issue #99) ----------------------------------- #
+    async def _cleanup(self, job_name: str) -> None:
+        """Delete the output ConfigMap for a completed job — fire-and-forget.
+
+        Failures are swallowed; a leaked ConfigMap is preferable to a stalled
+        workflow. The K8s Job itself is cleaned up by ttlSecondsAfterFinished.
+        """
+        if not job_name:
+            return
+        try:
+            await workflow.execute_activity(
+                "cleanup_configmap",
+                job_name,
+                start_to_close_timeout=timedelta(seconds=30),
+                retry_policy=_CLEANUP_RETRY,
+            )
+        except Exception:
+            workflow.logger.warning("cleanup_configmap failed for %s", job_name)
 
     # ---- GitHub Issue/PR comment helper ---------------------------------- #
     async def _comment(self, project_id: str, issue_number: int, body: str) -> None:
@@ -71,7 +91,7 @@ class _WorkflowCommon:
         issue_number: int = 0,
         poll_interval_seconds: float = 5.0,
     ) -> AgentJobResult:
-        return await workflow.execute_activity(
+        result = await workflow.execute_activity(
             "dispatch_agent_job",
             DispatchInput(
                 project_id,
@@ -84,6 +104,9 @@ class _WorkflowCommon:
             retry_policy=_RETRY,
             task_queue=JOB_DISPATCH_QUEUE,
         )
+        if result.status != JobStatus.AWAITING_HUMAN.value:
+            await self._cleanup(result.job_name)
+        return result
 
     # ---- Phase.CI_FIX loop (#76) ------------------------------------------ #
     async def _ci_fix_loop(

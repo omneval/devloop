@@ -29,7 +29,7 @@ from .webhook import create_app
 from .k8s_jobs import (
     answer_agent_job,
     await_agent_job,
-    cleanup_agent_job,
+    cleanup_configmap,
     dispatch_agent_job,
 )
 from .github_ops import (
@@ -95,7 +95,7 @@ ORCHESTRATION_ACTIVITIES = [
     noop_activity,
     answer_agent_job,
     await_agent_job,
-    cleanup_agent_job,
+    cleanup_configmap,
     post_pr_comments,
     post_github_comment,
     file_issues,

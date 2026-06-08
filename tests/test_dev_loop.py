@@ -77,6 +77,8 @@ class Mocks:
     # remediation phase
     remediation_commits: int = 1
     remediation_status: str = JobStatus.COMPLETE.value
+    # configmap cleanup recorder
+    cleaned_up: list = field(default_factory=list)
 
     @property
     def notifications(self):
@@ -239,6 +241,10 @@ def _make_activities():
         M.ci_poll_calls += 1
         return results[idx]
 
+    @activity.defn(name="cleanup_configmap")
+    async def cleanup_configmap(job_name: str) -> None:
+        M.cleaned_up.append(job_name)
+
     # dispatch_agent_job is dispatched on JOB_DISPATCH_QUEUE (issue #73); the
     # rest stay on ORCHESTRATION_QUEUE. Returned as two lists so the test
     # harness can register each with the Worker polling its queue.
@@ -252,6 +258,7 @@ def _make_activities():
             post_github_comment,
             request_github_reviewer,
             poll_ci_checks,
+            cleanup_configmap,
         ],
     }
 
@@ -306,6 +313,24 @@ def test_render_plan_names_next_issue_and_candidates():
     assert "round 3" in text
     assert "#1 — First" in text and "agent/issue-1" in text
     assert "#2 — Second" in text  # listed as another candidate
+
+
+# --------------------------------------------------------------------------- #
+# ConfigMap cleanup (issue #99)
+# --------------------------------------------------------------------------- #
+@pytest.mark.asyncio
+async def test_configmap_cleaned_up_after_each_completed_dispatch(reset_mocks):
+    """Every completed Agent Execution Job must have its output ConfigMap
+    deleted once the workflow has consumed the result."""
+    reset_mocks.plan_rounds = [_one_issue(1)]
+    inp = DevLoopInput(
+        project_id="omneval",
+        triggering_issue=1,
+        max_iterations=1,
+    )
+    await _env_and_run(inp)
+    # plan + execute + review = 3 dispatches → 3 configmap cleanups
+    assert len(reset_mocks.cleaned_up) >= 3
 
 
 # --------------------------------------------------------------------------- #
@@ -482,6 +507,25 @@ async def test_execute_mid_run_question_spawns_answer_job(reset_mocks):
         and "use lib a — it matches existing conventions." in n.lower()
         for n in M.notifications
     )
+
+
+@pytest.mark.asyncio
+async def test_configmap_cleaned_up_after_awaiting_human_loop_resolves(reset_mocks):
+    """The output ConfigMap for a job that parks on AWAITING_HUMAN must be
+    cleaned up after the question loop resolves — not before, since the
+    workflow still needs to patch the answer into it."""
+    reset_mocks.plan_rounds = [_one_issue(1)]
+    reset_mocks.dispatch_behavior[("execute", 1)] = AgentJobResult(
+        status=JobStatus.AWAITING_HUMAN.value,
+        job_name="j1",
+        issue_number=1,
+        question="Use lib A or B?",
+        branch="agent/issue-1",
+    )
+    await _env_and_run(DevLoopInput("omneval"))
+
+    # The parked execute job's ConfigMap must be cleaned up after the loop
+    assert "j1" in reset_mocks.cleaned_up
 
 
 @pytest.mark.asyncio

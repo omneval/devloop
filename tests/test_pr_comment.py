@@ -113,6 +113,10 @@ def _make_activities():
         M.pr_branch_lookups.append(inp)
         return M.pr_branch_result
 
+    @activity.defn(name="cleanup_configmap")
+    async def cleanup_configmap(job_name: str) -> None:
+        pass
+
     return {
         "dispatch": [dispatch_agent_job],
         "orchestration": [
@@ -120,6 +124,7 @@ def _make_activities():
             request_github_reviewer,
             poll_ci_checks,
             get_pr_branch,
+            cleanup_configmap,
         ],
     }
 

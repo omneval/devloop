@@ -283,16 +283,16 @@ async def test_dispatch_attaches_to_existing_job_on_conflict(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_cleanup_deletes_job_and_configmap(monkeypatch):
+async def test_cleanup_deletes_configmap_only(monkeypatch):
     batch = FakeBatch([(1, None)])
     core = FakeCore([None])
     _patch(monkeypatch, batch, core)
 
     await ActivityEnvironment().run(
-        k8s_jobs.cleanup_agent_job, "agent-omneval-execute-42-a1"
+        k8s_jobs.cleanup_configmap, "agent-omneval-execute-42-a1"
     )
-    assert batch.deleted == ["agent-omneval-execute-42-a1"]
     assert core.deleted == ["agent-omneval-execute-42-a1"]
+    assert batch.deleted == [], "Job deletion should be left to K8s ttlSecondsAfterFinished"
 
 
 # --------------------------------------------------------------------------- #
