@@ -1194,35 +1194,27 @@ def handle_execute(spec: TaskSpec, tracer) -> dict:
 
 
 def handle_review(spec: TaskSpec, tracer) -> dict:
-    """Review phase: the reviewer prompt refines the branch in place (clarity,
-    consistency, standards) and commits. Any refinements are pushed back to the
-    branch; functionality is preserved."""
+    """Review phase: comment-only analysis with structured verdict.
+
+    The agent analyses the diff and posts findings. No commits are made — the
+    branch history after Review contains zero new commits. Returns a verdict
+    (lgtm / needs_fixes / needs_human) via structured_extractor so the
+    workflow can act on it.
+    """
     workdir = os.getenv("WORKDIR", "/workspace/repo")
     with tracer.start_as_current_span("clone"):
         clone_repo(os.environ["GITHUB_URL"], spec.branch, workdir)
     with tracer.start_as_current_span("install_deps"):
         install_deps(workdir)
 
-    base_sha = _run(["git", "rev-parse", "HEAD"], cwd=workdir).strip()
     outcome = run_agent(spec, workdir, tracer)
-
-    _run(["git", "add", "-A"], cwd=workdir)
-    if _run(["git", "status", "--porcelain"], cwd=workdir).strip():
-        _run(
-            ["git", "commit", "-m", f"review: refine #{spec.issue_number}"], cwd=workdir
-        )
-
-    refinements = _commit_count(workdir, base_sha)
-    if refinements:
-        with tracer.start_as_current_span("push"):
-            push_branch(workdir, spec.branch, force=True)
     review_model = structured_extractor(outcome.summary, ReviewOutput)
     review = review_model.model_dump()
     return AgentJobResult(
         status="complete",
         issue_number=spec.issue_number,
         branch=spec.branch,
-        commits=refinements,
+        commits=0,
         review=review,
         summary=outcome.summary,
     ).to_payload()

@@ -353,6 +353,122 @@ def test_structured_extractor_strips_provider_prefix_from_model(monkeypatch):
     assert kwargs["model"] == "qwen3.6-27b-mtp"
 
 
+# --------------------------------------------------------------------------- #
+# Review phase — comment-only, no commits (#55)
+# --------------------------------------------------------------------------- #
+
+
+def test_review_phase_produces_zero_commits(tmp_path, monkeypatch):
+    """handle_review() must not execute any git commit commands — the Review
+    phase is comment-only; branch history after Review contains zero new
+    commits even if the agent edits files during analysis."""
+    from unittest.mock import MagicMock, patch
+
+    workdir = tmp_path / "repo"
+    out_file = tmp_path / "out.json"
+    bare = tmp_path / "origin.git"
+    bare.mkdir()
+    _git("init", "--bare", "-b", "main", cwd=bare)
+
+    seed = tmp_path / "seed"
+    seed.mkdir()
+    _git("init", "-b", "main", cwd=seed)
+    _git("config", "user.email", "t@t.com", cwd=seed)
+    _git("config", "user.name", "t", cwd=seed)
+    (seed / "README.md").write_text("hello\n")
+    _git("add", "-A", cwd=seed)
+    _git("commit", "-m", "init", cwd=seed)
+    _git("checkout", "-b", "agent/issue-42", cwd=seed)
+    _git("remote", "add", "origin", str(bare), cwd=seed)
+    _git("push", "origin", "main", cwd=seed)
+    _git("push", "origin", "agent/issue-42", cwd=seed)
+
+    def fake_run_agent(spec, wd, tracer):
+        # Even if the agent modifies files, review must not commit them.
+        Path(wd, "review-note.txt").write_text("review comment\n")
+        return entrypoint.AgentOutcome(
+            summary="Code looks clean. No issues found.",
+        )
+
+    monkeypatch.setattr(entrypoint, "run_agent", fake_run_agent)
+    monkeypatch.setenv("AGENT_MODEL", "test-model")
+    monkeypatch.setenv("AGENT_LLM_API_KEY", "fake-key")
+    monkeypatch.setenv("AGENT_LLM_BASE_URL", "http://fake")
+
+    review_json = json.dumps(
+        {"summary": "Code looks clean.", "verdict": "lgtm", "inline_comments": []}
+    )
+    mock_response = MagicMock()
+    mock_response.choices[0].message.content = review_json
+
+    with patch.object(entrypoint, "_get_llm_client") as mock_client_fn:
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.return_value = mock_response
+        mock_client_fn.return_value = mock_client
+
+        # Track subprocess calls — we care about git commit
+        with patch("subprocess.run", wraps=subprocess.run) as run_mock:
+            monkeypatch.setenv(
+                "TASK_SPEC",
+                json.dumps(
+                    {
+                        "phase": "review",
+                        "project_id": "omneval",
+                        "issue_number": 42,
+                        "branch": "agent/issue-42",
+                    }
+                ),
+            )
+            monkeypatch.setenv("GITHUB_URL", str(bare))
+            monkeypatch.setenv("DEFAULT_BRANCH", "main")
+            monkeypatch.setenv("WORKDIR", str(workdir))
+            monkeypatch.setenv("OUTPUT_CONFIGMAP", "agent-omneval-review-42-a1")
+            monkeypatch.setenv("OUTPUT_FILE", str(out_file))
+            monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+
+            rc = entrypoint.main()
+            assert rc == 0
+
+            # Verify no "git commit" was called
+            commit_calls = [
+                c for c in run_mock.call_args_list if "commit" in str(c)
+            ]
+            assert not commit_calls, (
+                f"handle_review() must not call git commit, but found: {commit_calls}"
+            )
+
+    payload = json.loads(out_file.read_text())
+    assert payload["status"] == "complete"
+    assert payload["commits"] == 0
+    assert payload["review"]["verdict"] == "lgtm"
+
+
+def test_review_prompt_has_no_commit_instructions(monkeypatch):
+    """review.md must not instruct the agent to make commits or edit files —
+    the Review phase is comment-only (#55)."""
+    prompts_dir = Path(__file__).parent / "prompts"
+    monkeypatch.setenv("AGENT_PROMPTS_DIR", str(prompts_dir))
+
+    spec = entrypoint.TaskSpec(
+        phase="review",
+        project_id="omneval",
+        issue_number=42,
+        branch="agent/issue-42",
+    )
+    msg = entrypoint.build_agent_message(spec)
+
+    commit_keywords = [
+        "commit",
+        "Make the changes directly",
+        "do nothing",
+        "preserve functionality",
+    ]
+    for kw in commit_keywords:
+        assert kw.lower() not in msg.lower(), (
+            f"review.md must not contain '{kw}' — Review phase is comment-only"
+        )
+
+
 def test_unknown_phase_writes_failure(tmp_path, monkeypatch):
     out_file = tmp_path / "out.json"
     monkeypatch.setenv("TASK_SPEC", json.dumps({"phase": "bogus", "project_id": "x"}))

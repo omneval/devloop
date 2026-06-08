@@ -1,6 +1,7 @@
 # TASK
 
-Review the code changes on branch `{{BRANCH}}` and improve code clarity, consistency, and maintainability while preserving exact functionality.
+Review the code changes on branch `{{BRANCH}}`. This is a **comment-only** review — do
+not edit any files. Analyse the diff, post findings, and return a structured verdict.
 
 # CONTEXT
 
@@ -13,9 +14,9 @@ git log {{SOURCE_BRANCH}}..{{BRANCH}} --oneline
 
 # REVIEW PROCESS
 
-1. **Understand the change**: Read the diff and commits above to understand the intent.
+1. **Understand the change**: Read the diff to understand the intent.
 
-2. **Analyze for improvements**: Look for opportunities to:
+2. **Analyse for improvements**: Look for opportunities to:
    - Reduce unnecessary complexity and nesting
    - Eliminate redundant code and abstractions
    - Improve readability through clear variable and function names (prefer verbose over terse)
@@ -29,38 +30,20 @@ git log {{SOURCE_BRANCH}}..{{BRANCH}} --oneline
    - Are errors handled rather than swallowed?
    - Does the change introduce injection vulnerabilities, credential leaks, or other security issues?
 
-4. **Maintain balance**: Avoid over-simplification that could:
-   - Reduce code clarity or maintainability
-   - Create overly clever solutions that are hard to understand
-   - Combine too many concerns into single functions
-   - Remove helpful abstractions that improve code organization
-   - Make the code harder to debug or extend
-
-5. **Apply project standards**: If the repo documents coding standards (e.g. a CODING_STANDARDS.md or CONTRIBUTING.md), read and follow them.
-
-6. **Preserve functionality**: Never change what the code does — only how it does it.
-
-# EXECUTION
-
-If you find improvements to make:
-
-1. Make the changes directly on this branch
-2. Build, lint, and run the project's test suite to confirm nothing is broken
-3. Commit describing the refinements
-
-If the code is already clean and well-structured, do nothing.
+4. **Apply project standards**: If the repo documents coding standards (e.g. a CODING_STANDARDS.md or CONTRIBUTING.md), read and note any deviations.
 
 # REPORT YOUR FINDINGS
 
-After making any refinements, summarise your review so it can be posted to the
-pull request. Emit a single `<review>` block containing JSON with a plain-English
-`summary` of what you found (and any refinements you made), plus optional
-`inline_comments` anchoring specific notes to a file and line:
+Summarise your review so it can be posted to the pull request. Emit a single
+`<review>` block containing JSON with a plain-English `summary`, optional
+`inline_comments` anchoring specific notes to a file and line, and a `verdict`
+that determines the next workflow step:
 
 ```
 <review>
 {
   "summary": "Tightened error handling in the parser; the change otherwise looks correct and is well tested.",
+  "verdict": "lgtm",
   "inline_comments": [
     {"file": "src/foo.py", "line": 42, "body": "This branch is unreachable — `n` is always > 0 here."}
   ]
@@ -68,7 +51,14 @@ pull request. Emit a single `<review>` block containing JSON with a plain-Englis
 </review>
 ```
 
-`inline_comments` may be an empty list. If the code was already clean and you made
-no changes, still emit a `<review>` block with a short `summary` saying so.
+## Verdict values
+
+- **lgtm** — The change is ready to merge. No further work needed.
+- **needs_fixes** — There are actionable issues that can be resolved automatically.
+  List them in the summary so the Fix Pass agent knows what to address.
+- **needs_human** — The change requires human judgement (ambiguous intent,
+  architectural decisions, or security concerns). The issue will be parked.
+
+`inline_comments` may be an empty list. Always include a `verdict`.
 
 Once complete, YOU MUST output exactly <promise>COMPLETE</promise>.
