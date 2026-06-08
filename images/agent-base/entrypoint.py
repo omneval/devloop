@@ -1310,7 +1310,9 @@ def handle_pr_comment(spec: TaskSpec, tracer) -> dict:
         install_deps(workdir)
 
     pr_number = int(spec.extra.get("pr_number", 0) or 0)
-    spec.extra["pr_diff"] = _fetch_pr_diff(repo_slug(os.environ["GITHUB_URL"]), pr_number)
+    spec.extra["pr_diff"] = _fetch_pr_diff(
+        repo_slug(os.environ["GITHUB_URL"]), pr_number
+    )
 
     base_sha = _run(["git", "rev-parse", "HEAD"], cwd=workdir).strip()
     outcome = run_agent(spec, workdir, tracer)

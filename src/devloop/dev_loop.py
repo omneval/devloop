@@ -107,6 +107,7 @@ class DevLoopResult:
     status: str  # completed | failed_plan
     queued_for_review: list[int] = field(default_factory=list)
     detail: str = ""
+    review_verdicts: dict[int, str] = field(default_factory=dict)
 
 
 _RETRY = RetryPolicy(maximum_attempts=3)
@@ -164,12 +165,16 @@ class DevLoopWorkflow(_WorkflowCommon):
     @workflow.run
     async def run(self, inp: DevLoopInput) -> DevLoopResult:
         queued: list[int] = []
+        verdicts: dict[int, str] = {}
 
         for rnd in range(1, inp.max_iterations + 1):
             plan = await self._plan_phase(inp, rnd)
             if plan is None:
                 return DevLoopResult(
-                    "failed_plan", queued_for_review=queued, detail="plan rejected"
+                    "failed_plan",
+                    queued_for_review=queued,
+                    detail="plan rejected",
+                    review_verdicts=verdicts,
                 )
             issues = plan.get("issues") or []
             if not issues:
@@ -177,7 +182,11 @@ class DevLoopWorkflow(_WorkflowCommon):
                     "No unblocked agent-ready issues remain — Dev Loop complete for %s",
                     inp.project_id,
                 )
-                return DevLoopResult("completed", queued_for_review=queued)
+                return DevLoopResult(
+                    "completed",
+                    queued_for_review=queued,
+                    review_verdicts=verdicts,
+                )
 
             issue = issues[0]  # sequential: work one issue per round
             exec_result = await self._execute_phase(inp, issue)
@@ -190,16 +199,20 @@ class DevLoopWorkflow(_WorkflowCommon):
             if parked:
                 continue
 
-            await self._review_phase(inp, issue, exec_result)
+            verdict = await self._review_phase(inp, issue, exec_result)
             await self._notify_reviewer(inp, issue, exec_result)
             queued.append(_as_int(issue.get("id")))
+            if verdict:
+                verdicts[_as_int(issue.get("id"))] = verdict
 
         workflow.logger.info(
             "Reached max iterations (%d) — pausing Dev Loop for %s.",
             inp.max_iterations,
             inp.project_id,
         )
-        return DevLoopResult("completed", queued_for_review=queued)
+        return DevLoopResult(
+            "completed", queued_for_review=queued, review_verdicts=verdicts
+        )
 
     # ---- Plan phase (#20, #74) ----------------------------------------- #
     async def _plan_phase(self, inp: DevLoopInput, rnd: int) -> dict | None:
@@ -484,10 +497,11 @@ class DevLoopWorkflow(_WorkflowCommon):
             f"🅿️  Parked #{issue_no} — remediation failed. Failing checks:\n{summary}",
         )
 
-    # ---- Review phase (#22) -------------------------------------------- #
+    # ---- Review phase (#22, #55) --------------------------------------- #
     async def _review_phase(
         self, inp: DevLoopInput, issue: dict, exec_result: dict
-    ) -> None:
+    ) -> str | None:
+        """Review the PR and return a verdict string (lgtm/changes_requested/blocked)."""
         issue_no = _as_int(issue.get("id"))
         spec = TaskSpec(
             phase="review",
@@ -506,19 +520,30 @@ class DevLoopWorkflow(_WorkflowCommon):
             issue_number=issue_no,
             poll_interval_seconds=inp.poll_interval_seconds,
         )
-        if result.commits:
-            await self._comment(
-                inp.project_id,
-                issue_no,
-                f"🔎 Reviewed #{issue_no} — pushed {result.commits} refinement commit(s).",
-            )
+        verdict: str | None = None
+        review = result.review or {}
+        if review:
+            verdict = review.get("verdict")
+            if verdict:
+                await self._comment(
+                    inp.project_id,
+                    issue_no,
+                    f"🔎 Reviewed #{issue_no} — verdict: {verdict}.",
+                )
+            else:
+                await self._comment(
+                    inp.project_id,
+                    issue_no,
+                    "🔎 Reviewed #{issue_no} — no changes needed.",
+                )
         else:
             await self._comment(
                 inp.project_id,
                 issue_no,
-                f"🔎 Reviewed #{issue_no} — no changes needed.",
+                "🔎 Reviewed #{issue_no} — no changes needed.",
             )
         await self._post_review_findings(inp, exec_result, result)
+        return verdict
 
     async def _post_review_findings(
         self, inp: DevLoopInput, exec_result: dict, result: AgentJobResult

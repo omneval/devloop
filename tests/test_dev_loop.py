@@ -1000,3 +1000,69 @@ async def test_remediation_parks_issue_on_failure(reset_mocks):
     # A notification comment was posted
     notifications = M.notifications
     assert any("Parked" in msg and "remediation failed" in msg for msg in notifications)
+
+
+# --------------------------------------------------------------------------- #
+# Review phase verdict (#55)
+# --------------------------------------------------------------------------- #
+@pytest.mark.asyncio
+async def test_review_verdict_lgtm_surfaced_in_result(reset_mocks):
+    """When the Review agent returns verdict 'lgtm', DevLoopResult carries it
+    so the workflow can advance to the Merge Gate."""
+    reset_mocks.plan_rounds = [_one_issue(1)]
+    reset_mocks.review_payload = {
+        "verdict": "lgtm",
+        "summary": "Clean implementation, ready to merge.",
+    }
+    result = await _env_and_run(DevLoopInput("omneval"), [])
+    assert result.status == "completed"
+    assert "review" in M.dispatched_phases
+    assert hasattr(result, "review_verdicts"), (
+        "DevLoopResult must expose review_verdicts"
+    )
+    assert 1 in result.review_verdicts
+    assert result.review_verdicts[1] == "lgtm"
+
+
+@pytest.mark.asyncio
+async def test_review_verdict_changes_requested_surfaced(reset_mocks):
+    """When the Review agent returns verdict 'changes_requested', DevLoopResult
+    carries it so the workflow can trigger a Fix Pass."""
+    reset_mocks.plan_rounds = [_one_issue(1)]
+    reset_mocks.review_payload = {
+        "verdict": "changes_requested",
+        "summary": "Needs error handling improvements.",
+    }
+    result = await _env_and_run(DevLoopInput("omneval"), [])
+    assert result.status == "completed"
+    assert "review" in M.dispatched_phases
+    assert result.review_verdicts[1] == "changes_requested"
+
+
+@pytest.mark.asyncio
+async def test_review_verdict_blocked_surfaced(reset_mocks):
+    """When the Review agent returns verdict 'blocked', DevLoopResult carries
+    it so the workflow can park the issue for human review."""
+    reset_mocks.plan_rounds = [_one_issue(1)]
+    reset_mocks.review_payload = {
+        "verdict": "blocked",
+        "summary": "Security concern: hardcoded credentials.",
+    }
+    result = await _env_and_run(DevLoopInput("omneval"), [])
+    assert result.status == "completed"
+    assert "review" in M.dispatched_phases
+    assert result.review_verdicts[1] == "blocked"
+
+
+@pytest.mark.asyncio
+async def test_review_no_verdict_returns_empty(reset_mocks):
+    """When the Review agent returns no verdict, the result has no entry for
+    that issue."""
+    reset_mocks.plan_rounds = [_one_issue(1)]
+    reset_mocks.review_payload = {
+        "summary": "Reviewed, minor notes.",
+    }
+    result = await _env_and_run(DevLoopInput("omneval"), [])
+    assert result.status == "completed"
+    assert "review" in M.dispatched_phases
+    assert 1 not in result.review_verdicts

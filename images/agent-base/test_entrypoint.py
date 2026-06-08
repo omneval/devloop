@@ -430,9 +430,7 @@ def test_review_phase_produces_zero_commits(tmp_path, monkeypatch):
             assert rc == 0
 
             # Verify no "git commit" was called
-            commit_calls = [
-                c for c in run_mock.call_args_list if "commit" in str(c)
-            ]
+            commit_calls = [c for c in run_mock.call_args_list if "commit" in str(c)]
             assert not commit_calls, (
                 f"handle_review() must not call git commit, but found: {commit_calls}"
             )
