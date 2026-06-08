@@ -307,6 +307,21 @@ class ReviewerRequestResult:
     reason: str = ""
 
 
+@dataclass
+class GetPRDiffInput:
+    """Input for the get_pr_diff activity.
+
+    Standalone activity kept for consumers that register it directly
+    (``devloop.github_ops.get_pr_diff``) — devloop's own ``PRCommentWorkflow``
+    no longer calls it (the agent fetches the diff itself via ``gh pr diff``,
+    issue #98), but removing the symbol entirely broke downstream workers that
+    import it for registration on their own task queues.
+    """
+
+    project_id: str
+    pr_number: int
+
+
 # ---------------------------------------------------------------------------
 # Summarization delivery activity I/O (issue #79)
 # ---------------------------------------------------------------------------
