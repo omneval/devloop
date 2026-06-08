@@ -34,6 +34,7 @@ from .k8s_jobs import (
 )
 from .github_ops import (
     file_issues,
+    get_pr_branch,
     get_pr_diff,
     open_agent_pr_issue_numbers,
     poll_ci_checks,
@@ -96,6 +97,7 @@ ORCHESTRATION_ACTIVITIES = [
     post_pr_comments,
     post_github_comment,
     file_issues,
+    get_pr_branch,
     get_pr_diff,
     open_agent_pr_issue_numbers,
     poll_ci_checks,

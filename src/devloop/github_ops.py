@@ -39,6 +39,7 @@ from .projects import ProjectConfig, get_project, parse_github_repo
 from .shared import (
     CICheckFailure,
     CIChecksResult,
+    GetPRBranchInput,
     GetPRDiffInput,
     GithubNotificationInput,
     OpenAgentPRsInput,
@@ -499,6 +500,36 @@ async def get_pr_diff(inp: GetPRDiffInput) -> str:
         resp = c.get(f"/repos/{repo}/pulls/{inp.pr_number}")
         resp.raise_for_status()
         return resp.text
+
+
+@activity.defn
+async def get_pr_branch(inp: GetPRBranchInput) -> str:
+    """Resolve a PR's head branch name from its number via the GitHub REST API.
+
+    ``PRCommentWorkflow`` calls this when the triggering webhook event didn't
+    carry the branch — ``issue_comment`` payloads (an ``@devloop-bot`` mention
+    on a PR) reference the PR only by number, unlike ``pull_request_review``
+    payloads which include ``pull_request.head.ref`` directly (issue #101).
+
+    Returns ``""`` on an unresolvable PR (404, rate limit, GitHub 5xx,
+    connection error) rather than raising — log-and-degrade (issue #87) so
+    the workflow can fail cleanly with an explanatory comment instead of
+    sinking the whole run on a transient GitHub-side hiccup. The caller
+    treats an empty result as "could not resolve" and refuses to dispatch
+    rather than risk an empty-branch clone or a wrong-ref push.
+    """
+    import httpx
+
+    cfg = get_project(inp.project_id)
+    repo = parse_github_repo(cfg.github_url)
+    try:
+        with await _client(cfg) as c:
+            resp = c.get(f"/repos/{repo}/pulls/{inp.pr_number}")
+            resp.raise_for_status()
+            return (resp.json().get("head") or {}).get("ref", "")
+    except httpx.HTTPError as exc:
+        _log_github_api_failure(f"get_pr_branch on {repo}#{inp.pr_number}", exc)
+        return ""
 
 
 _TERMINAL_CONCLUSIONS = {

@@ -308,6 +308,21 @@ class ReviewerRequestResult:
 
 
 @dataclass
+class GetPRBranchInput:
+    """Input for the get_pr_branch activity.
+
+    Resolves a PR's head branch name from its number — needed when the event
+    that triggered ``PRCommentWorkflow`` didn't carry it. ``issue_comment``
+    webhook payloads (an ``@devloop-bot`` mention in a PR conversation)
+    reference the PR only by number; unlike ``pull_request_review`` payloads,
+    they carry no ``pull_request.head.ref`` (issue #101).
+    """
+
+    project_id: str
+    pr_number: int
+
+
+@dataclass
 class GetPRDiffInput:
     """Input for the get_pr_diff activity.
 
