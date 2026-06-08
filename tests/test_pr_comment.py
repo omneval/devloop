@@ -39,12 +39,14 @@ class Mocks:
     ci_poll_calls: int = 0
     ci_fix_commits: list = field(default_factory=lambda: [1])
     ci_fix_status: str = JobStatus.COMPLETE.value
+    pr_branch_result: str = ""
 
     github_comments: list = field(default_factory=list)
     dispatched_phases: list = field(default_factory=list)
     dispatched_specs: list = field(default_factory=list)
     reviewer_requests: list = field(default_factory=list)
     ci_polls: list = field(default_factory=list)
+    pr_branch_lookups: list = field(default_factory=list)
 
     @property
     def notifications(self):
@@ -106,12 +108,18 @@ def _make_activities():
         M.ci_poll_calls += 1
         return results[idx]
 
+    @activity.defn(name="get_pr_branch")
+    async def get_pr_branch(inp) -> str:
+        M.pr_branch_lookups.append(inp)
+        return M.pr_branch_result
+
     return {
         "dispatch": [dispatch_agent_job],
         "orchestration": [
             post_github_comment,
             request_github_reviewer,
             poll_ci_checks,
+            get_pr_branch,
         ],
     }
 
@@ -281,3 +289,71 @@ async def test_pr_comment_workflow_carries_issue_comment_context(reset_mocks):
     assert extra["source"] == "comment"
     assert extra["author"] == "another-human"
     assert extra["comment_body"] == "@devloop-bot please tweak the docstring"
+
+
+# --------------------------------------------------------------------------- #
+# Branch resolution (issue #101)
+# --------------------------------------------------------------------------- #
+@pytest.mark.asyncio
+async def test_pr_comment_workflow_resolves_branch_when_missing(reset_mocks):
+    """``issue_comment`` (an ``@devloop-bot`` mention) webhook payloads carry no
+    ``pull_request.head.ref``, so ``PRCommentInput.branch`` arrives empty. The
+    workflow must resolve the real branch via ``get_pr_branch`` before
+    dispatching — an empty branch makes the agent's ``git clone --branch ''``
+    fail outright (BackoffLimitExceeded)."""
+    reset_mocks.pr_branch_result = "agent/issue-53-rename-helper"
+
+    result = await _env_and_run(_input(branch="", source="comment"))
+
+    assert result.status == "completed"
+    assert len(M.pr_branch_lookups) == 1
+    looked_up = M.pr_branch_lookups[0]
+    assert looked_up["project_id"] == "omneval"
+    assert looked_up["pr_number"] == 17
+
+    pr_comment_specs = [s for s in M.dispatched_specs if s.get("phase") == "pr_comment"]
+    assert pr_comment_specs[0]["branch"] == "agent/issue-53-rename-helper"
+
+
+@pytest.mark.asyncio
+async def test_pr_comment_workflow_skips_lookup_when_branch_known(reset_mocks):
+    """A ``pull_request_review`` payload already carries the head branch — the
+    workflow must dispatch with it directly, without calling ``get_pr_branch``."""
+    result = await _env_and_run(_input(branch="agent/issue-53", source="review"))
+
+    assert result.status == "completed"
+    assert M.pr_branch_lookups == []
+    pr_comment_specs = [s for s in M.dispatched_specs if s.get("phase") == "pr_comment"]
+    assert pr_comment_specs[0]["branch"] == "agent/issue-53"
+
+
+@pytest.mark.asyncio
+async def test_pr_comment_workflow_fails_cleanly_when_branch_unresolvable(reset_mocks):
+    """When the branch can't be resolved (e.g. the PR vanished), the workflow
+    must fail cleanly with an explanatory comment rather than dispatch an
+    Agent Execution Job doomed to ``git clone --branch ''``."""
+    reset_mocks.pr_branch_result = ""
+
+    result = await _env_and_run(_input(branch="", source="comment"))
+
+    assert result.status == "failed"
+    assert "branch resolution failed" in result.detail
+    assert any("could not resolve" in n.lower() for n in M.notifications)
+    assert "pr_comment" not in M.dispatched_phases
+    assert M.reviewer_requests == []
+
+
+@pytest.mark.asyncio
+async def test_pr_comment_workflow_refuses_non_agent_branch(reset_mocks):
+    """A resolved branch that doesn't match ``agent/issue-<N>`` means the
+    mentioned PR isn't agent-owned — dispatching would push (with ``force``)
+    to a human's branch. The workflow must refuse and fail cleanly instead."""
+    reset_mocks.pr_branch_result = "a-humans-feature-branch"
+
+    result = await _env_and_run(_input(branch="", source="comment"))
+
+    assert result.status == "failed"
+    assert "not an agent-owned branch" in result.detail
+    assert any("isn't an agent-owned pr" in n.lower() for n in M.notifications)
+    assert "pr_comment" not in M.dispatched_phases
+    assert M.reviewer_requests == []
