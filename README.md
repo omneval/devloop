@@ -1,9 +1,145 @@
 # devloop
-Generic Autonomous AI Workflow for improving codebases
 
-See [docs/getting-started.md](docs/getting-started.md) for full setup instructions.
+[![CI](https://github.com/omneval/devloop/actions/workflows/ci.yml/badge.svg)](https://github.com/omneval/devloop/actions/workflows/ci.yml)
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://github.com/omneval/devloop/blob/main/LICENSE)
+[![PyPI](https://img.shields.io/pypi/v/omneval-devloop.svg)](https://pypi.org/project/omneval-devloop/)
+[![Python >=3.12](https://img.shields.io/badge/python->=3.12-blue.svg)](https://www.python.org/downloads/)
 
----
+devloop is an open-source framework that runs autonomous, agent-driven code improvement workflows on your own Kubernetes cluster. It packages the Dev Loop engine — Plan → Execute → CI Fix Loop → Review — as a reusable Python SDK (`omneval-devloop`), two container images, and a Helm chart so any team can deploy it without forking.
+
+Triggered by GitHub webhook events, devloop processes issues labeled `agent-ready`: an OpenHands agent reads the issue, writes code, opens a PR, and requests a reviewer. There are no human-approval gates and devloop never merges — it posts a summary comment for a human to review and merge.
+
+## Key Features
+
+- **Autonomous Dev Loop** — Multi-phase workflow (Plan → Execute → CI Fix Loop → Review) that improves enrolled codebases end to end with no human approval gates.
+- **Reusable Python SDK** — The `omneval-devloop` package ships the Dev Loop workflows, activities, and shared dataclasses as a testable library consumers import alongside their own Temporal workflows.
+- **Webhook-driven** — GitHub delivers `issues`, `pull_request_review`, and `issue_comment` events directly to the temporal-worker; no poller, no chat bot.
+- **CI Fix Loop** — After the agent pushes changes, failing CI checks trigger automatic fix attempts (up to a configurable limit) before the PR is handed to a human reviewer.
+- **PR Comment Re-engagement** — Human review comments or `@devloop-bot` mentions on an open agent PR re-engage the agent on the existing branch.
+- **Summarization** — A scheduled workflow generates plain-English digests of closed issues and git diffs, posted as GitHub Issues and optionally forwarded to an outbound webhook.
+- **Agent Skills** — Reusable, model-agnostic capabilities in the AgentSkills format, with progressive disclosure and per-phase allowlists via `skillsByPhase`.
+
+## Prerequisites
+
+- **Python >= 3.12** — the SDK and helper scripts require Python 3.12 or later.
+- **[uv](https://github.com/astral-sh/uv)** — Python package manager used exclusively for dependency management.
+- **Docker** — required to build per-project agent images that extend `devloop-agent-base`.
+- **Kubernetes cluster** — devloop deploys as a Helm chart; `kubectl` must be configured.
+- **Helm 3** — for deploying the `charts/devloop/` chart.
+- **Temporal** — durable orchestration layer; consumers deploy Temporal independently (see [Temporal Prerequisites](docs/temporal-prerequisites.md)).
+- **Public webhook endpoint** — a hostname or tunnel (Cloudflare Tunnel, ngrok, load balancer) that GitHub can reach at `/webhook/github`.
+
+## Installation & Setup
+
+For a complete walkthrough, see **[Getting Started with devloop](docs/getting-started.md)**.
+
+```bash
+# Clone the repository
+git clone https://github.com/omneval/devloop.git
+cd devloop
+
+# Install Python dependencies (SDK + dev tooling)
+uv sync --all-groups
+```
+
+The project consists of:
+
+| Component | Location | Description |
+|-----------|----------|-------------|
+| **omneval-devloop** | `src/devloop/` | Python SDK — install via `pip install omneval-devloop` or `uv sync` |
+| **devloop-agent-base** | `images/agent-base/` | Shared toolchain base image for per-project agents |
+| **devloop-temporal-worker** | `images/temporal-worker/` | Reference Temporal Orchestration Worker image |
+| **Helm chart** | `charts/devloop/` | Kubernetes deployment templates |
+| **Helper scripts** | `scripts/` | CLI utilities (e.g. `restart_workflows.py`) |
+
+## Quick Start
+
+1. **Expose a webhook endpoint** — follow [Step 1](docs/getting-started.md#step-1-expose-a-webhook-ingress-endpoint) (Cloudflare Tunnel, load balancer, or ngrok).
+2. **Install Temporal** — follow [Temporal Prerequisites](docs/temporal-prerequisites.md).
+3. **Deploy the Helm chart**:
+
+```bash
+helm install devloop charts/devloop/ \
+  --set temporalHost=temporal-frontend.agents.svc:7233 \
+  --set temporalWorker.agentJob.llm.model="openai/gpt-4o" \
+  --set temporalWorker.agentJob.llm.baseUrl="https://your-llm-endpoint" \
+  --set temporalWorker.agentJob.llm.apiKey="sk-..." \
+  --namespace agents --create-namespace
+```
+
+4. **Enroll a project** — create a `projects.yaml` and set it as a ConfigMap:
+
+```yaml
+- id: my-project
+  github_url: https://github.com/your-org/your-project
+  default_branch: main
+  agent_image: ghcr.io/your-org/my-project-agent:latest
+  agent_label: agent-ready
+  omneval_ingest_secret: omneval-ingest-secret
+  github_token_secret: devloop-bot-token
+```
+
+5. **Verify** — create an issue with the `agent-ready` label in your GitHub repository. The webhook fires immediately; check worker logs:
+
+```bash
+kubectl logs -n agents -l app.kubernetes.io/component=temporal-worker --tail=20
+```
+
+## Configuration
+
+devloop is configured primarily through Helm values ([`charts/devloop/values.yaml`](charts/devloop/values.yaml)) and environment variables on the temporal-worker pod.
+
+### Helm Values
+
+| Value | Description |
+|-------|-------------|
+| `temporalHost` | **Required** — Temporal frontend gRPC address (e.g. `temporal-frontend.agents.svc:7233`) |
+| `temporalWorker.agentJob.llm.model` | LLM model identifier (e.g. `openai/gpt-4o`) |
+| `temporalWorker.agentJob.llm.baseUrl` | LLM API base URL (must support `response_format`) |
+| `temporalWorker.agentJob.llm.apiKey` | LLM API key (use `apiKeySecret` for production) |
+| `temporalWorker.projectsConfigMap` | ConfigMap name/key for the Project Registry file |
+| `temporalWorker.maxConcurrentJobs` | Maximum concurrent Agent Execution Jobs (default: `1`) |
+| `temporalWorker.ciFixMaxIterations` | Max CI fix loop retries (default: `5`) |
+| `githubApp.*` | GitHub App authentication (recommended over PAT) |
+| `summarization.*` | Weekly digest schedule and delivery options |
+
+See [docs/getting-started.md](docs/getting-started.md) for the full configuration reference.
+
+### Environment Variables
+
+| Variable | Description |
+|----------|-------------|
+| `GITHUB_TOKEN` | devloop-bot PAT (fallback when GitHub App auth is not configured) |
+| `GITHUB_APP_ID` / `GITHUB_APP_PRIVATE_KEY` | GitHub App authentication (short-lived tokens) |
+| `GITHUB_WEBHOOK_SECRET` | HMAC secret for verifying webhook signatures |
+| `AGENT_GITHUB_LOGIN` | GitHub login of the bot account (default: `devloop-bot`) |
+| `AGENT_MODEL` | LLM model identifier (forwarded to Agent Execution Jobs) |
+| `AGENT_LLM_BASE_URL` | LLM API base URL (forwarded to Agent Execution Jobs) |
+
+## Running Tests
+
+```bash
+# Install dependencies
+uv sync --all-groups
+
+# Lint
+uv run ruff check src/ tests/
+
+# Format
+uv run ruff format .
+
+# SDK unit tests
+uv run pytest tests/
+
+# Agent base image tests
+uv run --with openhands-sdk==1.24.0 --with openhands-tools==1.24.0 pytest images/agent-base
+
+# Helm chart tests (requires helm-unittest plugin)
+helm unittest charts/devloop
+
+# Helm chart lint
+helm lint charts/devloop
+```
 
 ## Model Endpoint Requirements
 
@@ -140,3 +276,17 @@ kubectl exec -n <namespace> <temporal-admintools-pod> -- \
 ```
 
 Replace `<task-queue-name>` with the value from your Helm deployment (the `temporalWorker.taskQueue` value, default `devloop-orchestration`). The `<project-id>` must match the `id` field in your `projects.yaml`.
+
+## Contributing
+
+Contributions are welcome! Here's how to get started:
+
+1. **Fork** the repository and create a feature branch (`git checkout -b feature/my-feature`).
+2. **Follow conventions** — review [CONTEXT.md](CONTEXT.md) for domain language, [docs/adr/](docs/adr/) for architecture decisions, and use [uv](https://github.com/astral-sh/uv) for Python dependency management (no `requirements.txt`).
+3. **Run tests** before pushing: `uv run ruff check src/ tests/ && uv run pytest tests/`.
+4. **Use Conventional Commits** — prefix messages with `feat:`, `fix:`, `chore:`, `docs:`, or `test:`.
+5. **Open a Pull Request** against `main` with a clear description of the change.
+
+## License
+
+This project is licensed under the [Apache License, Version 2.0](LICENSE).
