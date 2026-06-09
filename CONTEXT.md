@@ -16,6 +16,10 @@ _Avoid_: planning agent, issue sorter
 A Temporal workflow run on a configurable schedule (`summarization.cronSchedule`, disabled by default). Reads the git diff and closed issues since the last run, generates a plain-English explanation of what changed and why, opens (or appends to) a `devloop-summary`-labelled GitHub Issue via the `publish_summary` activity, and optionally POSTs the digest as JSON to `SUMMARIZATION_WEBHOOK_URL` (fire-and-forget) for consumers who want to bridge it elsewhere.
 _Avoid_: changelog agent, diff summarizer
 
+**Code Quality Workflow**:
+An optional, scheduled Temporal workflow (`codeQuality.enabled: false` by default) that runs [sentrux](https://github.com/sentrux/sentrux) against an enrolled codebase and checks the result against a configurable quality threshold (`codeQuality.qualityThreshold`, 0–10000 native sentrux scale, default 7000). Opens a parent tracking GitHub Issue labeled `devloop-code-quality` at the start of each run. Two phases: `Phase.CODE_QUALITY_SCAN` (Agent Execution Job clones default branch, runs `sentrux check .`, returns a structured score + report via `CodeQualityScanResult`) and `Phase.CODE_QUALITY_IMPROVE` (Agent Execution Job equipped with the `improve-codebase-architecture`, `to-issues`, and `tdd` skills that analyses the codebase informed by the sentrux report and files vertically-sliced improvement issues as sub-issues of the parent tracking issue). If the score meets the threshold the parent issue is closed as passing; if the enrolled repo has no `.sentrux/rules.toml` the workflow aborts with an error comment rather than treating the missing config as a quality failure.
+_Avoid_: quality agent, code scan workflow, sentrux workflow
+
 **Project Registry**:
 A YAML config file (owned by the consumer, typically `agents/projects.yaml` in their GitOps repo) enumerating all repos enrolled for Dev Loop management. Each entry declares: GitHub repo URL, agent image reference, default branch, `agent-ready` label name, omneval ingest secret name, and GitHub token secret name. Adding a project is a change to the consumer's repo — no dynamic registration.
 _Avoid_: agent config, project database
