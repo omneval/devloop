@@ -58,6 +58,9 @@ class _FakeHandle:
         )
         self.applied = result.schedule
 
+    async def delete(self):
+        pass  # best-effort deletion; swallowed by _delete_if_exists
+
 
 class _FakeDescription:
     def __init__(self, schedule: Schedule):
@@ -214,10 +217,11 @@ async def test_ensure_schedules_survives_reconciliation_timeout():
     # Must not raise despite every update timing out.
     await schedules.ensure_schedules(client, [_project("omneval"), _project("devloop")])
 
-    # Only weekly schedules are now attempted (nightly removed).
-    assert set(client.handles) == {
-        "summarize-weekly-omneval",
-        "summarize-weekly-devloop",
-    }
+    # Weekly summarization schedules are attempted (nightly removed).
+    assert "summarize-weekly-omneval" in client.handles
+    assert "summarize-weekly-devloop" in client.handles
     # No nightly handles created.
     assert not any(k.startswith("devloop-nightly-") for k in client.handles)
+    # code-quality schedules are attempted for deletion (disabled by default).
+    assert "code-quality-omneval" in client.handles
+    assert "code-quality-devloop" in client.handles
