@@ -1502,6 +1502,7 @@ def handle_code_quality_scan(spec: TaskSpec, tracer) -> dict:
     return AgentJobResult(
         status="complete",
         summary=outcome.summary,
+        plan=result.model_dump(),
     ).to_payload()
 
 
