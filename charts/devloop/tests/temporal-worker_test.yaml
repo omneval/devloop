@@ -471,12 +471,12 @@ tests:
           path: spec.template.spec.containers[0].env
           content:
             name: GIT_AUTHOR_NAME
-            value: "homelab-agent"
+            value: "devloop-bot"
       - contains:
           path: spec.template.spec.containers[0].env
           content:
             name: GIT_AUTHOR_EMAIL
-            value: "agent@blosshomelab.com"
+            value: "devloop-bot@omneval.com"
 
   - it: renders GIT_AUTHOR_NAME and GIT_AUTHOR_EMAIL from agent.gitName/agent.gitEmail (issue #93)
     template: templates/temporal-worker-deployment.yaml
@@ -521,14 +521,10 @@ tests:
     set:
       temporalHost: "temporal-frontend.agents.svc:7233"
     asserts:
-      - notContains:
+      - notExists:
           path: spec.template.spec.volumes
-          content:
-            name: projects-config
-      - notContains:
+      - notExists:
           path: spec.template.spec.containers[0].volumeMounts
-          content:
-            name: projects-config
 
   - it: mounts projects.yaml from a ConfigMap at projectsFile when projectsConfigMap.name is set (issue #101)
     template: templates/temporal-worker-deployment.yaml
@@ -609,3 +605,26 @@ tests:
           path: spec.template.spec.containers[0].env
           content:
             name: AGENT_SKILLS_CONFIGMAP
+
+  - it: defaults AGENT_JOB_ACTIVE_DEADLINE to 7200 when maxAgentRuntime is unset (issue #104)
+    template: templates/temporal-worker-deployment.yaml
+    set:
+      temporalHost: "temporal-frontend.agents.svc:7233"
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: AGENT_JOB_ACTIVE_DEADLINE
+            value: "7200"
+
+  - it: sets AGENT_JOB_ACTIVE_DEADLINE from temporalWorker.agentJob.maxAgentRuntime (issue #104)
+    template: templates/temporal-worker-deployment.yaml
+    set:
+      temporalHost: "temporal-frontend.agents.svc:7233"
+      temporalWorker.agentJob.maxAgentRuntime: 10800
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: AGENT_JOB_ACTIVE_DEADLINE
+            value: "10800"

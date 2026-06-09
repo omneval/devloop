@@ -105,6 +105,8 @@ spec:
               value: {{ .Values.temporalWorker.taskQueue | quote }}
             - name: AGENT_JOB_SERVICE_ACCOUNT
               value: {{ include "devloop.agentJob.serviceAccountName" . | quote }}
+            - name: AGENT_JOB_ACTIVE_DEADLINE
+              value: {{ .Values.temporalWorker.agentJob.maxAgentRuntime | default 7200 | quote }}
             {{- with .Values.temporalWorker.agentJob.resources.requests.cpu }}
             - name: AGENT_JOB_CPU
               value: {{ . | quote }}

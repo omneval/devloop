@@ -12,7 +12,10 @@ from kubernetes.client.exceptions import ApiException
 from temporalio.exceptions import ApplicationError
 from temporalio.testing import ActivityEnvironment
 
+from datetime import timedelta
+
 from devloop import k8s_jobs
+from devloop._constants import _ACTIVITY_TIMEOUT
 from devloop.projects import ProjectConfig, _REGISTRY
 from devloop.shared import DispatchInput, JobStatus, TaskSpec
 
@@ -401,6 +404,22 @@ def test_render_job_does_not_inject_openai_base_url():
         e["name"] for e in manifest["spec"]["template"]["spec"]["containers"][0]["env"]
     }
     assert "OPENAI_BASE_URL" not in env_names
+
+
+def test_activity_timeout_is_deadline_plus_90s_buffer():
+    """_ACTIVITY_TIMEOUT must exceed JOB_ACTIVE_DEADLINE by exactly 90 seconds.
+    This buffer ensures Temporal always outlasts the K8s pod and can detect
+    failure cleanly, preventing a runaway job when the workflow gives up first."""
+    assert _ACTIVITY_TIMEOUT == timedelta(seconds=k8s_jobs.JOB_ACTIVE_DEADLINE + 90)
+
+
+def test_render_job_sets_active_deadline_from_job_active_deadline(monkeypatch):
+    """render_job must set activeDeadlineSeconds from JOB_ACTIVE_DEADLINE so that
+    changing AGENT_JOB_ACTIVE_DEADLINE (via helm maxAgentRuntime) caps the pod
+    lifetime and prevents the K8s job from outliving the Temporal workflow."""
+    monkeypatch.setattr(k8s_jobs, "JOB_ACTIVE_DEADLINE", 10800)
+    manifest = k8s_jobs.render_job(_dispatch_input(), "agent-omneval-execute-42-a1")
+    assert manifest["spec"]["activeDeadlineSeconds"] == 10800
 
 
 def test_render_job_does_not_set_otel_service_name_from_env(monkeypatch):

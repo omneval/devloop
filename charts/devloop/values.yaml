@@ -63,6 +63,12 @@ temporalWorker:
       create: true
       name: ""       # defaults to <release>-agent-job
       annotations: {}
+    # Maximum wall-clock seconds an Agent Execution Job pod is allowed to run
+    # before Kubernetes terminates it (activeDeadlineSeconds). Forwarded as
+    # AGENT_JOB_ACTIVE_DEADLINE. The Temporal activity timeout is derived from
+    # this value internally (deadline + 90s buffer) so the workflow always
+    # outlasts the pod and can detect failure cleanly. Default: 7200 (2 hours).
+    maxAgentRuntime: 7200
     # Resource requests and limits for each spawned Agent Execution Job pod.
     # Mirrors the standard Kubernetes resources structure. Omit a section (or
     # leave values empty) to fall back to the application defaults

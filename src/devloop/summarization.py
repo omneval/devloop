@@ -16,12 +16,11 @@ from dataclasses import dataclass, field
 from datetime import timedelta
 
 from temporalio import workflow
-from temporalio.common import RetryPolicy
+
+from ._constants import _RETRY
 
 with workflow.unsafe.imports_passed_through():
     from .shared import JOB_DISPATCH_QUEUE, ORCHESTRATION_QUEUE, PublishSummaryInput
-
-_RETRY = RetryPolicy(maximum_attempts=3)
 
 
 @dataclass

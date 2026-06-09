@@ -16,6 +16,7 @@ from temporalio import workflow
 from temporalio.common import RetryPolicy
 
 from . import dev_loop_logic as logic
+from ._constants import _ACTIVITY_TIMEOUT, _GITHUB_COMMENT_TIMEOUT, _RETRY
 from .shared import (
     AgentJobResult,
     CIChecksResult,
@@ -30,9 +31,6 @@ from .shared import (
     TaskSpec,
 )
 
-_RETRY = RetryPolicy(maximum_attempts=3)
-_ACTIVITY_TIMEOUT = timedelta(hours=2)
-_GITHUB_COMMENT_TIMEOUT = timedelta(seconds=60)
 _CLEANUP_RETRY = RetryPolicy(maximum_attempts=1)
 
 # Bounded backoff for "CI still pending" re-polls within a single ci_fix

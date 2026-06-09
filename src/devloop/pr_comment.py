@@ -19,12 +19,10 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from datetime import timedelta
-
 from temporalio import workflow
-from temporalio.common import RetryPolicy
 
 from . import dev_loop_logic as logic
+from ._constants import _GITHUB_COMMENT_TIMEOUT, _RETRY
 from ._workflow_common import _WorkflowCommon
 from .shared import (
     GetPRBranchInput,
@@ -32,9 +30,6 @@ from .shared import (
     Phase,
     TaskSpec,
 )
-
-_RETRY = RetryPolicy(maximum_attempts=3)
-_GITHUB_COMMENT_TIMEOUT = timedelta(seconds=60)
 
 # Agent issue branches are named ``agent/issue-<N>[-slug]`` (see entrypoint.py /
 # github_ops._AGENT_BRANCH / webhook._AGENT_BRANCH). ``_handle_pull_request_review``

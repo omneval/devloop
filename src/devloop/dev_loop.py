@@ -21,6 +21,7 @@ from temporalio import workflow
 from temporalio.common import RetryPolicy
 
 from . import dev_loop_logic as logic
+from ._constants import _ACTIVITY_TIMEOUT, _GITHUB_COMMENT_TIMEOUT, _RETRY
 from ._workflow_common import _WorkflowCommon
 from .shared import (
     AgentJobResult,
@@ -110,10 +111,6 @@ class DevLoopResult:
     detail: str = ""
     review_verdicts: dict[int, str] = field(default_factory=dict)
 
-
-_RETRY = RetryPolicy(maximum_attempts=3)
-_ACTIVITY_TIMEOUT = timedelta(hours=2)
-_GITHUB_COMMENT_TIMEOUT = timedelta(seconds=60)
 
 
 def _as_int(value) -> int:
