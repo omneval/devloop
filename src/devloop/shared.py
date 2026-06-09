@@ -37,6 +37,8 @@ class Phase(str, Enum):
     SUMMARIZE = "summarize"
     ANSWER = "answer"
     PR_COMMENT = "pr_comment"
+    CODE_QUALITY_SCAN = "code_quality_scan"
+    CODE_QUALITY_IMPROVE = "code_quality_improve"
 
 
 class JobStatus(str, Enum):
@@ -355,3 +357,32 @@ class PublishSummaryInput:
     project_id: str
     summary: str
     date: str  # ISO date string, e.g. "2026-06-06"
+
+
+@dataclass
+class CreateGithubIssueInput:
+    """Input for the create_github_issue activity.
+
+    Creates a new GitHub Issue with the given title, body, and labels.
+    Returns the created issue number.
+    """
+
+    project_id: str
+    title: str
+    body: str
+    labels: list[str]
+
+
+@dataclass
+class UpdateGithubIssueInput:
+    """Input for the update_github_issue activity.
+
+    Patches an existing GitHub Issue's body and/or state.
+    Only non-empty fields are included in the PATCH payload.
+    ``state`` accepts ``"closed"`` or ``""`` (no change).
+    """
+
+    project_id: str
+    issue_number: int
+    body: str = ""
+    state: str = ""  # accepts "closed" or "" (no change)
