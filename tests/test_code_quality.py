@@ -14,9 +14,7 @@ import pytest
 from temporalio import activity
 from temporalio.client import (
     Schedule,
-    ScheduleActionStartWorkflow,
     ScheduleAlreadyRunningError,
-    ScheduleSpec,
 )
 from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import Worker
@@ -119,7 +117,6 @@ def _make_activities(calls: _WorkflowCalls, scan_plan: dict, improve_summary: st
 
     @activity.defn(name="dispatch_agent_job")
     async def dispatch_agent_job(inp: DispatchInput) -> AgentJobResult:
-        spec = inp.task_spec if not isinstance(inp.task_spec, dict) else type("S", (), inp.task_spec)()
         phase = inp.task_spec.phase if not isinstance(inp.task_spec, dict) else inp.task_spec["phase"]
         calls.dispatches.append({"task_spec": inp.task_spec})
         if phase == Phase.CODE_QUALITY_SCAN.value:

@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import timedelta
 
 from temporalio import workflow
 
@@ -10,8 +9,6 @@ with workflow.unsafe.imports_passed_through():
     from ._workflow_common import _RETRY, _GITHUB_COMMENT_TIMEOUT, _WorkflowCommon
     from .shared import (
         CreateGithubIssueInput,
-        JOB_DISPATCH_QUEUE,
-        ORCHESTRATION_QUEUE,
         Phase,
         TaskSpec,
         UpdateGithubIssueInput,

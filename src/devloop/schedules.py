@@ -256,7 +256,7 @@ async def ensure_schedules(
         if not code_quality_enabled:
             await _delete_if_exists(client, cq_schedule_id)
         else:
-            from .code_quality import CodeQualityInput, CodeQualityWorkflow
+            from .code_quality import CodeQualityInput
             await _ensure(
                 client,
                 cq_schedule_id,
