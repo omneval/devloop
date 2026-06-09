@@ -18,10 +18,9 @@ from dataclasses import dataclass, field
 from datetime import timedelta
 
 from temporalio import workflow
-from temporalio.common import RetryPolicy
 
 from . import dev_loop_logic as logic
-from ._constants import _ACTIVITY_TIMEOUT, _GITHUB_COMMENT_TIMEOUT, _RETRY
+from ._constants import _ACTIVITY_TIMEOUT, _RETRY
 from ._workflow_common import _WorkflowCommon
 from .shared import (
     AgentJobResult,
@@ -110,7 +109,6 @@ class DevLoopResult:
     queued_for_review: list[int] = field(default_factory=list)
     detail: str = ""
     review_verdicts: dict[int, str] = field(default_factory=dict)
-
 
 
 def _as_int(value) -> int:

@@ -295,7 +295,9 @@ async def test_cleanup_deletes_configmap_only(monkeypatch):
         k8s_jobs.cleanup_configmap, "agent-omneval-execute-42-a1"
     )
     assert core.deleted == ["agent-omneval-execute-42-a1"]
-    assert batch.deleted == [], "Job deletion should be left to K8s ttlSecondsAfterFinished"
+    assert batch.deleted == [], (
+        "Job deletion should be left to K8s ttlSecondsAfterFinished"
+    )
 
 
 # --------------------------------------------------------------------------- #
