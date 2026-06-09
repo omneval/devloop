@@ -91,3 +91,18 @@ def test_llm_summary_uses_agent_llm_base_url(monkeypatch):
         f"Expected AGENT_LLM_BASE_URL to control the endpoint, got {called_url!r}"
     )
     assert result == "summary text"
+
+
+# ---- Phase enum additions for CodeQualityWorkflow (#108) ------------------ #
+
+
+def test_phase_code_quality_scan_value():
+    """Phase.CODE_QUALITY_SCAN must equal 'code_quality_scan'."""
+    assert Phase.CODE_QUALITY_SCAN == "code_quality_scan"
+    assert Phase.CODE_QUALITY_SCAN.value == "code_quality_scan"
+
+
+def test_phase_code_quality_improve_value():
+    """Phase.CODE_QUALITY_IMPROVE must equal 'code_quality_improve'."""
+    assert Phase.CODE_QUALITY_IMPROVE == "code_quality_improve"
+    assert Phase.CODE_QUALITY_IMPROVE.value == "code_quality_improve"

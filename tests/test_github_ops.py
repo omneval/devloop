@@ -10,18 +10,22 @@ from devloop import github_ops
 from devloop.github_ops import (
     FileIssuesInput,
     NewIssue,
+    create_github_issue,
     file_issues,
     poll_ci_checks,
     post_github_comment,
     post_pr_comments,
     request_github_reviewer,
+    update_github_issue,
 )
 from devloop.shared import (
+    CreateGithubIssueInput,
     GithubNotificationInput,
     InlineComment,
     PollCIChecksInput,
     PostCommentsInput,
     RequestReviewerInput,
+    UpdateGithubIssueInput,
 )
 from devloop.projects import ProjectConfig, _REGISTRY
 
@@ -224,6 +228,9 @@ class ErrorClient:
     def post(self, url, json=None):
         return self._error_response("POST", url)
 
+    def patch(self, url, json=None):
+        return self._error_response("PATCH", url)
+
 
 @pytest.mark.asyncio
 async def test_post_github_comment_degrades_gracefully_on_404(monkeypatch):
@@ -285,3 +292,179 @@ async def test_poll_ci_checks_degrades_gracefully_on_404(monkeypatch):
     assert result.all_passed is False
     assert result.pending is True
     assert result.failures == []
+
+
+# --------------------------------------------------------------------------- #
+# Code Quality issue lifecycle activities (#108)
+# --------------------------------------------------------------------------- #
+
+
+def test_create_github_issue_input_has_required_fields():
+    """CreateGithubIssueInput carries project_id, title, body, labels."""
+    inp = CreateGithubIssueInput(
+        project_id="my-proj",
+        title="Test issue",
+        body="Test body",
+        labels=["bug"],
+    )
+    assert inp.project_id == "my-proj"
+    assert inp.title == "Test issue"
+    assert inp.body == "Test body"
+    assert inp.labels == ["bug"]
+
+
+def test_update_github_issue_input_has_fields():
+    """UpdateGithubIssueInput carries project_id, issue_number, with optional
+    body and state."""
+    inp = UpdateGithubIssueInput(
+        project_id="my-proj",
+        issue_number=42,
+        body="Updated body",
+        state="closed",
+    )
+    assert inp.project_id == "my-proj"
+    assert inp.issue_number == 42
+    assert inp.body == "Updated body"
+    assert inp.state == "closed"
+
+
+def test_update_github_issue_input_defaults():
+    """body and state default to empty strings (no-change sentinel)."""
+    inp = UpdateGithubIssueInput(project_id="my-proj", issue_number=42)
+    assert inp.body == ""
+    assert inp.state == ""
+
+
+@pytest.mark.asyncio
+async def test_create_github_issue_returns_issue_number(monkeypatch):
+    """create_github_issue POSTs to /repos/{repo}/issues and returns the
+    created issue number."""
+    posts = []
+    monkeypatch.setattr(
+        github_ops,
+        "_client",
+        _async_client_factory(lambda: FakeClient(post_capture=posts)),
+    )
+    issue_num = await ActivityEnvironment().run(
+        create_github_issue,
+        CreateGithubIssueInput(
+            project_id="omneval",
+            title="Quality scan report",
+            body="Sentrux scan in progress…",
+            labels=["devloop-code-quality"],
+        ),
+    )
+    assert issue_num == 901
+    assert len(posts) == 1
+    assert "/repos/omneval/omneval/issues" in posts[0][0]
+    assert posts[0][1]["title"] == "Quality scan report"
+    assert posts[0][1]["body"] == "Sentrux scan in progress…"
+    assert posts[0][1]["labels"] == ["devloop-code-quality"]
+
+
+@pytest.mark.asyncio
+async def test_create_github_issue_degrades_on_http_error(monkeypatch):
+    """A failed POST is logged and returns 0 rather than raising."""
+    monkeypatch.setattr(
+        github_ops,
+        "_client",
+        _async_client_factory(lambda: ErrorClient(500, "server error")),
+    )
+    issue_num = await ActivityEnvironment().run(
+        create_github_issue,
+        CreateGithubIssueInput(
+            project_id="omneval",
+            title="Test",
+            body="Body",
+            labels=["label"],
+        ),
+    )
+    assert issue_num == 0
+
+
+@pytest.mark.asyncio
+async def test_update_github_issue_patches_body(monkeypatch):
+    """update_github_issue PATCHes /repos/{repo}/issues/{number} with body."""
+    patches = []
+    monkeypatch.setattr(
+        github_ops,
+        "_client",
+        _async_client_factory(lambda: FakeClient(patch_capture=patches)),
+    )
+    await ActivityEnvironment().run(
+        update_github_issue,
+        UpdateGithubIssueInput(
+            project_id="omneval",
+            issue_number=42,
+            body="Updated body text",
+        ),
+    )
+    assert len(patches) == 1
+    assert "/repos/omneval/omneval/issues/42" in patches[0][0]
+    assert patches[0][1]["body"] == "Updated body text"
+
+
+@pytest.mark.asyncio
+async def test_update_github_issue_patches_state(monkeypatch):
+    """update_github_issue PATCHes state when provided."""
+    patches = []
+    monkeypatch.setattr(
+        github_ops,
+        "_client",
+        _async_client_factory(lambda: FakeClient(patch_capture=patches)),
+    )
+    await ActivityEnvironment().run(
+        update_github_issue,
+        UpdateGithubIssueInput(
+            project_id="omneval",
+            issue_number=42,
+            state="closed",
+        ),
+    )
+    assert len(patches) == 1
+    assert patches[0][1]["state"] == "closed"
+    # body should not be in the payload when empty
+    assert "body" not in patches[0][1]
+
+
+@pytest.mark.asyncio
+async def test_update_github_issue_patches_both_body_and_state(monkeypatch):
+    """update_github_issue includes both body and state when both are set."""
+    patches = []
+    monkeypatch.setattr(
+        github_ops,
+        "_client",
+        _async_client_factory(lambda: FakeClient(patch_capture=patches)),
+    )
+    await ActivityEnvironment().run(
+        update_github_issue,
+        UpdateGithubIssueInput(
+            project_id="omneval",
+            issue_number=42,
+            body="Final report",
+            state="closed",
+        ),
+    )
+    assert len(patches) == 1
+    payload = patches[0][1]
+    assert payload["body"] == "Final report"
+    assert payload["state"] == "closed"
+
+
+@pytest.mark.asyncio
+async def test_update_github_issue_degrades_on_http_error(monkeypatch):
+    """A failed PATCH is logged and swallowed rather than raising."""
+    monkeypatch.setattr(
+        github_ops,
+        "_client",
+        _async_client_factory(lambda: ErrorClient(403, "forbidden")),
+    )
+    # Must not raise.
+    await ActivityEnvironment().run(
+        update_github_issue,
+        UpdateGithubIssueInput(
+            project_id="omneval",
+            issue_number=42,
+            body="Updated",
+        ),
+    )

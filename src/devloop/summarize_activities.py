@@ -28,6 +28,7 @@ class SummaryOutput(BaseModel):
 
     summary: str
 
+
 log = logging.getLogger(__name__)
 
 STATE_CONFIGMAP = os.getenv("SUMMARY_STATE_CONFIGMAP", "dev-loop-summary-state")

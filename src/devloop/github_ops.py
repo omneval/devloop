@@ -39,6 +39,7 @@ from .projects import ProjectConfig, get_project, parse_github_repo
 from .shared import (
     CICheckFailure,
     CIChecksResult,
+    CreateGithubIssueInput,
     GetPRBranchInput,
     GetPRDiffInput,
     GithubNotificationInput,
@@ -47,6 +48,7 @@ from .shared import (
     PostCommentsInput,
     RequestReviewerInput,
     ReviewerRequestResult,
+    UpdateGithubIssueInput,
 )
 
 log = logging.getLogger(__name__)
@@ -656,3 +658,71 @@ async def open_agent_pr_issue_numbers(inp: OpenAgentPRsInput) -> list[int]:
     numbers = agent_pr_issue_numbers(pulls)
     log.info("issues with open agent PRs in %s: %s", repo, numbers)
     return numbers
+
+
+# ---------------------------------------------------------------------------
+# Code Quality issue lifecycle activities (#108)
+# ---------------------------------------------------------------------------
+
+
+@activity.defn
+async def create_github_issue(inp: CreateGithubIssueInput) -> int:
+    """Create a GitHub Issue and return its number.
+
+    Used by the Code Quality Workflow to open a tracking issue that parents
+    the scan/improve cycle.
+
+    A failed POST is logged and returns ``0`` rather than raising.
+    """
+    import httpx
+
+    cfg = get_project(inp.project_id)
+    repo = parse_github_repo(cfg.github_url)
+    try:
+        with await _client(cfg) as c:
+            resp = c.post(
+                f"/repos/{repo}/issues",
+                json={
+                    "title": inp.title,
+                    "body": inp.body,
+                    "labels": inp.labels,
+                },
+            )
+            resp.raise_for_status()
+            issue_number = resp.json()["number"]
+    except httpx.HTTPError as exc:
+        _log_github_api_failure(f"create_issue in {repo}", exc)
+        return 0
+    log.info("created issue #%d in %s", issue_number, repo)
+    return issue_number
+
+
+@activity.defn
+async def update_github_issue(inp: UpdateGithubIssueInput) -> None:
+    """Update an existing GitHub Issue body and/or state.
+
+    Only non-empty fields are included in the PATCH payload, so passing
+    ``body=""`` leaves the body unchanged. ``state="closed"`` closes the
+    issue; ``state=""`` leaves it unchanged.
+
+    A failed PATCH is logged and swallowed rather than raising.
+    """
+    import httpx
+
+    cfg = get_project(inp.project_id)
+    repo = parse_github_repo(cfg.github_url)
+    payload: dict[str, str] = {}
+    if inp.body:
+        payload["body"] = inp.body
+    if inp.state:
+        payload["state"] = inp.state
+    try:
+        with await _client(cfg) as c:
+            c.patch(
+                f"/repos/{repo}/issues/{inp.issue_number}",
+                json=payload,
+            ).raise_for_status()
+    except httpx.HTTPError as exc:
+        _log_github_api_failure(f"update_issue {repo}#{inp.issue_number}", exc)
+        return
+    log.info("updated issue #%d in %s", inp.issue_number, repo)

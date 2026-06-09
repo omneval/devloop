@@ -37,6 +37,8 @@ class Phase(str, Enum):
     SUMMARIZE = "summarize"
     ANSWER = "answer"
     PR_COMMENT = "pr_comment"
+    CODE_QUALITY_SCAN = "code_quality_scan"
+    CODE_QUALITY_IMPROVE = "code_quality_improve"
 
 
 class JobStatus(str, Enum):
@@ -238,6 +240,35 @@ class GithubNotificationInput:
     issue_number: int
     project_id: str
     body: str
+
+
+@dataclass
+class CreateGithubIssueInput:
+    """Input for creating a GitHub Issue via ``create_github_issue``.
+
+    Used by the Code Quality Workflow to open the parent tracking issue
+    before each scan cycle.
+    """
+
+    project_id: str
+    title: str
+    body: str
+    labels: list[str]
+
+
+@dataclass
+class UpdateGithubIssueInput:
+    """Input for updating an existing GitHub Issue via ``update_github_issue``.
+
+    ``body`` and ``state`` default to ``""`` (no-change sentinel) — only
+    non-empty fields are included in the PATCH payload. ``state`` accepts
+    ``"closed"`` to close the issue, or ``""`` to leave the state unchanged.
+    """
+
+    project_id: str
+    issue_number: int
+    body: str = ""
+    state: str = ""
 
 
 @dataclass
