@@ -39,6 +39,7 @@ from .projects import ProjectConfig, get_project, parse_github_repo
 from .shared import (
     CICheckFailure,
     CIChecksResult,
+    CreateGithubIssueInput,
     GetPRBranchInput,
     GetPRDiffInput,
     GithubNotificationInput,
@@ -47,6 +48,7 @@ from .shared import (
     PostCommentsInput,
     RequestReviewerInput,
     ReviewerRequestResult,
+    UpdateGithubIssueInput,
 )
 
 log = logging.getLogger(__name__)
@@ -656,3 +658,72 @@ async def open_agent_pr_issue_numbers(inp: OpenAgentPRsInput) -> list[int]:
     numbers = agent_pr_issue_numbers(pulls)
     log.info("issues with open agent PRs in %s: %s", repo, numbers)
     return numbers
+
+
+@activity.defn
+async def create_github_issue(inp: CreateGithubIssueInput) -> int:
+    """Create a new GitHub Issue and return its issue number.
+
+    Posts to ``/repos/{repo}/issues`` with the given title, body, and labels.
+    Returns the created issue number on success, or 0 on failure.
+
+    A failed request (expired token, rate limit, missing permission, GitHub 5xx,
+    connection error) is logged and swallowed rather than raised — log-and-degrade
+    rather than raise (issue #87).
+    """
+    import httpx
+
+    cfg = get_project(inp.project_id)
+    repo = parse_github_repo(cfg.github_url)
+    try:
+        with await _client(cfg) as c:
+            resp = c.post(
+                f"/repos/{repo}/issues",
+                json={"title": inp.title, "body": inp.body, "labels": inp.labels},
+            )
+            resp.raise_for_status()
+            number: int = resp.json()["number"]
+    except httpx.HTTPError as exc:
+        _log_github_api_failure(f"create_github_issue in {repo}", exc)
+        return 0
+    log.info("created GitHub issue #%d in %s", number, repo)
+    return number
+
+
+@activity.defn
+async def update_github_issue(inp: UpdateGithubIssueInput) -> None:
+    """Patch an existing GitHub Issue's body and/or state.
+
+    Only non-empty fields are included in the PATCH payload: if ``body`` is
+    non-empty it is included; if ``state`` is non-empty it is included.
+
+    A failed request (expired token, rate limit, missing permission, GitHub 5xx,
+    connection error) is logged and swallowed rather than raised — log-and-degrade
+    rather than raise (issue #87).
+    """
+    import httpx
+
+    cfg = get_project(inp.project_id)
+    repo = parse_github_repo(cfg.github_url)
+    payload: dict = {}
+    if inp.body:
+        payload["body"] = inp.body
+    if inp.state:
+        payload["state"] = inp.state
+    try:
+        with await _client(cfg) as c:
+            c.patch(
+                f"/repos/{repo}/issues/{inp.issue_number}",
+                json=payload,
+            ).raise_for_status()
+    except httpx.HTTPError as exc:
+        _log_github_api_failure(
+            f"update_github_issue on {repo}#{inp.issue_number}", exc
+        )
+        return
+    log.info(
+        "updated GitHub issue #%d in %s (fields: %s)",
+        inp.issue_number,
+        repo,
+        list(payload.keys()),
+    )
