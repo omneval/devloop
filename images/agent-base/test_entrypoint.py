@@ -844,7 +844,10 @@ class TestCodeQualityPromptFiles:
         assert entrypoint._PROMPT_FILES["code_quality_scan"] == "code_quality_scan.md"
 
     def test_code_quality_improve_prompt_filename(self):
-        assert entrypoint._PROMPT_FILES["code_quality_improve"] == "code_quality_improve.md"
+        assert (
+            entrypoint._PROMPT_FILES["code_quality_improve"]
+            == "code_quality_improve.md"
+        )
 
 
 class TestPromptVariablesCodeQuality:
@@ -953,7 +956,12 @@ class TestHandleCodeQualityScan:
 
         mock_response = MagicMock()
         mock_response.choices[0].message.content = json.dumps(
-            {"score": 8200, "report": "Quality: 8200", "scan_error": False, "error_message": ""}
+            {
+                "score": 8200,
+                "report": "Quality: 8200",
+                "scan_error": False,
+                "error_message": "",
+            }
         )
         with patch.object(entrypoint, "_get_llm_client") as mock_client_fn:
             mock_client = MagicMock()
@@ -1110,3 +1118,208 @@ class TestCodeQualityPromptTemplates:
         assert "{{" not in msg
         assert "42" in msg
         assert "agent-ready" in msg
+
+
+# --------------------------------------------------------------------------- #
+# Acceptance-criteria audit loop (omneval#67 post-mortem)
+# --------------------------------------------------------------------------- #
+class TestExecutePromptIssueContext:
+    def test_implement_prompt_renders_issue_body(self, monkeypatch):
+        """The full issue text is injected into the implement prompt so every
+        acceptance criterion is guaranteed to be in the agent's context."""
+        prompts_dir = Path(__file__).parent / "prompts"
+        monkeypatch.setenv("AGENT_PROMPTS_DIR", str(prompts_dir))
+        spec = entrypoint.TaskSpec(
+            phase="execute",
+            project_id="omneval",
+            issue_number=67,
+            title="Traces and Sessions",
+            branch="agent/issue-67",
+            extra={"issue_body": "## Scope\n- [ ] UI Conversations tab"},
+        )
+        msg = entrypoint.build_agent_message(spec)
+        assert "UI Conversations tab" in msg
+        assert "{{" not in msg
+
+    def test_implement_prompt_renders_audit_feedback(self, monkeypatch):
+        prompts_dir = Path(__file__).parent / "prompts"
+        monkeypatch.setenv("AGENT_PROMPTS_DIR", str(prompts_dir))
+        spec = entrypoint.TaskSpec(
+            phase="execute",
+            project_id="omneval",
+            issue_number=67,
+            title="Traces and Sessions",
+            branch="agent/issue-67",
+            extra={"feedback": "- The Conversations tab is not implemented"},
+        )
+        msg = entrypoint.build_agent_message(spec)
+        assert "UNMET ACCEPTANCE CRITERIA" in msg
+        assert "Conversations tab is not implemented" in msg
+
+    def test_implement_prompt_forbids_descoping(self, monkeypatch):
+        """The implement prompt must tell the agent that all languages/layers
+        are in scope — the #67 failure was the agent declaring UI work
+        'outside Go scope'."""
+        prompts_dir = Path(__file__).parent / "prompts"
+        monkeypatch.setenv("AGENT_PROMPTS_DIR", str(prompts_dir))
+        spec = entrypoint.TaskSpec(
+            phase="execute",
+            project_id="omneval",
+            issue_number=1,
+            title="t",
+            branch="b",
+        )
+        msg = entrypoint.build_agent_message(spec)
+        assert "regardless of language or layer" in msg
+
+    def test_review_prompt_renders_issue_context(self, monkeypatch):
+        """The review prompt receives the issue number and full text so the
+        reviewer verifies completeness, not just diff quality."""
+        prompts_dir = Path(__file__).parent / "prompts"
+        monkeypatch.setenv("AGENT_PROMPTS_DIR", str(prompts_dir))
+        spec = entrypoint.TaskSpec(
+            phase="review",
+            project_id="omneval",
+            issue_number=67,
+            branch="agent/issue-67",
+            extra={"issue_body": "## Acceptance Criteria\n- [ ] pagination"},
+        )
+        msg = entrypoint.build_agent_message(spec)
+        assert "#67" in msg
+        assert "pagination" in msg
+        assert "{{" not in msg
+
+
+class TestCriteriaAuditLoop:
+    def _task_spec_env(self, monkeypatch, origin, workdir, out_file, issue_body):
+        monkeypatch.setenv(
+            "TASK_SPEC",
+            json.dumps(
+                {
+                    "phase": "execute",
+                    "project_id": "omneval",
+                    "issue_number": 67,
+                    "title": "Traces and Sessions",
+                    "extra": {"issue_body": issue_body},
+                }
+            ),
+        )
+        monkeypatch.setenv("GITHUB_URL", str(origin))
+        monkeypatch.setenv("DEFAULT_BRANCH", "main")
+        monkeypatch.setenv("WORKDIR", str(workdir))
+        monkeypatch.setenv("OUTPUT_CONFIGMAP", "agent-omneval-execute-67-a1")
+        monkeypatch.setenv("OUTPUT_FILE", str(out_file))
+        monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+
+    def test_unmet_criteria_rerun_agent_with_feedback(
+        self, origin, tmp_path, monkeypatch
+    ):
+        """When the audit reports unmet criteria the agent is re-run with the
+        unmet list as feedback; the loop stops once the audit passes."""
+        workdir = tmp_path / "repo"
+        out_file = tmp_path / "out.json"
+        calls = []
+
+        def fake_run_agent(spec, wd, tracer):
+            calls.append(dict(spec.extra))
+            Path(wd, f"work{len(calls)}.txt").write_text("done\n")
+            return entrypoint.AgentOutcome(summary=f"pass {len(calls)}")
+
+        audits = [
+            entrypoint.CriteriaAudit(unmet_criteria=["UI Conversations tab"]),
+            entrypoint.CriteriaAudit(unmet_criteria=[]),
+        ]
+
+        monkeypatch.setattr(entrypoint, "run_agent", fake_run_agent)
+        monkeypatch.setattr(
+            entrypoint, "audit_acceptance_criteria", lambda *a: audits.pop(0)
+        )
+        monkeypatch.setattr(entrypoint, "open_draft_pr", lambda *a, **k: "")
+        self._task_spec_env(
+            monkeypatch, origin, workdir, out_file, "## Criteria\n- UI tab"
+        )
+
+        assert entrypoint.main() == 0
+        assert len(calls) == 2
+        assert "UI Conversations tab" in calls[1]["feedback"]
+        payload = json.loads(out_file.read_text())
+        assert payload["status"] == "complete"
+        assert "Unmet acceptance criteria" not in payload["summary"]
+
+    def test_unmet_after_max_passes_surfaces_in_summary(
+        self, origin, tmp_path, monkeypatch
+    ):
+        """When criteria stay unmet after the allowed passes, the summary
+        (which becomes the PR body / issue comment) lists them for the human
+        reviewer."""
+        workdir = tmp_path / "repo"
+        out_file = tmp_path / "out.json"
+        calls = []
+
+        def fake_run_agent(spec, wd, tracer):
+            calls.append(dict(spec.extra))
+            Path(wd, f"work{len(calls)}.txt").write_text("done\n")
+            return entrypoint.AgentOutcome(summary=f"pass {len(calls)}")
+
+        monkeypatch.setattr(entrypoint, "run_agent", fake_run_agent)
+        monkeypatch.setattr(
+            entrypoint,
+            "audit_acceptance_criteria",
+            lambda *a: entrypoint.CriteriaAudit(unmet_criteria=["pagination"]),
+        )
+        monkeypatch.setattr(entrypoint, "open_draft_pr", lambda *a, **k: "")
+        monkeypatch.setenv("AGENT_CRITERIA_MAX_PASSES", "1")
+        self._task_spec_env(
+            monkeypatch, origin, workdir, out_file, "## Criteria\n- pagination"
+        )
+
+        assert entrypoint.main() == 0
+        assert len(calls) == 2  # initial + 1 feedback pass
+        payload = json.loads(out_file.read_text())
+        assert "Unmet acceptance criteria" in payload["summary"]
+        assert "pagination" in payload["summary"]
+
+    def test_audit_failure_never_blocks_the_phase(self, origin, tmp_path, monkeypatch):
+        """An audit that errors out (returns None) is skipped — one agent
+        pass, normal completion."""
+        workdir = tmp_path / "repo"
+        out_file = tmp_path / "out.json"
+        calls = []
+
+        def fake_run_agent(spec, wd, tracer):
+            calls.append(1)
+            Path(wd, "work.txt").write_text("done\n")
+            return entrypoint.AgentOutcome(summary="did the thing")
+
+        monkeypatch.setattr(entrypoint, "run_agent", fake_run_agent)
+        monkeypatch.setattr(entrypoint, "audit_acceptance_criteria", lambda *a: None)
+        monkeypatch.setattr(entrypoint, "open_draft_pr", lambda *a, **k: "")
+        self._task_spec_env(monkeypatch, origin, workdir, out_file, "## Criteria")
+
+        assert entrypoint.main() == 0
+        assert len(calls) == 1
+        payload = json.loads(out_file.read_text())
+        assert payload["status"] == "complete"
+
+    def test_no_issue_body_skips_audit(self, origin, tmp_path, monkeypatch):
+        """Without an issue body (local remote, no gh) the audit is skipped
+        entirely — exactly the pre-audit behaviour."""
+        workdir = tmp_path / "repo"
+        out_file = tmp_path / "out.json"
+        audit_calls = []
+
+        def fake_run_agent(spec, wd, tracer):
+            Path(wd, "work.txt").write_text("done\n")
+            return entrypoint.AgentOutcome(summary="did the thing")
+
+        monkeypatch.setattr(entrypoint, "run_agent", fake_run_agent)
+        monkeypatch.setattr(
+            entrypoint,
+            "audit_acceptance_criteria",
+            lambda *a: audit_calls.append(1),
+        )
+        monkeypatch.setattr(entrypoint, "open_draft_pr", lambda *a, **k: "")
+        self._task_spec_env(monkeypatch, origin, workdir, out_file, "")
+
+        assert entrypoint.main() == 0
+        assert audit_calls == []

@@ -94,6 +94,14 @@ class CodeQualityScanResult(_BaseModel):
     error_message: str = ""
 
 
+class CriteriaAudit(_BaseModel):
+    """Outcome of auditing an execute-phase diff against the issue's
+    acceptance criteria (issue #67 post-mortem: the agent shipped a partial
+    implementation and nobody noticed until a human review)."""
+
+    unmet_criteria: list[str] = []
+
+
 def _get_llm_client() -> _OpenAI:
     return _OpenAI(
         api_key=os.environ.get("AGENT_LLM_API_KEY", "none"),
@@ -113,9 +121,15 @@ def _strip_provider_prefix(model: str) -> str:
     return model.partition("/")[2] or model
 
 
-def structured_extractor(text: str, model_cls: type[_BaseModel]) -> _BaseModel:
+def structured_extractor(
+    text: str, model_cls: type[_BaseModel], system: str | None = None
+) -> _BaseModel:
     """Extract structured output from *text* using a single LLM call with
     ``response_format`` backed by a Pydantic model.
+
+    ``system`` overrides the default extraction framing — used by callers like
+    the acceptance-criteria audit whose *text* is a task prompt, not a
+    transcript to extract from.
 
     Raises ``ValueError`` with a clear message if the LLM response is malformed
     or cannot be parsed into *model_cls*.
@@ -129,7 +143,8 @@ def structured_extractor(text: str, model_cls: type[_BaseModel]) -> _BaseModel:
             messages=[
                 {
                     "role": "system",
-                    "content": (
+                    "content": system
+                    or (
                         "Extract the structured data from the following text. "
                         "Return only valid JSON matching the requested schema."
                     ),
@@ -585,6 +600,112 @@ def _fetch_pr_diff(repo: str, pr_number: int) -> str:
     return diff
 
 
+# Cap on the issue body injected into the implement/review prompts. GitHub
+# issue bodies max out at 65536 chars; anything near that would crowd out the
+# rest of the context window on a small local model.
+_MAX_ISSUE_BODY_CHARS = 24_000
+
+
+def _fetch_issue_body(repo: str, issue_number: int) -> str:
+    """Fetch an issue's full body via ``gh`` (best-effort — never raises).
+
+    Injected verbatim into the implement/review prompts so the complete spec
+    — every acceptance criterion — is guaranteed to be in the agent's context.
+    Relying on the agent to run ``gh issue view`` itself proved fragile with
+    small models: they skim, lose sections of large issues to the condenser,
+    and then silently descope (issue #67: all UI work dropped as "outside Go
+    scope"). Returns ``""`` on any failure — the prompt still instructs the
+    agent to ``gh issue view`` as a fallback."""
+    if issue_number <= 0:
+        return ""
+    try:
+        result = _gh(["issue", "view", str(issue_number), "-R", repo, "--json", "body"])
+    except OSError as exc:  # gh binary absent (local test runs)
+        log.warning("gh unavailable — skipping issue body fetch: %s", exc)
+        return ""
+    if result.returncode != 0:
+        log.warning(
+            "could not fetch issue #%d body: %s",
+            issue_number,
+            (result.stderr or result.stdout or "").strip(),
+        )
+        return ""
+    try:
+        body = json.loads(result.stdout or "{}").get("body", "") or ""
+    except json.JSONDecodeError:
+        return ""
+    if len(body) > _MAX_ISSUE_BODY_CHARS:
+        body = body[:_MAX_ISSUE_BODY_CHARS] + "\n... (issue body truncated)"
+    return body
+
+
+def _workdir_diff(workdir: str, base_sha: str) -> str:
+    """Return the full diff of the agent's work so far, capped like a PR diff."""
+    try:
+        diff = _run(["git", "diff", f"{base_sha}...HEAD"], cwd=workdir)
+    except subprocess.CalledProcessError as exc:
+        log.warning("could not compute workdir diff: %s", _describe_exception(exc))
+        return ""
+    if len(diff) > _MAX_PR_DIFF_CHARS:
+        diff = diff[:_MAX_PR_DIFF_CHARS] + "\n... (diff truncated)"
+    return diff
+
+
+def audit_acceptance_criteria(issue_body: str, diff: str) -> CriteriaAudit | None:
+    """Audit the diff against the issue's acceptance criteria with one
+    structured LLM call. Returns ``None`` when the audit itself fails (LLM
+    error / malformed output) — the audit is a quality gate, never a blocker.
+
+    This is the cheap, automated stand-in for what a human reviewer did on
+    omneval#70: read the issue, read the diff, list what's missing. The list
+    of unmet criteria is fed back into a fresh execute pass, which empirically
+    is all a small model needs to finish the job (devloop-bot resolved every
+    finding of that human review in a single pass once it was given the list).
+    """
+    if not issue_body or not diff:
+        return None
+    prompt = (
+        "# ISSUE (full text)\n\n"
+        f"{issue_body}\n\n"
+        "# DIFF (the implementation so far)\n\n"
+        f"```diff\n{diff}\n```\n\n"
+        "# TASK\n\n"
+        "Compare the diff against EVERY requirement and acceptance criterion "
+        "in the issue — across all languages and layers (backend, SDKs, UI, "
+        "docs). List each criterion that is NOT yet implemented in the diff. "
+        "A criterion only counts as met when the diff contains the actual "
+        "implementation — a TODO, a comment, or a claim in prose does not "
+        "count. If every criterion is met, return an empty list. Do not list "
+        "criteria that are genuinely satisfied, and do not invent new "
+        "requirements that the issue does not state."
+    )
+    try:
+        return structured_extractor(  # type: ignore[return-value]
+            prompt,
+            CriteriaAudit,
+            system=(
+                "You are a meticulous code reviewer verifying that a diff "
+                "fully implements a GitHub issue. Return only valid JSON "
+                "matching the requested schema."
+            ),
+        )
+    except ValueError as exc:
+        log.warning("acceptance-criteria audit failed (skipping): %s", exc)
+        return None
+
+
+def _format_unmet_feedback(unmet: list[str]) -> str:
+    items = "\n".join(f"- {c}" for c in unmet)
+    return (
+        "An automated audit compared your work against the issue's acceptance "
+        "criteria. The following criteria are NOT yet implemented:\n\n"
+        f"{items}\n\n"
+        "Implement every one of them now. They are all in scope, regardless of "
+        "language or layer (backend, SDKs, UI). Do not re-do work that is "
+        "already complete."
+    )
+
+
 def _existing_pr(repo: str, branch: str) -> tuple[str, bool]:
     """Return (url, is_draft) for an open PR whose head is ``branch``, or ("", False)."""
     r = _gh(["pr", "view", branch, "-R", repo, "--json", "url,isDraft"])
@@ -953,7 +1074,7 @@ def load_prompt(name: str, variables: dict[str, str]) -> str:
     Any placeholder the caller does not supply is stripped so it never leaks
     into the agent prompt as a literal ``{{FOO}}``.
     """
-    text = Path(_prompts_dir(), name).read_text()
+    text = Path(_prompts_dir(), name).read_text(encoding="utf-8")
     for key, value in variables.items():
         text = text.replace("{{" + key + "}}", value)
     return _PLACEHOLDER_RE.sub("", text)
@@ -974,13 +1095,25 @@ def _prompt_variables(spec: TaskSpec) -> dict[str, str]:
             ),
         }
     if spec.phase == "execute":
+        feedback = (spec.extra.get("feedback") or "").strip()
         return {
             "TASK_ID": str(spec.issue_number),
             "ISSUE_TITLE": spec.title,
             "BRANCH": spec.branch,
+            "ISSUE_BODY": spec.extra.get("issue_body", ""),
+            "FEEDBACK": (
+                f"# AUDIT FEEDBACK — UNMET ACCEPTANCE CRITERIA\n\n{feedback}"
+                if feedback
+                else ""
+            ),
         }
     if spec.phase == "review":
-        return {"BRANCH": spec.branch, "SOURCE_BRANCH": base}
+        return {
+            "BRANCH": spec.branch,
+            "SOURCE_BRANCH": base,
+            "ISSUE_NUMBER": str(spec.issue_number),
+            "ISSUE_BODY": spec.extra.get("issue_body", ""),
+        }
     if spec.phase == "merge":
         branches = spec.extra.get("branches", [])
         issues = spec.extra.get("issues", [])
@@ -1144,10 +1277,21 @@ def handle_plan(spec: TaskSpec, tracer) -> dict:
     ).to_payload()
 
 
+def _sweep_commit(workdir: str, message: str) -> None:
+    """Commit anything the agent left uncommitted so a half-finished change
+    still surfaces as commits."""
+    _run(["git", "add", "-A"], cwd=workdir)
+    if _run(["git", "status", "--porcelain"], cwd=workdir).strip():
+        _run(["git", "commit", "-m", message], cwd=workdir)
+
+
 def handle_execute(spec: TaskSpec, tracer) -> dict:
     """Execute phase: implement one issue on its branch using the implement
-    prompt (Ralph/TDD loop). Pushes the branch and opens a draft PR only when
-    the agent actually produced commits."""
+    prompt (Ralph/TDD loop), then audit the diff against the issue's
+    acceptance criteria and re-run with the unmet list as feedback until the
+    audit passes or ``AGENT_CRITERIA_MAX_PASSES`` extra passes are spent.
+    Pushes the branch and opens a draft PR only when the agent actually
+    produced commits."""
     workdir = os.getenv("WORKDIR", "/workspace/repo")
     github_url = os.environ["GITHUB_URL"]
     base = os.environ.get("DEFAULT_BRANCH", "main")
@@ -1158,23 +1302,62 @@ def handle_execute(spec: TaskSpec, tracer) -> dict:
     with tracer.start_as_current_span("install_deps"):
         install_deps(workdir)
 
+    # Inject the full issue text into the prompt so every acceptance
+    # criterion is guaranteed to be in context (see _fetch_issue_body).
+    # Local (non-http) remotes — integration tests — have no issues to fetch.
+    issue_body = spec.extra.get("issue_body", "")
+    if not issue_body and github_url.startswith("http"):
+        issue_body = _fetch_issue_body(repo_slug(github_url), spec.issue_number)
+    if issue_body:
+        spec.extra["issue_body"] = issue_body
+
     base_sha = _run(["git", "rev-parse", "HEAD"], cwd=workdir).strip()
     _run(["git", "checkout", "-b", branch], cwd=workdir)
     outcome = run_agent(spec, workdir, tracer)
+    _sweep_commit(workdir, f"agent: implement #{spec.issue_number} {spec.title}")
 
-    # The implement prompt commits its own work; sweep up anything left
-    # uncommitted so a half-finished change still surfaces as commits.
-    _run(["git", "add", "-A"], cwd=workdir)
-    if _run(["git", "status", "--porcelain"], cwd=workdir).strip():
-        _run(
-            [
-                "git",
-                "commit",
-                "-m",
-                f"agent: implement #{spec.issue_number} {spec.title}",
-            ],
-            cwd=workdir,
-        )
+    # ------------------------------------------------------------------ #
+    # Acceptance-criteria audit loop. Each pass is a fresh conversation
+    # (Ralph-style: clean context, repo state carries the progress) whose
+    # prompt leads with the audit's unmet-criteria list. Best-effort: an
+    # audit that errors out never blocks the phase.
+    # ------------------------------------------------------------------ #
+    try:
+        max_passes = int(os.getenv("AGENT_CRITERIA_MAX_PASSES", "2"))
+    except ValueError:
+        max_passes = 2
+    unmet: list[str] = []
+    if issue_body and _commit_count(workdir, base_sha) > 0:
+        for audit_pass in range(max_passes + 1):
+            with tracer.start_as_current_span("criteria_audit") as audit_span:
+                audit = audit_acceptance_criteria(
+                    issue_body, _workdir_diff(workdir, base_sha)
+                )
+                unmet = list(audit.unmet_criteria) if audit else []
+                if audit_span is not None:
+                    audit_span.set_attribute("audit.pass", audit_pass)
+                    audit_span.set_attribute("audit.unmet", len(unmet))
+            if audit is None or not unmet:
+                break
+            if audit_pass == max_passes:
+                log.warning(
+                    "criteria audit still reports %d unmet criteria after "
+                    "%d extra passes — handing off as-is",
+                    len(unmet),
+                    max_passes,
+                )
+                break
+            log.info(
+                "criteria audit pass %d: %d unmet criteria — re-running agent",
+                audit_pass,
+                len(unmet),
+            )
+            spec.extra["feedback"] = _format_unmet_feedback(unmet)
+            outcome = run_agent(spec, workdir, tracer)
+            _sweep_commit(
+                workdir,
+                f"agent: address unmet acceptance criteria for #{spec.issue_number}",
+            )
 
     commits = _commit_count(workdir, base_sha)
     if commits == 0:
@@ -1192,6 +1375,11 @@ def handle_execute(spec: TaskSpec, tracer) -> dict:
 
     test_snippet = test_output[:_MAX_TEST_OUTPUT]
     summary_parts = [outcome.summary]
+    if unmet:
+        summary_parts.append(
+            "\n⚠️ **Unmet acceptance criteria** (per automated audit — "
+            "verify before merging):\n" + "\n".join(f"- {c}" for c in unmet)
+        )
     if test_snippet:
         summary_parts.append(f"\n--- test output ---\n{test_snippet}")
 
@@ -1220,12 +1408,23 @@ def handle_review(spec: TaskSpec, tracer) -> dict:
     branch history after Review contains zero new commits. Returns a verdict
     (lgtm / needs_fixes / needs_human) via structured_extractor so the
     workflow can act on it.
+
+    The full issue text is injected so the reviewer checks *completeness*
+    against the acceptance criteria, not just the quality of what happens to
+    be in the diff (omneval#70: a clean-looking PR that silently dropped
+    every UI criterion).
     """
     workdir = os.getenv("WORKDIR", "/workspace/repo")
     with tracer.start_as_current_span("clone"):
         clone_repo(os.environ["GITHUB_URL"], spec.branch, workdir)
     with tracer.start_as_current_span("install_deps"):
         install_deps(workdir)
+
+    github_url = os.environ["GITHUB_URL"]
+    if not spec.extra.get("issue_body") and github_url.startswith("http"):
+        issue_body = _fetch_issue_body(repo_slug(github_url), spec.issue_number)
+        if issue_body:
+            spec.extra["issue_body"] = issue_body
 
     outcome = run_agent(spec, workdir, tracer)
     review_model = structured_extractor(outcome.summary, ReviewOutput)

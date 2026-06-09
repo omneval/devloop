@@ -60,6 +60,10 @@ spec:
               value: {{ .Values.temporalWorker.ciFixMaxIterations | default 5 | quote }}
             - name: EXECUTE_MAX_ITERATIONS
               value: {{ .Values.temporalWorker.executeMaxIterations | default 1 | quote }}
+            - name: REVIEW_FIX_MAX_ITERATIONS
+              value: {{ .Values.temporalWorker.reviewFixMaxIterations | default 1 | quote }}
+            - name: AGENT_CRITERIA_MAX_PASSES
+              value: {{ .Values.temporalWorker.agentCriteriaMaxPasses | default 2 | quote }}
             - name: MAX_CONCURRENT_JOBS
               value: {{ .Values.temporalWorker.maxConcurrentJobs | default 1 | quote }}
             - name: AGENT_GITHUB_LOGIN

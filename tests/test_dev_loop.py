@@ -45,6 +45,9 @@ class Mocks:
     execute_status: str = JobStatus.COMPLETE.value
     review_commits: int = 1
     review_payload: dict | None = None  # AgentJobResult.review the review job returns
+    # when set, overrides review_payload with a per-call sequence (one entry
+    # consumed per "review" dispatch; last repeats)
+    review_payload_seq: list | None = None
     await_status: str = JobStatus.COMPLETE.value
     # recorders
     github_comments: list = field(
@@ -158,12 +161,19 @@ def _make_activities():
                 tests_passed=True,
             )
         if phase == "review":
+            payload = M.review_payload
+            if M.review_payload_seq is not None:
+                idx = min(
+                    M.dispatched_phases.count("review") - 1,
+                    len(M.review_payload_seq) - 1,
+                )
+                payload = M.review_payload_seq[idx]
             return AgentJobResult(
                 status=JobStatus.COMPLETE.value,
                 job_name=f"r{issue}",
                 issue_number=issue,
                 commits=M.review_commits,
-                review=M.review_payload,
+                review=payload,
             )
         if phase == "answer":
             return AgentJobResult(
@@ -1110,3 +1120,110 @@ async def test_review_no_verdict_returns_empty(reset_mocks):
     assert result.status == "completed"
     assert "review" in M.dispatched_phases
     assert 1 not in result.review_verdicts
+
+
+# --------------------------------------------------------------------------- #
+# Review fix loop: needs_fixes → Phase.PR_COMMENT fix pass → re-review
+# --------------------------------------------------------------------------- #
+@pytest.mark.asyncio
+async def test_review_needs_fixes_dispatches_fix_pass_and_rereviews(reset_mocks):
+    """A needs_fixes verdict dispatches a pr_comment fix job carrying the
+    reviewer's findings, then re-reviews; the final (lgtm) verdict wins."""
+    reset_mocks.plan_rounds = [_one_issue(1)]
+    reset_mocks.review_payload_seq = [
+        {
+            "verdict": "needs_fixes",
+            "summary": "Unmet criteria: Conversations UI tab; pagination.",
+            "inline_comments": [
+                {"file": "ui/src/App.tsx", "line": 1, "body": "tab missing"}
+            ],
+        },
+        {"verdict": "lgtm", "summary": "All criteria implemented."},
+    ]
+    reset_mocks.dispatch_behavior[("pr_comment", 1)] = AgentJobResult(
+        status=JobStatus.COMPLETE.value,
+        job_name="fix1",
+        issue_number=1,
+        branch="agent/issue-1",
+        commits=1,
+    )
+    result = await _env_and_run(DevLoopInput("omneval"), [])
+    assert result.status == "completed"
+    assert M.dispatched_phases.count("review") == 2
+    assert "pr_comment" in M.dispatched_phases
+    # the fix job received the reviewer's findings (summary + inline comments)
+    fix_spec = next(
+        s for s in M.dispatched_specs if (s.get("phase") or s["phase"]) == "pr_comment"
+    )
+    assert "Conversations UI tab" in fix_spec["extra"]["comment_body"]
+    assert "ui/src/App.tsx" in fix_spec["extra"]["comment_body"]
+    assert result.review_verdicts[1] == "lgtm"
+
+
+@pytest.mark.asyncio
+async def test_review_lgtm_skips_fix_pass(reset_mocks):
+    """An lgtm verdict goes straight to reviewer notification — no fix job."""
+    reset_mocks.plan_rounds = [_one_issue(1)]
+    reset_mocks.review_payload = {"verdict": "lgtm", "summary": "Clean."}
+    result = await _env_and_run(DevLoopInput("omneval"), [])
+    assert result.status == "completed"
+    assert "pr_comment" not in M.dispatched_phases
+    assert M.dispatched_phases.count("review") == 1
+
+
+@pytest.mark.asyncio
+async def test_review_fix_loop_bounded_by_max_iterations(reset_mocks):
+    """A persistently needs_fixes verdict stops after review_fix_max_iterations
+    fix passes and hands the PR to the human with the honest verdict."""
+    reset_mocks.plan_rounds = [_one_issue(1)]
+    reset_mocks.review_payload = {
+        "verdict": "needs_fixes",
+        "summary": "Still missing pagination.",
+    }
+    reset_mocks.dispatch_behavior[("pr_comment", 1)] = AgentJobResult(
+        status=JobStatus.COMPLETE.value,
+        job_name="fix1",
+        issue_number=1,
+        branch="agent/issue-1",
+        commits=1,
+    )
+    result = await _env_and_run(
+        DevLoopInput("omneval", review_fix_max_iterations=1), []
+    )
+    assert result.status == "completed"
+    assert M.dispatched_phases.count("pr_comment") == 1
+    assert M.dispatched_phases.count("review") == 2
+    assert result.review_verdicts[1] == "needs_fixes"
+
+
+@pytest.mark.asyncio
+async def test_review_fix_pass_failure_breaks_loop(reset_mocks):
+    """A fix pass that produces no commits ends the loop — no infinite
+    re-review on an agent that can't make progress."""
+    reset_mocks.plan_rounds = [_one_issue(1)]
+    reset_mocks.review_payload = {
+        "verdict": "needs_fixes",
+        "summary": "Still missing pagination.",
+    }
+    reset_mocks.dispatch_behavior[("pr_comment", 1)] = AgentJobResult(
+        status=JobStatus.COMPLETE.value,
+        job_name="fix1",
+        issue_number=1,
+        branch="agent/issue-1",
+        commits=0,
+    )
+    result = await _env_and_run(DevLoopInput("omneval"), [])
+    assert result.status == "completed"
+    assert M.dispatched_phases.count("pr_comment") == 1
+    assert M.dispatched_phases.count("review") == 1
+
+
+def test_devloop_input_has_review_fix_max_iterations():
+    inp = DevLoopInput("p")
+    assert inp.review_fix_max_iterations == 1
+
+
+def test_from_env_reads_review_fix_max_iterations(monkeypatch):
+    monkeypatch.setenv("REVIEW_FIX_MAX_ITERATIONS", "3")
+    inp = DevLoopInput.from_env("p")
+    assert inp.review_fix_max_iterations == 3

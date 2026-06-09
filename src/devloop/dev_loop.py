@@ -55,6 +55,10 @@ class DevLoopInput:
     # phase run may spawn before the workflow stops asking and tells the parked
     # job to proceed with its best guess.
     max_questions_per_phase: int = 3
+    # Review phase: when the reviewer's verdict is needs_fixes, dispatch a fix
+    # pass addressing the findings and re-review, up to this many times, before
+    # handing the PR to the human reviewer.
+    review_fix_max_iterations: int = 1
     # The issue whose `agent_label` triggered this run. Scopes the Plan phase
     # to that single issue instead of replanning the whole agent-ready backlog
     # — see _plan_phase. 0 only for legacy/test inputs; the webhook always
@@ -99,6 +103,9 @@ class DevLoopInput:
             ),
             max_questions_per_phase=_int(
                 "MAX_QUESTIONS_PER_PHASE", cls.max_questions_per_phase
+            ),
+            review_fix_max_iterations=_int(
+                "REVIEW_FIX_MAX_ITERATIONS", cls.review_fix_max_iterations
             ),
         )
 
@@ -195,7 +202,21 @@ class DevLoopWorkflow(_WorkflowCommon):
             if parked:
                 continue
 
-            verdict = await self._review_phase(inp, issue, exec_result)
+            review = await self._review_phase(inp, issue, exec_result)
+            verdict = (review or {}).get("verdict")
+            # needs_fixes → dispatch a fix pass with the findings, re-review,
+            # repeat up to review_fix_max_iterations before handing to a human.
+            fix_passes = 0
+            while (
+                verdict == "needs_fixes" and fix_passes < inp.review_fix_max_iterations
+            ):
+                fix_passes += 1
+                if not await self._review_fix_pass(
+                    inp, issue, exec_result, review or {}
+                ):
+                    break
+                review = await self._review_phase(inp, issue, exec_result)
+                verdict = (review or {}).get("verdict")
             await self._notify_reviewer(inp, issue, exec_result)
             queued.append(_as_int(issue.get("id")))
             if verdict:
@@ -492,11 +513,77 @@ class DevLoopWorkflow(_WorkflowCommon):
             f"🅿️  Parked #{issue_no} — remediation failed. Failing checks:\n{summary}",
         )
 
+    # ---- Review fix pass ------------------------------------------------ #
+    async def _review_fix_pass(
+        self, inp: DevLoopInput, issue: dict, exec_result: dict, review: dict
+    ) -> bool:
+        """Dispatch one Phase.PR_COMMENT job addressing the reviewer's findings.
+
+        The reviewer's summary (which enumerates unmet acceptance criteria and
+        bugs) is handed to the fix agent exactly like a human PR comment would
+        be — the proven re-engagement path (omneval#70: the agent resolved
+        every finding of a human review in one such pass). Returns True when
+        the fix pass produced commits (a re-review is worthwhile), False when
+        it failed or changed nothing.
+        """
+        issue_no = _as_int(issue.get("id"))
+        pr_number = logic.pr_number_from_url(exec_result.get("pr_url", ""))
+        findings = review.get("summary", "")
+        inline = review.get("inline_comments") or []
+        if inline:
+            findings += "\n\nInline comments:\n" + "\n".join(
+                f"- {c.get('file', '')}:{c.get('line', 0)} — {c.get('body', '')}"
+                for c in inline
+            )
+        if not findings.strip():
+            return False
+        await self._comment(
+            inp.project_id,
+            issue_no,
+            "⏳ queued — agent is addressing automated review findings",
+        )
+        spec = TaskSpec(
+            phase=Phase.PR_COMMENT.value,
+            project_id=inp.project_id,
+            issue_number=issue_no,
+            branch=exec_result.get("branch", ""),
+            extra={
+                "comment_body": findings,
+                "source": "review",
+                "author": "the automated reviewer",
+                "pr_number": pr_number,
+            },
+        )
+        result = await self._dispatch(
+            inp.project_id,
+            spec,
+            issue_number=issue_no,
+            poll_interval_seconds=inp.poll_interval_seconds,
+        )
+        if result.status != JobStatus.COMPLETE.value or not result.commits:
+            return False
+        await self._comment(
+            inp.project_id,
+            issue_no,
+            f"🔧 Fix pass pushed {result.commits} commit(s) addressing review findings.",
+        )
+        exhausted = await self._ci_fix_loop(
+            inp.project_id,
+            issue_no,
+            exec_result,
+            ci_fix_max_iterations=inp.ci_fix_max_iterations,
+            poll_interval_seconds=inp.poll_interval_seconds,
+        )
+        exec_result["exhausted"] = exhausted
+        return True
+
     # ---- Review phase (#22, #55) --------------------------------------- #
     async def _review_phase(
         self, inp: DevLoopInput, issue: dict, exec_result: dict
-    ) -> str | None:
-        """Review the PR and return a verdict string (lgtm/changes_requested/blocked)."""
+    ) -> dict | None:
+        """Review the PR and return the review payload (summary, verdict
+        lgtm/needs_fixes/needs_human, inline_comments), or None when the
+        review job produced nothing parseable."""
         issue_no = _as_int(issue.get("id"))
         spec = TaskSpec(
             phase="review",
@@ -515,30 +602,22 @@ class DevLoopWorkflow(_WorkflowCommon):
             issue_number=issue_no,
             poll_interval_seconds=inp.poll_interval_seconds,
         )
-        verdict: str | None = None
         review = result.review or {}
-        if review:
-            verdict = review.get("verdict")
-            if verdict:
-                await self._comment(
-                    inp.project_id,
-                    issue_no,
-                    f"🔎 Reviewed #{issue_no} — verdict: {verdict}.",
-                )
-            else:
-                await self._comment(
-                    inp.project_id,
-                    issue_no,
-                    "🔎 Reviewed #{issue_no} — no changes needed.",
-                )
+        verdict = review.get("verdict") if review else None
+        if verdict:
+            await self._comment(
+                inp.project_id,
+                issue_no,
+                f"🔎 Reviewed #{issue_no} — verdict: {verdict}.",
+            )
         else:
             await self._comment(
                 inp.project_id,
                 issue_no,
-                "🔎 Reviewed #{issue_no} — no changes needed.",
+                f"🔎 Reviewed #{issue_no} — no changes needed.",
             )
         await self._post_review_findings(inp, exec_result, result)
-        return verdict
+        return review or None
 
     async def _post_review_findings(
         self, inp: DevLoopInput, exec_result: dict, result: AgentJobResult

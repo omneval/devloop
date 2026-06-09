@@ -134,6 +134,17 @@ temporalWorker:
   # before parking the issue with a "skipping this round" comment.
   # Mirrors DevLoopInput.execute_max_iterations. Default: 1.
   executeMaxIterations: 1
+  # Maximum number of review fix passes: when the Review phase verdict is
+  # needs_fixes, the workflow dispatches a Phase.PR_COMMENT fix job with the
+  # reviewer's findings and re-reviews, up to this many times, before handing
+  # the PR to the human reviewer.
+  # Mirrors DevLoopInput.review_fix_max_iterations. Default: 1.
+  reviewFixMaxIterations: 1
+  # Maximum number of extra Execute-phase agent passes spent addressing unmet
+  # acceptance criteria reported by the automated criteria audit (the
+  # entrypoint compares the diff against the issue's acceptance criteria after
+  # each pass). Forwarded to Agent Execution Jobs as AGENT_CRITERIA_MAX_PASSES.
+  agentCriteriaMaxPasses: 2
   # Maximum number of Agent Execution Job dispatches (and LLM-bearing activities)
   # that may run concurrently across all workflow types and projects.
   # Forwarded to the job-dispatch Worker as MAX_CONCURRENT_JOBS.
