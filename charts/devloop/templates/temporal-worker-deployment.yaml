@@ -119,6 +119,11 @@ spec:
               value: {{ include "devloop.agentJob.serviceAccountName" . | quote }}
             - name: AGENT_JOB_ACTIVE_DEADLINE
               value: {{ .Values.temporalWorker.agentJob.maxAgentRuntime | default 7200 | quote }}
+            # Fallback image for projects whose registry entry omits
+            # agent_image. The default pairs the universal image with the
+            # chart appVersion (the release pipeline tags both identically).
+            - name: AGENT_DEFAULT_IMAGE
+              value: {{ .Values.temporalWorker.agentJob.defaultImage | default (printf "ghcr.io/omneval/devloop-agent-universal:%s" .Chart.AppVersion) | quote }}
             {{- with .Values.temporalWorker.agentJob.resources.requests.cpu }}
             - name: AGENT_JOB_CPU
               value: {{ . | quote }}

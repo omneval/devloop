@@ -200,26 +200,32 @@ Note the service address for later:
 temporal-frontend.agents.svc.cluster.local:7233
 ```
 
-## Step 5: Build the Two devloop Images
+## Step 5: Agent Images (usually nothing to build)
 
-devloop ships exactly two images — there is no poller image and no chat
-bot image.
+**The default path requires no image build.** devloop publishes
+`ghcr.io/omneval/devloop-agent-universal` — agent-base plus the common
+language toolchains (Go, Node.js, Helm + helm-unittest). Any project whose
+registry entry omits `agent_image` runs on it automatically (the chart pins
+the version matching its own release; override via
+`temporalWorker.agentJob.defaultImage`). Project-specific behaviour — phase
+prompts, install/test commands, coding standards — lives in the enrolled
+repo's own `.devloop/` directory, not in an image:
 
-### 5a: Build the Agent Base Image
-
-`devloop-agent-base` provides the shared toolchain (OpenHands SDK, Temporal
-SDK, `gh`, `kubectl`, `flux`) used by every Agent Execution Job. It is **not**
-deployed as a running pod — it's a build-time base layer that per-project
-agent images extend. Build and push it to your registry:
-
-```bash
-docker build -t ghcr.io/your-org/devloop-agent-base:latest images/agent-base/
-docker push ghcr.io/your-org/devloop-agent-base:latest
+```
+your-project/
+  .devloop/
+    config.yaml          # install: / tests: shell-command gates
+    prompts/implement.md # optional per-phase prompt overrides
 ```
 
-### 5b: Build a Per-Project Agent Image
+Build a custom image only when your project needs a toolchain the universal
+image lacks:
 
-Each project gets its own agent image that extends `devloop-agent-base`. Write a `Dockerfile` in your project repository:
+### 5a (optional): Build a Per-Project Agent Image
+
+Extend `devloop-agent-base` (the shared toolchain: OpenHands SDK, Temporal
+SDK, `gh`, `kubectl`, `flux` — a build-time base layer, never a running pod)
+or `devloop-agent-universal`. Write a `Dockerfile` in your project repository:
 
 ```dockerfile
 FROM ghcr.io/your-org/devloop-agent-base:latest
@@ -257,20 +263,20 @@ docker tag ghcr.io/your-org/your-project-agent:latest \
 
 The Project Registry tells devloop which repositories to monitor. Create a `projects.yaml` file:
 
-**Minimal example** (required fields only):
+**Minimal example** (required fields only — `agent_image` is optional and
+defaults to the published `devloop-agent-universal`):
 
 ```yaml
 projects:
   - id: your-project
     github_url: https://github.com/your-org/your-project
     default_branch: main
-    agent_image: ghcr.io/your-org/your-project-agent:latest
     agent_label: agent-ready
     omneval_ingest_secret: omneval-ingest-your-project
     github_token_secret: your-project-github-token
 ```
 
-**Full example** (with optional `pr_reviewer`):
+**Full example** (with the optional `agent_image` and `pr_reviewer`):
 
 ```yaml
 projects:
@@ -454,7 +460,7 @@ Replace `<project-id>` with the value from your Project Registry. Because the ol
 | `id`                  | Yes      | string | Unique project identifier                        |
 | `github_url`          | Yes      | string | Full GitHub repository URL                       |
 | `default_branch`      | Yes      | string | Default branch for PRs                           |
-| `agent_image`         | Yes      | string | Container image for the project agent             |
+| `agent_image`         | No       | string | Container image for the project agent (defaults to the published `devloop-agent-universal` via `temporalWorker.agentJob.defaultImage`) |
 | `agent_label`         | Yes      | string | GitHub issue label to trigger Dev Loop           |
 | `omneval_ingest_secret` | Yes    | string | K8s secret name for Omneval ingest API key       |
 | `github_token_secret` | Yes      | string | K8s secret name for the devloop-bot GitHub token (also used for posting issue comments). Used as the auth fallback when GitHub App auth (`githubApp.*` / `GITHUB_APP_ID` + `GITHUB_APP_PRIVATE_KEY`) is not configured — see [GitHub App Setup](github-app.md) |

@@ -155,3 +155,19 @@ jobs:
       build_args: SDK_VERSION=${{ needs.meta.outputs.version }}
       wait_for_pypi: omneval-devloop==${{ needs.meta.outputs.version }}
     secrets: inherit
+
+  universal-image:
+    name: Build devloop-agent-universal
+    # Extends the agent-base released by sdk-images, pinned by semver so
+    # devloop-agent-universal:X.Y.Z always wraps devloop-agent-base:X.Y.Z.
+    needs: [meta, sdk-images]
+    permissions:
+      packages: write
+      contents: read
+    uses: ./.github/workflows/build-image.yml
+    with:
+      image_name: devloop-agent-universal
+      docker_context: './images/agent-universal'
+      dockerfile: './images/agent-universal/Dockerfile'
+      build_args: BASE_TAG=${{ needs.meta.outputs.version }}
+    secrets: inherit

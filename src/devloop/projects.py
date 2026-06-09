@@ -19,7 +19,6 @@ _REQUIRED_FIELDS = (
     "id",
     "github_url",
     "default_branch",
-    "agent_image",
     "agent_label",
     "omneval_ingest_secret",
     "github_token_secret",
@@ -31,7 +30,6 @@ class ProjectConfig:
     id: str
     github_url: str
     default_branch: str
-    agent_image: str
     agent_label: str
     omneval_ingest_secret: str
     # Secret (agents ns, key "GITHUB_TOKEN") holding this project's scoped GitHub
@@ -41,6 +39,11 @@ class ProjectConfig:
     # GitHub login tagged for review on the PR the merge phase opens (assignee +
     # @-mention). Optional; empty means the merge phase opens the PR untagged.
     pr_reviewer: str = ""
+    # Agent Execution Job image. Optional since the universal image: empty means
+    # the worker falls back to AGENT_DEFAULT_IMAGE (the published
+    # devloop-agent-universal, via Helm temporalWorker.agentJob.defaultImage).
+    # Set it only when the project needs a derived image with extra toolchains.
+    agent_image: str = ""
 
 
 def load_projects(path: str | Path) -> list[ProjectConfig]:
@@ -63,7 +66,7 @@ def load_projects(path: str | Path) -> list[ProjectConfig]:
                 id=entry["id"],
                 github_url=entry["github_url"],
                 default_branch=entry["default_branch"],
-                agent_image=entry["agent_image"],
+                agent_image=entry.get("agent_image", ""),
                 agent_label=entry["agent_label"],
                 omneval_ingest_secret=entry["omneval_ingest_secret"],
                 github_token_secret=entry["github_token_secret"],

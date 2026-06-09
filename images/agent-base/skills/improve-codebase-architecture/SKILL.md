@@ -1,6 +1,18 @@
 ---
 name: improve-codebase-architecture
 description: Find deepening opportunities in a codebase, informed by the domain language in CONTEXT.md and the decisions in docs/adr/. Use when the user wants to improve architecture, find refactoring opportunities, consolidate tightly-coupled modules, or make a codebase more testable and AI-navigable.
+# triggers is an OpenHands-only extension to the AgentSkills format: under
+# the default skillsSelectionMode "triggers", a skill only surfaces to the
+# agent when the conversation matches one of these keywords - a triggerless
+# skill NEVER surfaces, so phase prompts could not invoke it.
+triggers:
+  - architecture
+  - improve
+  - refactor
+  - quality
+  - sentrux
+  - codebase
+  - consolidate
 ---
 
 # Improve Codebase Architecture

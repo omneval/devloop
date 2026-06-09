@@ -24,7 +24,7 @@ Triggered by GitHub webhook events, devloop processes issues labeled `agent-read
 
 - **Python >= 3.12** — the SDK and helper scripts require Python 3.12 or later.
 - **[uv](https://github.com/astral-sh/uv)** — Python package manager used exclusively for dependency management.
-- **Docker** — required to build per-project agent images that extend `devloop-agent-base`.
+- **Docker** — only needed if you build a custom agent image; the published `devloop-agent-universal` image (Go, Node.js, Helm toolchains) covers most projects out of the box.
 - **Kubernetes cluster** — devloop deploys as a Helm chart; `kubectl` must be configured.
 - **Helm 3** — for deploying the `charts/devloop/` chart.
 - **Temporal** — durable orchestration layer; consumers deploy Temporal independently (see [Temporal Prerequisites](docs/temporal-prerequisites.md)).
@@ -49,6 +49,7 @@ The project consists of:
 |-----------|----------|-------------|
 | **omneval-devloop** | `src/devloop/` | Python SDK — install via `pip install omneval-devloop` or `uv sync` |
 | **devloop-agent-base** | `images/agent-base/` | Shared toolchain base image for per-project agents |
+| **devloop-agent-universal** | `images/agent-universal/` | Batteries-included agent image (Go, Node, Helm) — the default when a project sets no `agent_image` |
 | **devloop-temporal-worker** | `images/temporal-worker/` | Reference Temporal Orchestration Worker image |
 | **Helm chart** | `charts/devloop/` | Kubernetes deployment templates |
 | **Helper scripts** | `scripts/` | CLI utilities (e.g. `restart_workflows.py`) |
@@ -74,7 +75,8 @@ helm install devloop charts/devloop/ \
 - id: my-project
   github_url: https://github.com/your-org/your-project
   default_branch: main
-  agent_image: ghcr.io/your-org/my-project-agent:latest
+  # agent_image is optional — omitted, the project runs on the published
+  # devloop-agent-universal image (Go, Node, Helm toolchains included).
   agent_label: agent-ready
   omneval_ingest_secret: omneval-ingest-secret
   github_token_secret: devloop-bot-token

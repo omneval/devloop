@@ -131,6 +131,12 @@ jobs:
           - image_name: devloop-temporal-worker
             docker_context: './images/temporal-worker'
             dockerfile: './images/temporal-worker/Dockerfile'
+          # PR build-success check only: extends the last *published*
+          # agent-base (BASE_TAG defaults to latest), not the PR's own base
+          # build - good enough to catch toolchain-install breakage.
+          - image_name: devloop-agent-universal
+            docker_context: './images/agent-universal'
+            dockerfile: './images/agent-universal/Dockerfile'
     uses: ./.github/workflows/build-image.yml
     with:
       image_name: ${{ matrix.image_name }}

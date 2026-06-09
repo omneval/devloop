@@ -56,3 +56,20 @@ jobs:
       docker_context: './images/agent-base'
       dockerfile: './images/agent-base/Dockerfile'
     secrets: inherit
+
+  build_and_push_universal:
+    name: Build and push agent-universal to GHCR
+    # Sequenced after agent-base so the universal image always wraps the
+    # agent-base that was just published (BASE_TAG=latest resolves on a fresh
+    # runner - no stale layer cache).
+    needs: build_and_push
+    permissions:
+      packages: write
+      contents: read
+    uses: ./.github/workflows/build-image.yml
+    with:
+      image_name: devloop-agent-universal
+      docker_context: './images/agent-universal'
+      dockerfile: './images/agent-universal/Dockerfile'
+      build_args: BASE_TAG=latest
+    secrets: inherit

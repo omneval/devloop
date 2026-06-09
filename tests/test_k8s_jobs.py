@@ -352,6 +352,39 @@ def test_render_job_passes_per_role_llm_env_when_set(monkeypatch):
     assert "AGENT_MODEL_EXTRACT" not in env  # unset roles are not forwarded
 
 
+def test_render_job_falls_back_to_default_image_when_agent_image_empty(monkeypatch):
+    """A registry project without agent_image runs on AGENT_DEFAULT_IMAGE (the
+    published devloop-agent-universal) — enrolling a project must not require
+    building a per-project image."""
+    _REGISTRY["omneval"] = ProjectConfig(
+        id="omneval",
+        github_url="https://github.com/omneval/omneval",
+        default_branch="main",
+        agent_label="agent-ready",
+        omneval_ingest_secret="omneval-ingest-omneval",
+        github_token_secret="omneval-agent-github-token",
+    )
+    monkeypatch.setattr(
+        k8s_jobs, "AGENT_DEFAULT_IMAGE", "ghcr.io/omneval/devloop-agent-universal:9.9.9"
+    )
+
+    d = _dispatch_input()
+    manifest = k8s_jobs.render_job(d, "agent-omneval-execute-42-a1")
+    image = manifest["spec"]["template"]["spec"]["containers"][0]["image"]
+    assert image == "ghcr.io/omneval/devloop-agent-universal:9.9.9"
+
+
+def test_render_job_explicit_agent_image_still_wins(monkeypatch):
+    """A registry entry that sets agent_image keeps using it untouched."""
+    monkeypatch.setattr(
+        k8s_jobs, "AGENT_DEFAULT_IMAGE", "ghcr.io/omneval/devloop-agent-universal:9.9.9"
+    )
+    d = _dispatch_input()
+    manifest = k8s_jobs.render_job(d, "agent-omneval-execute-42-a1")
+    image = manifest["spec"]["template"]["spec"]["containers"][0]["image"]
+    assert image == _PROJECT.agent_image
+
+
 def test_render_job_omits_llm_env_when_unset(monkeypatch):
     """LLM vars that are absent from the worker env must not appear in the
     Job container env at all — no empty-value stubs that confuse the entrypoint."""

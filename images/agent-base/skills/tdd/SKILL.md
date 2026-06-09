@@ -1,6 +1,20 @@
 ---
 name: tdd
 description: Test-driven development with red-green-refactor loop. Use when user wants to build features or fix bugs using TDD, mentions "red-green-refactor", wants integration tests, or asks for test-first development.
+# triggers is an OpenHands-only extension to the AgentSkills format: under
+# the default skillsSelectionMode "triggers", a skill only surfaces to the
+# agent when the conversation matches one of these keywords - a triggerless
+# skill NEVER surfaces, so phase prompts could not invoke it.
+triggers:
+  - tdd
+  - test
+  - tests
+  - red-green-refactor
+  - implement
+  - feature
+  - bug
+  - fix
+  - refactor
 ---
 
 # Test-Driven Development

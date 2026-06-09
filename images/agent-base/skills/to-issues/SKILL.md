@@ -1,6 +1,18 @@
 ---
 name: to-issues
 description: Break a plan, spec, or PRD into independently-grabbable issues on the project issue tracker using tracer-bullet vertical slices. Use when user wants to convert a plan into issues, create implementation tickets, or break down work into issues.
+# triggers is an OpenHands-only extension to the AgentSkills format: under
+# the default skillsSelectionMode "triggers", a skill only surfaces to the
+# agent when the conversation matches one of these keywords - a triggerless
+# skill NEVER surfaces, so phase prompts could not invoke it.
+triggers:
+  - issues
+  - issue
+  - tickets
+  - breakdown
+  - plan
+  - prd
+  - slices
 ---
 
 # To Issues

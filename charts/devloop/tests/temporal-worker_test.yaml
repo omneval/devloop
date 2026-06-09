@@ -722,3 +722,29 @@ tests:
           content:
             name: AGENT_MODEL_EXTRACT
           any: true
+
+  - it: defaults AGENT_DEFAULT_IMAGE to devloop-agent-universal at the chart appVersion
+    template: templates/temporal-worker-deployment.yaml
+    set:
+      temporalHost: "temporal-frontend.agents.svc:7233"
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: AGENT_DEFAULT_IMAGE
+            # Chart.yaml's placeholder appVersion; the release pipeline
+            # packages with --app-version <tag> so published charts pair the
+            # universal image with their own release.
+            value: "ghcr.io/omneval/devloop-agent-universal:0.0.0"
+
+  - it: renders AGENT_DEFAULT_IMAGE from agentJob.defaultImage
+    template: templates/temporal-worker-deployment.yaml
+    set:
+      temporalHost: "temporal-frontend.agents.svc:7233"
+      temporalWorker.agentJob.defaultImage: "ghcr.io/example/my-universal:1.2.3"
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: AGENT_DEFAULT_IMAGE
+            value: "ghcr.io/example/my-universal:1.2.3"

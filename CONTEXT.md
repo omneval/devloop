@@ -21,7 +21,7 @@ An optional, scheduled Temporal workflow (`codeQuality.enabled: false` by defaul
 _Avoid_: quality agent, code scan workflow, sentrux workflow
 
 **Project Registry**:
-A YAML config file (owned by the consumer, typically `agents/projects.yaml` in their GitOps repo) enumerating all repos enrolled for Dev Loop management. Each entry declares: GitHub repo URL, agent image reference, default branch, `agent-ready` label name, omneval ingest secret name, and GitHub token secret name. Adding a project is a change to the consumer's repo — no dynamic registration.
+A YAML config file (owned by the consumer, typically `agents/projects.yaml` in their GitOps repo) enumerating all repos enrolled for Dev Loop management. Each entry declares: GitHub repo URL, default branch, `agent-ready` label name, omneval ingest secret name, GitHub token secret name, and optionally an agent image reference (omitted, the project runs on the published `devloop-agent-universal`). Adding a project is a change to the consumer's repo — no dynamic registration.
 _Avoid_: agent config, project database
 
 **Agent Base Image**:
@@ -57,7 +57,7 @@ Any deployment that installs `omneval-devloop` and runs it against one or more e
 _Avoid_: devloop user, devloop instance
 
 **devloop images**:
-The two container images published to `ghcr.io/omneval/` by this repo: `devloop-agent-base` (shared toolchain base, build-time only — not a running deployment) and `devloop-temporal-worker` (reference Temporal Orchestration Worker, the sole running deployment). Image tags follow `sha-<7-char-hash>-<unix-epoch>` for main builds and semver for releases.
+The three container images published to `ghcr.io/omneval/` by this repo: `devloop-agent-base` (shared toolchain base, build-time only — not a running deployment), `devloop-agent-universal` (batteries-included agent image — agent-base plus Go/Node/Helm toolchains; the default Agent Execution Job image when a Project Registry entry omits `agent_image`, selected via `AGENT_DEFAULT_IMAGE` / Helm `temporalWorker.agentJob.defaultImage`), and `devloop-temporal-worker` (reference Temporal Orchestration Worker, the sole running deployment). Image tags follow `sha-<7-char-hash>-<unix-epoch>` for main builds and semver for releases.
 _Avoid_: devloop containers, agent images (too generic)
 
 **Agent Skill**:

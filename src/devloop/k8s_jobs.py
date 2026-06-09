@@ -56,6 +56,12 @@ OMNEVAL_OTLP_ENDPOINT = os.getenv(
 AGENT_BASE_IMAGE = os.getenv(
     "AGENT_BASE_IMAGE", "ghcr.io/omneval/devloop-agent-base:latest"
 )
+# Image used for a registry project whose entry omits agent_image: the
+# published batteries-included toolchain image (Go/Node/Helm on top of
+# agent-base), so enrolling a project does not require building an image.
+AGENT_DEFAULT_IMAGE = os.getenv(
+    "AGENT_DEFAULT_IMAGE", "ghcr.io/omneval/devloop-agent-universal:latest"
+)
 
 JOB_ACTIVE_DEADLINE = int(os.getenv("AGENT_JOB_ACTIVE_DEADLINE", "7200"))
 
@@ -91,7 +97,11 @@ def _resolve_job_refs(d: DispatchInput):
         cfg = get_project(d.project_id)
     except KeyError:
         cfg = None
-    image = d.image_override or (cfg.agent_image if cfg else AGENT_BASE_IMAGE)
+    # Registry project without an explicit agent_image → the universal image;
+    # non-registry jobs (alert-response diagnosis) keep the agent-base default.
+    image = d.image_override or (cfg.agent_image if cfg else "")
+    if not image:
+        image = AGENT_DEFAULT_IMAGE if cfg else AGENT_BASE_IMAGE
     omneval_secret = d.omneval_secret_override or (
         cfg.omneval_ingest_secret if cfg else ""
     )

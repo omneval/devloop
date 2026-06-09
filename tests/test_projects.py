@@ -74,7 +74,6 @@ def test_multiple_projects(tmp_path):
         "id",
         "github_url",
         "default_branch",
-        "agent_image",
         "agent_label",
         "omneval_ingest_secret",
         "github_token_secret",
@@ -90,3 +89,18 @@ def test_missing_required_field_raises_value_error(tmp_path, missing_field):
 
     with pytest.raises(ValueError, match=missing_field):
         load_projects(path)
+
+
+def test_agent_image_is_optional(tmp_path):
+    """A project entry without agent_image loads with an empty string — the
+    worker falls back to AGENT_DEFAULT_IMAGE (the universal image), so
+    enrolling a project requires no per-project image build."""
+    import yaml
+
+    data = yaml.safe_load(_VALID_YAML)
+    del data["projects"][0]["agent_image"]
+    path = tmp_path / "projects.yaml"
+    path.write_text(yaml.dump(data))
+
+    configs = load_projects(path)
+    assert configs[0].agent_image == ""

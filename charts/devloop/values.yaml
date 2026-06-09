@@ -56,6 +56,12 @@ temporalWorker:
   # Agent Execution Job configuration — settings for the Kubernetes Jobs the
   # worker spawns for each Dev Loop phase.
   agentJob:
+    # Image used for a project whose registry entry omits agent_image.
+    # Defaults to the published devloop-agent-universal matching the chart
+    # appVersion — the batteries-included toolchain image (Go, Node, Helm on
+    # top of agent-base), so enrolling a project requires no image build.
+    # Forwarded to the worker as AGENT_DEFAULT_IMAGE.
+    defaultImage: ""
     # ServiceAccount assigned to each spawned Agent Execution Job pod.
     # When create: true, the chart creates the SA, a Role (configmaps
     # create/get/update/patch), and a RoleBinding in the release namespace.
