@@ -1,0 +1,18 @@
+# Repo-native devloop agent configuration (devloop >= 0.0.19) — yes, devloop
+# runs its own agents against this repo (dogfooding).
+#
+# `install:` replaces the entrypoint's default root install (pip install -e .)
+# with the uv-managed setup this repo actually uses.
+# `tests:` is the authoritative list of suites that gate every agent PR.
+# The agent-base image tests (images/agent-base/) need the OpenHands SDK and
+# are exercised by CI, not by this gate — pytest's testpaths already scopes
+# collection to tests/.
+install:
+  - uv sync --all-groups
+tests:
+  - name: lint
+    command: uv run ruff check src/ tests/
+  - name: python
+    command: uv run pytest
+  - name: helm
+    command: helm unittest charts/devloop && helm lint charts/devloop
