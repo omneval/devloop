@@ -91,6 +91,14 @@ spec:
             - name: SUMMARIZATION_WEBHOOK_URL
               value: {{ . | quote }}
             {{- end }}
+            - name: CODE_QUALITY_ENABLED
+              value: {{ .Values.codeQuality.enabled | default false | quote }}
+            - name: CODE_QUALITY_CRON_SCHEDULE
+              value: {{ .Values.codeQuality.cronSchedule | default "0 3 * * 0" | quote }}
+            - name: CODE_QUALITY_THRESHOLD
+              value: {{ .Values.codeQuality.qualityThreshold | default 7000 | quote }}
+            - name: CODE_QUALITY_AGENT_LABEL
+              value: {{ .Values.codeQuality.agentLabel | default "agent-ready" | quote }}
             {{- if .Values.skillsByPhase }}
             - name: AGENT_SKILLS_BY_PHASE
               value: {{ .Values.skillsByPhase | toJson | quote }}

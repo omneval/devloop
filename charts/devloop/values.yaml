@@ -207,3 +207,24 @@ summarization:
   # but do not fail the workflow). Forwarded as SUMMARIZATION_WEBHOOK_URL.
   webhookUrl: ""
 
+# ---------------------------------------------------------------------------
+# Code Quality Workflow
+# ---------------------------------------------------------------------------
+# Controls the scheduled CodeQualityWorkflow / Temporal Schedule (issue #82).
+# Runs sentrux against enrolled repos on a schedule and files improvement
+# issues via the improve-codebase-architecture + to-issues skills when the
+# quality score falls below the threshold.
+# Requires a .sentrux/rules.toml in each enrolled repo — see docs/sentrux.md.
+codeQuality:
+  # When false, ensure_schedules does not create the code quality schedule
+  # for any project — and deletes any existing one.
+  enabled: false
+  # 5-field cron expression. Default: weekly Sunday 03:00.
+  cronSchedule: "0 3 * * 0"
+  # Quality threshold on the native sentrux 0–10000 scale.
+  # Scores below this value trigger the improve phase.
+  qualityThreshold: 7000
+  # Label applied to improvement issues filed by the improve phase.
+  # Must match a label that exists on the enrolled repo.
+  agentLabel: "agent-ready"
+
