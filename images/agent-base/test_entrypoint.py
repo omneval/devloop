@@ -795,3 +795,318 @@ def test_main_skips_configmap_install_when_not_configured(
     rc = entrypoint.main()
     assert rc == 0
     assert install_called == [], "install_configmap_skills should not be called"
+
+
+# --------------------------------------------------------------------------- #
+# Code quality phases (issue #110)
+# --------------------------------------------------------------------------- #
+
+
+class TestCodeQualityScanResult:
+    """CodeQualityScanResult Pydantic model is defined with the correct fields."""
+
+    def test_model_has_score_field(self):
+        result = entrypoint.CodeQualityScanResult()
+        assert result.score == 0
+
+    def test_model_has_report_field(self):
+        result = entrypoint.CodeQualityScanResult()
+        assert result.report == ""
+
+    def test_model_has_scan_error_field(self):
+        result = entrypoint.CodeQualityScanResult()
+        assert result.scan_error is False
+
+    def test_model_has_error_message_field(self):
+        result = entrypoint.CodeQualityScanResult()
+        assert result.error_message == ""
+
+    def test_model_accepts_values(self):
+        result = entrypoint.CodeQualityScanResult(
+            score=8000, report="Quality: 8000", scan_error=True, error_message="oops"
+        )
+        assert result.score == 8000
+        assert result.report == "Quality: 8000"
+        assert result.scan_error is True
+        assert result.error_message == "oops"
+
+
+class TestCodeQualityPromptFiles:
+    """code_quality_scan and code_quality_improve are in _PROMPT_FILES."""
+
+    def test_code_quality_scan_in_prompt_files(self):
+        assert "code_quality_scan" in entrypoint._PROMPT_FILES
+
+    def test_code_quality_improve_in_prompt_files(self):
+        assert "code_quality_improve" in entrypoint._PROMPT_FILES
+
+    def test_code_quality_scan_prompt_filename(self):
+        assert entrypoint._PROMPT_FILES["code_quality_scan"] == "code_quality_scan.md"
+
+    def test_code_quality_improve_prompt_filename(self):
+        assert entrypoint._PROMPT_FILES["code_quality_improve"] == "code_quality_improve.md"
+
+
+class TestPromptVariablesCodeQuality:
+    """_prompt_variables returns correct keys for both code quality phases."""
+
+    def test_code_quality_scan_returns_threshold_key(self, monkeypatch):
+        monkeypatch.delenv("DEFAULT_BRANCH", raising=False)
+        spec = entrypoint.TaskSpec(
+            phase="code_quality_scan",
+            project_id="omneval",
+            extra={"threshold": 5000},
+        )
+        variables = entrypoint._prompt_variables(spec)
+        assert "THRESHOLD" in variables
+        assert variables["THRESHOLD"] == "5000"
+
+    def test_code_quality_scan_returns_default_branch_key(self, monkeypatch):
+        monkeypatch.setenv("DEFAULT_BRANCH", "develop")
+        spec = entrypoint.TaskSpec(
+            phase="code_quality_scan",
+            project_id="omneval",
+        )
+        variables = entrypoint._prompt_variables(spec)
+        assert "DEFAULT_BRANCH" in variables
+        assert variables["DEFAULT_BRANCH"] == "develop"
+
+    def test_code_quality_scan_default_threshold(self, monkeypatch):
+        monkeypatch.delenv("DEFAULT_BRANCH", raising=False)
+        spec = entrypoint.TaskSpec(
+            phase="code_quality_scan",
+            project_id="omneval",
+        )
+        variables = entrypoint._prompt_variables(spec)
+        assert variables["THRESHOLD"] == "7000"
+
+    def test_code_quality_improve_returns_sentrux_report_key(self):
+        spec = entrypoint.TaskSpec(
+            phase="code_quality_improve",
+            project_id="omneval",
+            extra={"sentrux_report": "Quality: 6500\n..."},
+        )
+        variables = entrypoint._prompt_variables(spec)
+        assert "SENTRUX_REPORT" in variables
+        assert variables["SENTRUX_REPORT"] == "Quality: 6500\n..."
+
+    def test_code_quality_improve_returns_parent_issue_number_key(self):
+        spec = entrypoint.TaskSpec(
+            phase="code_quality_improve",
+            project_id="omneval",
+            extra={"parent_issue_number": 99},
+        )
+        variables = entrypoint._prompt_variables(spec)
+        assert "PARENT_ISSUE_NUMBER" in variables
+        assert variables["PARENT_ISSUE_NUMBER"] == "99"
+
+    def test_code_quality_improve_returns_agent_label_key(self):
+        spec = entrypoint.TaskSpec(
+            phase="code_quality_improve",
+            project_id="omneval",
+            extra={"agent_label": "agent-ready"},
+        )
+        variables = entrypoint._prompt_variables(spec)
+        assert "AGENT_LABEL" in variables
+        assert variables["AGENT_LABEL"] == "agent-ready"
+
+    def test_code_quality_improve_default_agent_label(self):
+        spec = entrypoint.TaskSpec(
+            phase="code_quality_improve",
+            project_id="omneval",
+        )
+        variables = entrypoint._prompt_variables(spec)
+        assert variables["AGENT_LABEL"] == "agent-ready"
+
+
+class TestHandleCodeQualityScan:
+    """handle_code_quality_scan happy path and scan_error detection."""
+
+    def test_happy_path_returns_complete(self, tmp_path, monkeypatch):
+        workdir = tmp_path / "repo"
+        bare = tmp_path / "origin.git"
+        bare.mkdir()
+        _git("init", "--bare", "-b", "main", cwd=bare)
+        seed = tmp_path / "seed"
+        seed.mkdir()
+        _git("init", "-b", "main", cwd=seed)
+        _git("config", "user.email", "t@t.com", cwd=seed)
+        _git("config", "user.name", "t", cwd=seed)
+        (seed / "README.md").write_text("hello\n")
+        _git("add", "-A", cwd=seed)
+        _git("commit", "-m", "init", cwd=seed)
+        _git("remote", "add", "origin", str(bare), cwd=seed)
+        _git("push", "origin", "main", cwd=seed)
+
+        monkeypatch.setenv("GITHUB_URL", str(bare))
+        monkeypatch.setenv("DEFAULT_BRANCH", "main")
+        monkeypatch.setenv("WORKDIR", str(workdir))
+        monkeypatch.setattr(
+            entrypoint,
+            "run_agent",
+            lambda spec, wd, tracer: entrypoint.AgentOutcome(
+                summary='{"score": 8200, "report": "Quality: 8200", "scan_error": false, "error_message": ""}',
+                files_changed=False,
+            ),
+        )
+        from unittest.mock import MagicMock, patch
+
+        mock_response = MagicMock()
+        mock_response.choices[0].message.content = json.dumps(
+            {"score": 8200, "report": "Quality: 8200", "scan_error": False, "error_message": ""}
+        )
+        with patch.object(entrypoint, "_get_llm_client") as mock_client_fn:
+            mock_client = MagicMock()
+            mock_client.chat.completions.create.return_value = mock_response
+            mock_client_fn.return_value = mock_client
+
+            spec = entrypoint.TaskSpec(
+                phase="code_quality_scan",
+                project_id="omneval",
+            )
+            tracer = entrypoint.setup_tracing()
+            result = entrypoint.handle_code_quality_scan(spec, tracer)
+
+        assert result["status"] == "complete"
+
+    def test_scan_error_detection_from_summary(self, tmp_path, monkeypatch):
+        workdir = tmp_path / "repo"
+        bare = tmp_path / "origin.git"
+        bare.mkdir()
+        _git("init", "--bare", "-b", "main", cwd=bare)
+        seed = tmp_path / "seed"
+        seed.mkdir()
+        _git("init", "-b", "main", cwd=seed)
+        _git("config", "user.email", "t@t.com", cwd=seed)
+        _git("config", "user.name", "t", cwd=seed)
+        (seed / "README.md").write_text("hello\n")
+        _git("add", "-A", cwd=seed)
+        _git("commit", "-m", "init", cwd=seed)
+        _git("remote", "add", "origin", str(bare), cwd=seed)
+        _git("push", "origin", "main", cwd=seed)
+
+        monkeypatch.setenv("GITHUB_URL", str(bare))
+        monkeypatch.setenv("DEFAULT_BRANCH", "main")
+        monkeypatch.setenv("WORKDIR", str(workdir))
+
+        error_summary = "rules.toml not found in this repository"
+        monkeypatch.setattr(
+            entrypoint,
+            "run_agent",
+            lambda spec, wd, tracer: entrypoint.AgentOutcome(
+                summary=error_summary,
+                files_changed=False,
+            ),
+        )
+        from unittest.mock import MagicMock, patch
+
+        mock_response = MagicMock()
+        mock_response.choices[0].message.content = json.dumps(
+            {"score": 0, "report": "", "scan_error": False, "error_message": ""}
+        )
+        with patch.object(entrypoint, "_get_llm_client") as mock_client_fn:
+            mock_client = MagicMock()
+            mock_client.chat.completions.create.return_value = mock_response
+            mock_client_fn.return_value = mock_client
+
+            spec = entrypoint.TaskSpec(
+                phase="code_quality_scan",
+                project_id="omneval",
+            )
+            tracer = entrypoint.setup_tracing()
+            result = entrypoint.handle_code_quality_scan(spec, tracer)
+
+        # The handler returns complete status regardless (scan_error is embedded in summary)
+        assert result["status"] == "complete"
+        assert "rules.toml" in result["summary"].lower()
+
+
+class TestHandleCodeQualityImprove:
+    """handle_code_quality_improve happy path."""
+
+    def test_happy_path_returns_complete(self, tmp_path, monkeypatch):
+        workdir = tmp_path / "repo"
+        bare = tmp_path / "origin.git"
+        bare.mkdir()
+        _git("init", "--bare", "-b", "main", cwd=bare)
+        seed = tmp_path / "seed"
+        seed.mkdir()
+        _git("init", "-b", "main", cwd=seed)
+        _git("config", "user.email", "t@t.com", cwd=seed)
+        _git("config", "user.name", "t", cwd=seed)
+        (seed / "README.md").write_text("hello\n")
+        _git("add", "-A", cwd=seed)
+        _git("commit", "-m", "init", cwd=seed)
+        _git("remote", "add", "origin", str(bare), cwd=seed)
+        _git("push", "origin", "main", cwd=seed)
+
+        monkeypatch.setenv("GITHUB_URL", str(bare))
+        monkeypatch.setenv("DEFAULT_BRANCH", "main")
+        monkeypatch.setenv("WORKDIR", str(workdir))
+        monkeypatch.setattr(
+            entrypoint,
+            "run_agent",
+            lambda spec, wd, tracer: entrypoint.AgentOutcome(
+                summary="Filed 3 improvement issues: #201, #202, #203",
+                files_changed=False,
+            ),
+        )
+
+        spec = entrypoint.TaskSpec(
+            phase="code_quality_improve",
+            project_id="omneval",
+            extra={
+                "sentrux_report": "Quality: 6500",
+                "parent_issue_number": 100,
+                "agent_label": "agent-ready",
+            },
+        )
+        tracer = entrypoint.setup_tracing()
+        result = entrypoint.handle_code_quality_improve(spec, tracer)
+
+        assert result["status"] == "complete"
+        assert "Filed 3 improvement issues" in result["summary"]
+
+
+class TestCodeQualityHandlersRegistered:
+    """Both handlers are registered in _HANDLERS."""
+
+    def test_code_quality_scan_in_handlers(self):
+        assert "code_quality_scan" in entrypoint._HANDLERS
+
+    def test_code_quality_improve_in_handlers(self):
+        assert "code_quality_improve" in entrypoint._HANDLERS
+
+
+class TestCodeQualityPromptTemplates:
+    """Both prompt templates exist and have no unresolved placeholders after rendering."""
+
+    def test_code_quality_scan_prompt_renders(self, monkeypatch):
+        prompts_dir = Path(__file__).parent / "prompts"
+        monkeypatch.setenv("AGENT_PROMPTS_DIR", str(prompts_dir))
+        monkeypatch.setenv("DEFAULT_BRANCH", "main")
+        spec = entrypoint.TaskSpec(
+            phase="code_quality_scan",
+            project_id="omneval",
+            extra={"threshold": 7000},
+        )
+        msg = entrypoint.build_agent_message(spec)
+        assert "{{" not in msg
+        assert len(msg) > 0
+
+    def test_code_quality_improve_prompt_renders(self, monkeypatch):
+        prompts_dir = Path(__file__).parent / "prompts"
+        monkeypatch.setenv("AGENT_PROMPTS_DIR", str(prompts_dir))
+        spec = entrypoint.TaskSpec(
+            phase="code_quality_improve",
+            project_id="omneval",
+            extra={
+                "sentrux_report": "Quality: 7500\n...",
+                "parent_issue_number": 42,
+                "agent_label": "agent-ready",
+            },
+        )
+        msg = entrypoint.build_agent_message(spec)
+        assert "{{" not in msg
+        assert "42" in msg
+        assert "agent-ready" in msg
