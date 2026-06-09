@@ -87,6 +87,13 @@ class DiagnosisOutput(_BaseModel):
     recommended_actions: list[RecommendedAction] = []
 
 
+class CodeQualityScanResult(_BaseModel):
+    score: int = 0
+    report: str = ""
+    scan_error: bool = False
+    error_message: str = ""
+
+
 def _get_llm_client() -> _OpenAI:
     return _OpenAI(
         api_key=os.environ.get("AGENT_LLM_API_KEY", "none"),
@@ -918,6 +925,8 @@ _PROMPT_FILES = {
     "answer": "answer.md",
     "pr_comment": "pr_comment.md",
     "remediation": "remediation.md",
+    "code_quality_scan": "code_quality_scan.md",
+    "code_quality_improve": "code_quality_improve.md",
 }
 
 _PLACEHOLDER_RE = re.compile(r"\{\{[A-Z_]+\}\}")
@@ -1032,6 +1041,17 @@ def _prompt_variables(spec: TaskSpec) -> dict[str, str]:
         return {
             "BRANCH": spec.branch,
             "CI_CHECK_FAILURES": spec.extra.get("ci_check_failures", "none"),
+        }
+    if spec.phase == "code_quality_scan":
+        return {
+            "THRESHOLD": str(spec.extra.get("threshold", 7000)),
+            "DEFAULT_BRANCH": os.environ.get("DEFAULT_BRANCH", "main"),
+        }
+    if spec.phase == "code_quality_improve":
+        return {
+            "SENTRUX_REPORT": spec.extra.get("sentrux_report", ""),
+            "PARENT_ISSUE_NUMBER": str(spec.extra.get("parent_issue_number", 0)),
+            "AGENT_LABEL": spec.extra.get("agent_label", "agent-ready"),
         }
     return {}
 
@@ -1465,6 +1485,39 @@ def handle_remediation(spec: TaskSpec, tracer) -> dict:
     ).to_payload()
 
 
+def handle_code_quality_scan(spec: TaskSpec, tracer) -> dict:
+    """Code quality scan phase: run sentrux and return structured result."""
+    workdir = os.getenv("WORKDIR", "/workspace/repo")
+    base = os.environ.get("DEFAULT_BRANCH", "main")
+    with tracer.start_as_current_span("clone"):
+        clone_repo(os.environ["GITHUB_URL"], base, workdir)
+    outcome = run_agent(spec, workdir, tracer)
+    result = structured_extractor(outcome.summary, CodeQualityScanResult)
+    # Detect abort: no rules.toml found
+    if "rules.toml" in outcome.summary.lower() and (
+        "not found" in outcome.summary.lower() or "missing" in outcome.summary.lower()
+    ):
+        result.scan_error = True
+        result.error_message = outcome.summary
+    return AgentJobResult(
+        status="complete",
+        summary=outcome.summary,
+    ).to_payload()
+
+
+def handle_code_quality_improve(spec: TaskSpec, tracer) -> dict:
+    """Code quality improve phase: file improvement issues using improve-codebase-architecture + to-issues skills."""
+    workdir = os.getenv("WORKDIR", "/workspace/repo")
+    base = os.environ.get("DEFAULT_BRANCH", "main")
+    with tracer.start_as_current_span("clone"):
+        clone_repo(os.environ["GITHUB_URL"], base, workdir)
+    outcome = run_agent(spec, workdir, tracer)
+    return AgentJobResult(
+        status="complete",
+        summary=outcome.summary,
+    ).to_payload()
+
+
 _HANDLERS = {
     "plan": handle_plan,
     "execute": handle_execute,
@@ -1475,6 +1528,8 @@ _HANDLERS = {
     "answer": handle_answer,
     "pr_comment": handle_pr_comment,
     "remediation": handle_remediation,
+    "code_quality_scan": handle_code_quality_scan,
+    "code_quality_improve": handle_code_quality_improve,
 }
 
 

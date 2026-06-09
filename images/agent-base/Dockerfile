@@ -45,6 +45,9 @@ RUN curl -fsSL --retry 5 --retry-delay 5 --max-time 300 \
     "https://github.com/argoproj/argo-cd/releases/download/v${ARGOCD_VERSION}/argocd-linux-amd64" \
     && chmod +x /usr/local/bin/argocd
 
+# sentrux code-quality scanner (issue #82)
+RUN curl -fsSL https://raw.githubusercontent.com/sentrux/sentrux/main/install.sh | sh
+
 # Runtime Python dependencies are declared in pyproject.toml (OpenHands agent
 # runtime, OTLP tracing exporter, and omneval-devloop — the shared Agent Job
 # protocol, devloop.shared). Installed --system; no first-party package is built.
