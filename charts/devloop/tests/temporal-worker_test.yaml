@@ -471,12 +471,12 @@ tests:
           path: spec.template.spec.containers[0].env
           content:
             name: GIT_AUTHOR_NAME
-            value: "homelab-agent"
+            value: "devloop-bot"
       - contains:
           path: spec.template.spec.containers[0].env
           content:
             name: GIT_AUTHOR_EMAIL
-            value: "agent@blosshomelab.com"
+            value: "devloop-bot@omneval.com"
 
   - it: renders GIT_AUTHOR_NAME and GIT_AUTHOR_EMAIL from agent.gitName/agent.gitEmail (issue #93)
     template: templates/temporal-worker-deployment.yaml
