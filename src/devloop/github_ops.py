@@ -39,6 +39,7 @@ from .projects import ProjectConfig, get_project, parse_github_repo
 from .shared import (
     CICheckFailure,
     CIChecksResult,
+    CreateGithubIssueInput,
     GetPRBranchInput,
     GetPRDiffInput,
     GithubNotificationInput,
@@ -47,6 +48,7 @@ from .shared import (
     PostCommentsInput,
     RequestReviewerInput,
     ReviewerRequestResult,
+    UpdateGithubIssueInput,
 )
 
 log = logging.getLogger(__name__)
@@ -656,3 +658,53 @@ async def open_agent_pr_issue_numbers(inp: OpenAgentPRsInput) -> list[int]:
     numbers = agent_pr_issue_numbers(pulls)
     log.info("issues with open agent PRs in %s: %s", repo, numbers)
     return numbers
+
+
+@activity.defn
+async def create_github_issue(inp: CreateGithubIssueInput) -> int:
+    """Open a new GitHub Issue and return its issue number.
+
+    Used by CodeQualityWorkflow (issue #82) to file the parent tracking issue
+    at workflow start, before dispatching the sentrux scan agent job. Raises on
+    any GitHub API error (Temporal will retry per the caller's retry policy).
+    """
+    cfg = get_project(inp.project_id)
+    repo = parse_github_repo(cfg.github_url)
+    payload: dict[str, Any] = {"title": inp.title, "body": inp.body}
+    if inp.labels:
+        payload["labels"] = inp.labels
+    with await _client(cfg) as c:
+        resp = c.post(f"/repos/{repo}/issues", json=payload)
+        resp.raise_for_status()
+        number = resp.json()["number"]
+    log.info("created GitHub issue #%d in %s", number, repo)
+    return number
+
+
+@activity.defn
+async def update_github_issue(inp: UpdateGithubIssueInput) -> None:
+    """Patch an existing GitHub Issue's body and/or state.
+
+    Omitted (empty) ``body`` or ``state`` fields are not sent, leaving the
+    live value unchanged. Used by CodeQualityWorkflow (issue #82) to update
+    the parent tracking issue after the scan result is known, and to close it
+    on the pass/abort paths. Raises on any GitHub API error.
+    """
+    cfg = get_project(inp.project_id)
+    repo = parse_github_repo(cfg.github_url)
+    payload: dict[str, Any] = {}
+    if inp.body:
+        payload["body"] = inp.body
+    if inp.state:
+        payload["state"] = inp.state
+    if not payload:
+        return
+    with await _client(cfg) as c:
+        resp = c.patch(f"/repos/{repo}/issues/{inp.issue_number}", json=payload)
+        resp.raise_for_status()
+    log.info(
+        "updated GitHub issue #%d in %s (state=%r)",
+        inp.issue_number,
+        repo,
+        inp.state or "unchanged",
+    )

@@ -33,6 +33,7 @@ from .k8s_jobs import (
     dispatch_agent_job,
 )
 from .github_ops import (
+    create_github_issue,
     file_issues,
     get_pr_branch,
     get_pr_diff,
@@ -41,6 +42,7 @@ from .github_ops import (
     post_github_comment,
     post_pr_comments,
     request_github_reviewer,
+    update_github_issue,
 )
 from .summarize_activities import publish_summary, summarize_changes
 
@@ -49,6 +51,7 @@ from .workflows import NoopWorkflow, noop_activity
 from .dev_loop import DevLoopWorkflow
 from .pr_comment import PRCommentWorkflow
 from .summarization import SummarizationWorkflow
+from .code_quality import CodeQualityWorkflow
 
 logging.basicConfig(
     level=logging.INFO,
@@ -71,6 +74,20 @@ SUMMARIZATION_ENABLED = os.getenv(
     "",
 )
 SUMMARIZATION_CRON_SCHEDULE = os.getenv("SUMMARIZATION_CRON_SCHEDULE", "")
+
+# Code quality schedule config (issue #82) — forwarded from Helm values
+# codeQuality.enabled / codeQuality.cronSchedule / codeQuality.threshold / codeQuality.agentLabel.
+CODE_QUALITY_ENABLED = os.getenv(
+    "CODE_QUALITY_ENABLED", "false"
+).strip().lower() not in ("false", "0", "")
+CODE_QUALITY_CRON_SCHEDULE = os.getenv("CODE_QUALITY_CRON_SCHEDULE", "")
+try:
+    CODE_QUALITY_THRESHOLD = int(os.getenv("CODE_QUALITY_THRESHOLD", "7000"))
+    if CODE_QUALITY_THRESHOLD < 0:
+        CODE_QUALITY_THRESHOLD = 7000
+except (ValueError, TypeError):
+    CODE_QUALITY_THRESHOLD = 7000
+CODE_QUALITY_AGENT_LABEL = os.getenv("CODE_QUALITY_AGENT_LABEL", "agent-ready")
 
 # Read the max concurrency cap for Agent Execution Job dispatches.
 # Malformed or missing value falls back to 1.
@@ -105,6 +122,8 @@ ORCHESTRATION_ACTIVITIES = [
     poll_ci_checks,
     request_github_reviewer,
     publish_summary,
+    create_github_issue,
+    update_github_issue,
 ]
 
 WORKFLOWS = [
@@ -112,6 +131,7 @@ WORKFLOWS = [
     DevLoopWorkflow,
     PRCommentWorkflow,
     SummarizationWorkflow,
+    CodeQualityWorkflow,
 ]
 
 
@@ -144,6 +164,10 @@ async def main() -> None:
         projects,
         summarization_enabled=SUMMARIZATION_ENABLED,
         summarization_cron_schedule=SUMMARIZATION_CRON_SCHEDULE,
+        code_quality_enabled=CODE_QUALITY_ENABLED,
+        code_quality_cron_schedule=CODE_QUALITY_CRON_SCHEDULE,
+        code_quality_threshold=CODE_QUALITY_THRESHOLD,
+        code_quality_agent_label=CODE_QUALITY_AGENT_LABEL,
     )
 
     app = create_app(client, projects)

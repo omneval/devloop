@@ -192,6 +192,10 @@ async def ensure_schedules(
     *,
     summarization_enabled: bool = True,
     summarization_cron_schedule: str = "",
+    code_quality_enabled: bool = False,
+    code_quality_cron_schedule: str = "",
+    code_quality_threshold: int = 7000,
+    code_quality_agent_label: str = "agent-ready",
 ) -> None:
     """Reconcile all Temporal Schedules for *projects*.
 
@@ -209,6 +213,21 @@ async def ensure_schedules(
         Optional override for the cron spec (e.g. ``"0 8 * * 1"``).  When
         empty the default Monday-08:00 ``ScheduleCalendarSpec`` is used.  Maps
         to the Helm value ``summarization.cronSchedule``.
+    code_quality_enabled:
+        When ``True`` a ``code-quality-{project_id}`` schedule is created or
+        updated for each project.  When ``False`` any existing schedule is
+        deleted.  Maps to the Helm value ``codeQuality.enabled`` (default
+        ``False``).
+    code_quality_cron_schedule:
+        Optional cron spec override for the code quality schedule.  When
+        empty the default Monday-08:00 spec is used.  Maps to the Helm value
+        ``codeQuality.cronSchedule``.
+    code_quality_threshold:
+        Sentrux score threshold (0–10000) below which improvement issues are
+        filed.  Maps to ``codeQuality.threshold`` (default ``7000``).
+    code_quality_agent_label:
+        GitHub label applied to filed improvement issues.  Maps to
+        ``codeQuality.agentLabel`` (default ``"agent-ready"``).
     """
     from .summarization import SummarizeInput
 
@@ -217,18 +236,41 @@ async def ensure_schedules(
 
         if not summarization_enabled:
             await _delete_if_exists(client, schedule_id)
-            continue
-
-        await _ensure(
-            client,
-            schedule_id,
-            Schedule(
-                action=ScheduleActionStartWorkflow(
-                    "SummarizationWorkflow",
-                    SummarizeInput(project_id=p.id, trigger="weekly"),
-                    id=schedule_id,
-                    task_queue=ORCHESTRATION_QUEUE,
+        else:
+            await _ensure(
+                client,
+                schedule_id,
+                Schedule(
+                    action=ScheduleActionStartWorkflow(
+                        "SummarizationWorkflow",
+                        SummarizeInput(project_id=p.id, trigger="weekly"),
+                        id=schedule_id,
+                        task_queue=ORCHESTRATION_QUEUE,
+                    ),
+                    spec=build_schedule_spec(summarization_cron_schedule),
                 ),
-                spec=build_schedule_spec(summarization_cron_schedule),
-            ),
-        )
+            )
+
+        # Code quality schedule
+        cq_schedule_id = f"code-quality-{p.id}"
+        if not code_quality_enabled:
+            await _delete_if_exists(client, cq_schedule_id)
+        else:
+            from .code_quality import CodeQualityInput, CodeQualityWorkflow
+            await _ensure(
+                client,
+                cq_schedule_id,
+                Schedule(
+                    action=ScheduleActionStartWorkflow(
+                        "CodeQualityWorkflow",
+                        CodeQualityInput(
+                            project_id=p.id,
+                            threshold=code_quality_threshold,
+                            agent_label=code_quality_agent_label,
+                        ),
+                        id=cq_schedule_id,
+                        task_queue=ORCHESTRATION_QUEUE,
+                    ),
+                    spec=build_schedule_spec(code_quality_cron_schedule),
+                ),
+            )

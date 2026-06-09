@@ -37,6 +37,8 @@ class Phase(str, Enum):
     SUMMARIZE = "summarize"
     ANSWER = "answer"
     PR_COMMENT = "pr_comment"
+    CODE_QUALITY_SCAN = "code_quality_scan"
+    CODE_QUALITY_IMPROVE = "code_quality_improve"
 
 
 class JobStatus(str, Enum):
@@ -355,3 +357,36 @@ class PublishSummaryInput:
     project_id: str
     summary: str
     date: str  # ISO date string, e.g. "2026-06-06"
+
+
+# ---------------------------------------------------------------------------
+# GitHub Issue create/update activity I/O (issue #82 / CodeQualityWorkflow)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class CreateGithubIssueInput:
+    """Input for the create_github_issue activity.
+
+    Opens a new GitHub Issue on the project's repository with the given
+    title, body, and labels. Returns the new issue number.
+    """
+
+    project_id: str
+    title: str
+    body: str
+    labels: list[str] = field(default_factory=list)
+
+
+@dataclass
+class UpdateGithubIssueInput:
+    """Input for the update_github_issue activity.
+
+    Patches an existing GitHub Issue's body and/or state. Omit a field to
+    leave it unchanged. ``state`` must be ``"open"`` or ``"closed"`` when set.
+    """
+
+    project_id: str
+    issue_number: int
+    body: str = ""
+    state: str = ""  # "open" | "closed" | "" (unchanged)
