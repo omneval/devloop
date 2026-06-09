@@ -164,7 +164,7 @@ def test_dev_loop_does_not_import_discord_constants():
     import ast
     import pathlib
 
-    src = pathlib.Path("src/devloop/dev_loop.py").read_text()
+    src = pathlib.Path("src/devloop/dev_loop.py").read_text(encoding="utf-8")
     tree = ast.parse(src)
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom):
@@ -192,7 +192,7 @@ def test_dev_loop_imports_github_notification_input():
     import pathlib
 
     def _imports(path: str, name: str) -> bool:
-        src = pathlib.Path(path).read_text()
+        src = pathlib.Path(path).read_text(encoding="utf-8")
         tree = ast.parse(src)
         for node in ast.walk(tree):
             if isinstance(node, ast.ImportFrom):
@@ -220,7 +220,7 @@ def test_worker_does_not_import_messaging_bridge_activities():
     """worker.py must not reference any messaging-bridge activities or queues."""
     import pathlib
 
-    src = pathlib.Path("src/devloop/worker.py").read_text()
+    src = pathlib.Path("src/devloop/worker.py").read_text(encoding="utf-8")
     assert "DiscordActivities" not in src, "worker.py still imports DiscordActivities"
     assert "SlackActivities" not in src, "worker.py still imports SlackActivities"
     assert "MESSAGING_QUEUE" not in src, "worker.py still references MESSAGING_QUEUE"
@@ -230,7 +230,7 @@ def test_worker_registers_post_github_comment_activity():
     """worker.py must include post_github_comment in its ACTIVITIES list."""
     import pathlib
 
-    src = pathlib.Path("src/devloop/worker.py").read_text()
+    src = pathlib.Path("src/devloop/worker.py").read_text(encoding="utf-8")
     assert "post_github_comment" in src, (
         "worker.py must register post_github_comment activity"
     )

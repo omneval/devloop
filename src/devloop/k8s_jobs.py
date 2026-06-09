@@ -172,6 +172,9 @@ def render_job(d: DispatchInput, job_name: str) -> dict:
         "AGENT_LLM_BASE_URL",
         "AGENT_LLM_API_KEY",
         "AGENT_STUB",
+        # Execute-phase acceptance-criteria audit loop: how many extra agent
+        # passes the entrypoint may spend addressing unmet criteria (default 2).
+        "AGENT_CRITERIA_MAX_PASSES",
         "GIT_AUTHOR_NAME",
         "GIT_AUTHOR_EMAIL",
         # Forwarded so the spawned Job's write_output/cluster helpers target the

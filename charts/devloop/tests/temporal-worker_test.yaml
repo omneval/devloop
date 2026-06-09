@@ -439,6 +439,40 @@ tests:
             name: MAX_CONCURRENT_JOBS
             value: "4"
 
+  - it: defaults REVIEW_FIX_MAX_ITERATIONS and AGENT_CRITERIA_MAX_PASSES
+    template: templates/temporal-worker-deployment.yaml
+    set:
+      temporalHost: "temporal-frontend.agents.svc:7233"
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: REVIEW_FIX_MAX_ITERATIONS
+            value: "1"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: AGENT_CRITERIA_MAX_PASSES
+            value: "2"
+
+  - it: renders REVIEW_FIX_MAX_ITERATIONS and AGENT_CRITERIA_MAX_PASSES from values
+    template: templates/temporal-worker-deployment.yaml
+    set:
+      temporalHost: "temporal-frontend.agents.svc:7233"
+      temporalWorker.reviewFixMaxIterations: 2
+      temporalWorker.agentCriteriaMaxPasses: 3
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: REVIEW_FIX_MAX_ITERATIONS
+            value: "2"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: AGENT_CRITERIA_MAX_PASSES
+            value: "3"
+
   - it: defaults AGENT_GITHUB_LOGIN to devloop-bot (issue #93)
     template: templates/temporal-worker-deployment.yaml
     set:
