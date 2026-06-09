@@ -149,7 +149,7 @@ tests:
             name: AGENT_SKILLS_BY_PHASE
             value: '{"execute":["tdd","code-review"],"plan":[],"review":["code-review"]}'
 
-  - it: renders remediation in skillsByPhase
+  - it: renders ci_fix in skillsByPhase
     template: templates/temporal-worker-deployment.yaml
     set:
       temporalHost: "temporal-frontend.agents.svc:7233"
@@ -157,7 +157,7 @@ tests:
         plan: []
         execute:
           - tdd
-        remediation:
+        ci_fix:
           - tdd
         review:
           - code-review
@@ -166,7 +166,7 @@ tests:
           path: spec.template.spec.containers[0].env
           content:
             name: AGENT_SKILLS_BY_PHASE
-            value: '{"execute":["tdd"],"plan":[],"remediation":["tdd"],"review":["code-review"]}'
+            value: '{"ci_fix":["tdd"],"execute":["tdd"],"plan":[],"review":["code-review"]}'
 
   - it: omits AGENT_SKILLS_BY_PHASE when skillsByPhase is empty (default)
     template: templates/temporal-worker-deployment.yaml
@@ -662,3 +662,63 @@ tests:
           content:
             name: AGENT_JOB_ACTIVE_DEADLINE
             value: "10800"
+
+  - it: omits per-role LLM env when llm.roles is empty (default)
+    template: templates/temporal-worker-deployment.yaml
+    set:
+      temporalHost: "temporal-frontend.agents.svc:7233"
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: AGENT_MODEL_REVIEW
+          any: true
+
+  - it: renders per-role LLM env from llm.roles
+    template: templates/temporal-worker-deployment.yaml
+    set:
+      temporalHost: "temporal-frontend.agents.svc:7233"
+      temporalWorker.agentJob.llm.roles:
+        review:
+          model: "anthropic/claude-sonnet-4-6"
+          baseUrl: "https://api.anthropic.com/v1/"
+          apiKeySecret:
+            name: anthropic-credentials
+            key: api-key
+        audit:
+          model: "anthropic/claude-haiku-4-5"
+          apiKey: "inline-key"
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: AGENT_MODEL_REVIEW
+            value: "anthropic/claude-sonnet-4-6"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: AGENT_LLM_BASE_URL_REVIEW
+            value: "https://api.anthropic.com/v1/"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: AGENT_LLM_API_KEY_REVIEW
+            valueFrom:
+              secretKeyRef:
+                name: anthropic-credentials
+                key: api-key
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: AGENT_MODEL_AUDIT
+            value: "anthropic/claude-haiku-4-5"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: AGENT_LLM_API_KEY_AUDIT
+            value: "inline-key"
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: AGENT_MODEL_EXTRACT
+          any: true

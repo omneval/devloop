@@ -12,10 +12,11 @@ from devloop.summarize_activities import build_prompt, should_summarize
 # ---- Phase enum (#53) ---------------------------------------------------- #
 
 
-def test_phase_fix_pass_value():
-    """Phase.FIX_PASS must equal 'fix_pass'."""
-    assert Phase.FIX_PASS == "fix_pass"
-    assert Phase.FIX_PASS.value == "fix_pass"
+def test_phase_has_no_fix_pass_member():
+    """The Review Fix Pass is dispatched as a Phase.PR_COMMENT job (the proven
+    re-engagement path); the never-dispatched FIX_PASS member was removed."""
+    assert not hasattr(Phase, "FIX_PASS")
+    assert Phase.PR_COMMENT.value == "pr_comment"
 
 
 # ---- approval / merge parsing (#20, #23) --------------------------------- #

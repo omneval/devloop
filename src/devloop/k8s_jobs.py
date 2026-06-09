@@ -171,6 +171,18 @@ def render_job(d: DispatchInput, job_name: str) -> dict:
         "AGENT_MODEL",
         "AGENT_LLM_BASE_URL",
         "AGENT_LLM_API_KEY",
+        # Per-role LLM overrides (review / audit / extract). Each falls back
+        # to the base AGENT_MODEL / AGENT_LLM_BASE_URL / AGENT_LLM_API_KEY in
+        # the entrypoint when unset, so forwarding only what's set is correct.
+        "AGENT_MODEL_REVIEW",
+        "AGENT_LLM_BASE_URL_REVIEW",
+        "AGENT_LLM_API_KEY_REVIEW",
+        "AGENT_MODEL_AUDIT",
+        "AGENT_LLM_BASE_URL_AUDIT",
+        "AGENT_LLM_API_KEY_AUDIT",
+        "AGENT_MODEL_EXTRACT",
+        "AGENT_LLM_BASE_URL_EXTRACT",
+        "AGENT_LLM_API_KEY_EXTRACT",
         "AGENT_STUB",
         # Execute-phase acceptance-criteria audit loop: how many extra agent
         # passes the entrypoint may spend addressing unmet criteria (default 2).

@@ -22,7 +22,7 @@ agentsNamespace: ""
 #   skillsByPhase:
 #     plan: []
 #     execute: [tdd, code-review]
-#     remediation: [tdd]
+#     ci_fix: [tdd]
 #     review: [code-review, security-review]
 skillsByPhase: {}
 
@@ -73,13 +73,19 @@ temporalWorker:
     # Mirrors the standard Kubernetes resources structure. Omit a section (or
     # leave values empty) to fall back to the application defaults
     # (requests: cpu "2", memory "4Gi"; no CPU limit; memory limit = request).
+    #
+    # Sizing note: every job does a git clone + dependency install (npm ci /
+    # go build / uv sync) + a full test run. A CPU *limit* throttles all of
+    # that (compile and test latency directly slows the agent's feedback
+    # loop and eats into maxAgentRuntime), so no CPU limit is set by default —
+    # CPU is compressible and the request already guarantees fair scheduling.
     resources:
       requests:
-        cpu: "500m"      # AGENT_JOB_CPU          — e.g. "500m"
-        memory: "500Mi"   # AGENT_JOB_MEMORY        — e.g. "2Gi"
+        cpu: "2"        # AGENT_JOB_CPU           — e.g. "2"
+        memory: "4Gi"   # AGENT_JOB_MEMORY        — e.g. "4Gi"
       limits:
-        cpu: "1"      # AGENT_JOB_CPU_LIMIT     — e.g. "1"; omit for no CPU limit
-        memory: "2Gi"   # AGENT_JOB_MEMORY_LIMIT  — e.g. "2Gi"
+        # cpu: "4"      # AGENT_JOB_CPU_LIMIT     — omitted: no CPU throttling
+        memory: "4Gi"   # AGENT_JOB_MEMORY_LIMIT  — e.g. "4Gi"
     # LLM connection details forwarded to every Agent Execution Job.
     llm:
       model: ""           # AGENT_MODEL — e.g. "openai/gpt-4o"
@@ -87,6 +93,32 @@ temporalWorker:
       apiKey: ""          # AGENT_LLM_API_KEY — prefer apiKeySecret for production
       # apiKeySecret: { name: "llm-credentials", key: "api-key" }
       apiKeySecret: {}
+      # Optional per-role LLM overrides. Recognized roles:
+      #   review  — the Review-phase agent
+      #   audit   — the execute-phase acceptance-criteria audit
+      #   extract — structured output extraction (plan/review/diagnosis JSON)
+      # Each role accepts the same model/baseUrl/apiKey/apiKeySecret keys as
+      # the base llm block and falls back to it per-setting when unset.
+      # Forwarded to Agent Execution Jobs as AGENT_MODEL_<ROLE>,
+      # AGENT_LLM_BASE_URL_<ROLE>, AGENT_LLM_API_KEY_<ROLE>.
+      #
+      # Why: routing review/audit to a *different* model than the implementer
+      # gives cross-model review — a model's blind spots don't audit
+      # themselves. A typical setup keeps execute on a local endpoint and
+      # points review/audit at a hosted frontier model (these calls are small:
+      # one diff + issue per phase). The endpoint must support response_format
+      # with JSON schema, like the base one.
+      # Example:
+      #   roles:
+      #     review:
+      #       model: "anthropic/claude-sonnet-4-6"
+      #       baseUrl: "https://api.anthropic.com/v1/"
+      #       apiKeySecret: { name: "anthropic-credentials", key: "api-key" }
+      #     audit:
+      #       model: "anthropic/claude-haiku-4-5"
+      #       baseUrl: "https://api.anthropic.com/v1/"
+      #       apiKeySecret: { name: "anthropic-credentials", key: "api-key" }
+      roles: {}
   # Extra environment variables appended verbatim to the container. Use this for
   # consumer-specific config (custom workflow settings, etc.).
   # ORCHESTRATION_QUEUE, AGENT_JOB_SERVICE_ACCOUNT, and AGENT_*_LLM_* vars are

@@ -102,10 +102,34 @@ class CriteriaAudit(_BaseModel):
     unmet_criteria: list[str] = []
 
 
-def _get_llm_client() -> _OpenAI:
+# --------------------------------------------------------------------------- #
+# Per-role LLM routing
+# --------------------------------------------------------------------------- #
+# Each role can point at its own model/endpoint via AGENT_MODEL_<ROLE> /
+# AGENT_LLM_BASE_URL_<ROLE> / AGENT_LLM_API_KEY_<ROLE>, falling back to the
+# base AGENT_MODEL / AGENT_LLM_BASE_URL / AGENT_LLM_API_KEY when unset.
+#
+# Roles: "review" (the Review-phase agent), "audit" (the execute-phase
+# acceptance-criteria audit), "extract" (structured output extraction).
+# Routing review/audit to a *different* model than the implementer gives
+# cross-model review — a model's blind spots don't audit themselves
+# (omneval#70: the implementer's own review missed what a frontier model
+# caught immediately).
+
+
+def _llm_setting(name: str, role: str = "", default: str | None = None) -> str | None:
+    """Resolve an LLM connection setting for *role* with base-env fallback."""
+    if role:
+        val = os.environ.get(f"{name}_{role.upper()}")
+        if val:
+            return val
+    return os.environ.get(name, default)
+
+
+def _get_llm_client(role: str = "") -> _OpenAI:
     return _OpenAI(
-        api_key=os.environ.get("AGENT_LLM_API_KEY", "none"),
-        base_url=os.environ.get("AGENT_LLM_BASE_URL"),
+        api_key=_llm_setting("AGENT_LLM_API_KEY", role, "none"),
+        base_url=_llm_setting("AGENT_LLM_BASE_URL", role),
     )
 
 
@@ -122,20 +146,25 @@ def _strip_provider_prefix(model: str) -> str:
 
 
 def structured_extractor(
-    text: str, model_cls: type[_BaseModel], system: str | None = None
+    text: str,
+    model_cls: type[_BaseModel],
+    system: str | None = None,
+    role: str = "extract",
 ) -> _BaseModel:
     """Extract structured output from *text* using a single LLM call with
     ``response_format`` backed by a Pydantic model.
 
     ``system`` overrides the default extraction framing — used by callers like
     the acceptance-criteria audit whose *text* is a task prompt, not a
-    transcript to extract from.
+    transcript to extract from. ``role`` selects the per-role LLM endpoint
+    (see ``_llm_setting``); the endpoint must be OpenAI-compatible with
+    ``response_format`` support, like the base one.
 
     Raises ``ValueError`` with a clear message if the LLM response is malformed
     or cannot be parsed into *model_cls*.
     """
-    client = _get_llm_client()
-    model = _strip_provider_prefix(os.environ.get("AGENT_MODEL", "qwen3-27b"))
+    client = _get_llm_client(role)
+    model = _strip_provider_prefix(_llm_setting("AGENT_MODEL", role, "qwen3-27b"))
     schema = model_cls.model_json_schema()
     try:
         response = client.chat.completions.create(
@@ -411,51 +440,168 @@ def _describe_exception(exc: BaseException) -> str:
 
 
 # --------------------------------------------------------------------------- #
+# Repo-native agent config (.devloop/ in the enrolled repo)
+# --------------------------------------------------------------------------- #
+# An enrolled repo can carry its own agent configuration so per-project
+# customization versions with the code instead of being baked into a Docker
+# image (where it drifts — the omneval#67 root cause was a stale image-baked
+# prompt set):
+#   .devloop/config.yaml          — install/tests command overrides
+#   .devloop/prompts/<phase>.md   — per-phase prompt template overrides
+_DEVLOOP_DIR = ".devloop"
+_SKIP_DIRS = {
+    "node_modules",
+    "vendor",
+    "dist",
+    "build",
+    "target",
+    "__pycache__",
+}
+
+
+def load_devloop_config(workdir: str) -> dict:
+    """Parse ``.devloop/config.yaml`` from the cloned repo (best-effort).
+
+    Returns ``{}`` when the file is absent or malformed — a broken config must
+    degrade to the built-in discovery, never fail the phase."""
+    path = Path(workdir, _DEVLOOP_DIR, "config.yaml")
+    if not path.is_file():
+        return {}
+    try:
+        import yaml
+
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except Exception as exc:  # noqa: BLE001 — malformed config must not block
+        log.warning("ignoring malformed %s: %s", path, exc)
+        return {}
+    if not isinstance(data, dict):
+        log.warning("ignoring %s: top level must be a mapping", path)
+        return {}
+    return data
+
+
+def _config_commands(raw) -> list[tuple[str, str]]:
+    """Normalize config command entries into ``(label, shell_command)`` pairs.
+
+    Each entry is either a shell command string or ``{name?, command}``."""
+    out: list[tuple[str, str]] = []
+    for i, item in enumerate(raw or []):
+        if isinstance(item, str) and item.strip():
+            out.append((f"cmd{i + 1}", item.strip()))
+        elif isinstance(item, dict):
+            cmd = str(item.get("command", "") or "").strip()
+            if cmd:
+                out.append((str(item.get("name") or f"cmd{i + 1}"), cmd))
+    return out
+
+
+# --------------------------------------------------------------------------- #
 # Test-suite discovery and execution
 # --------------------------------------------------------------------------- #
 _NPM_DEFAULT_PLACEHOLDER = 'echo "Error: no test specified" && exit 1'
 _MAX_TEST_OUTPUT = 4096  # bytes kept in result payload (truncated for Temporal UI)
+# How deep below the repo root ecosystem discovery looks for nested test
+# suites (ui/, sdk/python, services/eval, ...).
+_DISCOVERY_DEPTH = 2
 
 
-def run_project_tests(workdir: str, timeout: int = 300) -> tuple[bool, str]:
-    """Discover and run the project's test suite(s).
+def _node_has_real_test_script(pkg_json: Path) -> bool:
+    """True when package.json declares a test script that isn't npm's
+    ``echo "Error: no test specified" && exit 1`` placeholder."""
+    try:
+        pkg = json.loads(pkg_json.read_text())
+    except (json.JSONDecodeError, OSError):
+        return False
+    test_script = (pkg.get("scripts") or {}).get("test", "")
+    return bool(test_script and test_script.strip() != _NPM_DEFAULT_PLACEHOLDER.strip())
 
-    Discovery mirrors ``install_deps`` — checks for go.mod, pyproject.toml /
-    setup.py, and package.json.  For each detected ecosystem a separate test
-    command is run; ALL must pass for the overall result to be True.
 
-    Node/npm special case: if the ``test`` script in package.json is the npm
-    default placeholder (``echo "Error: no test specified" && exit 1``) or is
-    absent, that ecosystem is skipped rather than false-failed.
+def _discover_test_commands(root: Path) -> list[tuple[str, list[str], str]]:
+    """Discover per-directory test suites up to ``_DISCOVERY_DEPTH`` deep.
+
+    Returns ``(label, cmd, cwd)`` triples. The repo root keeps the historical
+    commands (``go test ./...``, ``python -m pytest``, ``npm test``); nested
+    ecosystems get their own suite so multi-ecosystem monorepos are actually
+    verified — previously only the root was checked, so e.g. omneval's ``ui/``
+    and ``sdk/*`` suites never ran and ``tests_passed`` was a Go-only signal.
+    Nested Python projects use ``uv run pytest`` (uv resolves the subproject's
+    own venv/deps); the root keeps ``python -m pytest`` because ``install_deps``
+    already pip-installed the root project into the job interpreter.
+    """
+    commands: list[tuple[str, list[str], str]] = []
+    frontier: list[tuple[Path, int]] = [(root, 0)]
+    while frontier:
+        d, depth = frontier.pop(0)
+        is_root = depth == 0
+        rel = "." if is_root else d.relative_to(root).as_posix()
+
+        def label(eco: str, rel=rel, is_root=is_root) -> str:
+            return eco if is_root else f"{eco}:{rel}"
+
+        if (d / "go.mod").exists():
+            commands.append((label("go"), ["go", "test", "./..."], str(d)))
+        if (d / "pyproject.toml").exists() or (d / "setup.py").exists():
+            cmd = ["python", "-m", "pytest"] if is_root else ["uv", "run", "pytest"]
+            commands.append((label("python"), cmd, str(d)))
+        pkg_json = d / "package.json"
+        if pkg_json.exists() and _node_has_real_test_script(pkg_json):
+            commands.append((label("node"), ["npm", "test"], str(d)))
+
+        if depth < _DISCOVERY_DEPTH:
+            try:
+                children = sorted(p for p in d.iterdir() if p.is_dir())
+            except OSError:
+                children = []
+            for child in children:
+                if child.name in _SKIP_DIRS or child.name.startswith("."):
+                    continue
+                frontier.append((child, depth + 1))
+    return commands
+
+
+def _ensure_node_deps(cwd: str, timeout: int) -> None:
+    """Install node deps in *cwd* when ``node_modules`` is missing (nested npm
+    suites — ``install_deps`` only covers the repo root). Best-effort: a failed
+    install surfaces as the test command's own failure."""
+    p = Path(cwd)
+    if (p / "node_modules").exists():
+        return
+    cmd = ["npm", "ci"] if (p / "package-lock.json").exists() else ["npm", "install"]
+    log.info("installing node deps in %s: %s", cwd, " ".join(cmd))
+    subprocess.run(cmd, cwd=cwd, text=True, capture_output=True, timeout=timeout)
+
+
+def run_project_tests(workdir: str, timeout: int = 600) -> tuple[bool, str]:
+    """Run the project's test suite(s); ALL must pass for the result to be True.
+
+    Resolution order:
+
+    1. ``.devloop/config.yaml`` ``tests:`` — a list of shell commands (strings
+       or ``{name, command}``) run from the repo root. When present these are
+       authoritative and discovery is skipped entirely; this is how a repo
+       declares exactly which suites gate its PRs.
+    2. Built-in discovery (``_discover_test_commands``): go.mod /
+       pyproject.toml / package.json per directory, up to 2 levels deep.
+
+    Node/npm special case: a package.json whose ``test`` script is npm's
+    default placeholder (or absent) is skipped rather than false-failed.
 
     Policy — no tests detected: returns ``(True, "no tests detected — skipped")``
     so that a bare project (e.g. docs-only repo) is not blocked from merging.
-    This is documented here: treat absence of a test harness as a pass, not a
-    failure, because blocking every project that hasn't set up tests yet would
-    cause more pain than it prevents.  A future issue can add a required-tests
-    policy flag.
+    Treat absence of a test harness as a pass, not a failure — blocking every
+    project that hasn't set up tests yet would cause more pain than it
+    prevents.  A future issue can add a required-tests policy flag.
 
     A failed subprocess (non-zero exit) does NOT raise — the exit code is
     captured and returned as ``passed=False`` so the caller can report it.
     """
-    p = Path(workdir)
-    commands: list[tuple[str, list[str]]] = []  # (label, cmd)
-
-    if (p / "go.mod").exists():
-        commands.append(("go", ["go", "test", "./..."]))
-
-    if (p / "pyproject.toml").exists() or (p / "setup.py").exists():
-        commands.append(("python", ["python", "-m", "pytest"]))
-
-    pkg_json = p / "package.json"
-    if pkg_json.exists():
-        try:
-            pkg = json.loads(pkg_json.read_text())
-            test_script = pkg.get("scripts", {}).get("test", "")
-            if test_script and test_script.strip() != _NPM_DEFAULT_PLACEHOLDER.strip():
-                commands.append(("node", ["npm", "test"]))
-        except (json.JSONDecodeError, OSError):
-            pass  # malformed package.json — skip
+    config_tests = _config_commands(load_devloop_config(workdir).get("tests"))
+    if config_tests:
+        commands: list[tuple[str, list[str] | str, str]] = [
+            (lbl, cmd, workdir) for lbl, cmd in config_tests
+        ]
+    else:
+        commands = list(_discover_test_commands(Path(workdir)))
 
     if not commands:
         return True, "no tests detected — skipped"
@@ -463,10 +609,15 @@ def run_project_tests(workdir: str, timeout: int = 300) -> tuple[bool, str]:
     all_passed = True
     combined_output: list[str] = []
 
-    for label, cmd in commands:
-        log.info("running %s tests: %s", label, " ".join(cmd))
+    for label, cmd, cwd in commands:
+        shell = isinstance(cmd, str)
+        if not shell and cmd[:2] == ["npm", "test"]:
+            _ensure_node_deps(cwd, timeout)
+        log.info(
+            "running %s tests in %s: %s", label, cwd, cmd if shell else " ".join(cmd)
+        )
         result = subprocess.run(
-            cmd, cwd=workdir, text=True, capture_output=True, timeout=timeout
+            cmd, cwd=cwd, shell=shell, text=True, capture_output=True, timeout=timeout
         )
         out = (result.stdout or "") + (result.stderr or "")
         combined_output.append(f"[{label}]\n{out}")
@@ -492,6 +643,26 @@ def clone_repo(github_url: str, branch: str, workdir: str) -> None:
 
 
 def install_deps(workdir: str) -> None:
+    """Install the cloned repo's dependencies.
+
+    When ``.devloop/config.yaml`` declares ``install:`` commands, those are
+    authoritative (shell commands run from the repo root, in order; a failure
+    fails the phase loudly rather than letting the agent work without deps).
+    Otherwise the root ecosystem defaults below apply.
+    """
+    config_install = _config_commands(load_devloop_config(workdir).get("install"))
+    if config_install:
+        for label, cmd in config_install:
+            log.info("$ (%s) %s", label, cmd)
+            subprocess.run(
+                cmd,
+                cwd=workdir,
+                shell=True,
+                check=True,
+                text=True,
+                capture_output=True,
+            )
+        return
     p = Path(workdir)
     if (p / "go.mod").exists():
         _run(["go", "mod", "download"], cwd=workdir)
@@ -688,6 +859,7 @@ def audit_acceptance_criteria(issue_body: str, diff: str) -> CriteriaAudit | Non
                 "fully implements a GitHub issue. Return only valid JSON "
                 "matching the requested schema."
             ),
+            role="audit",
         )
     except ValueError as exc:
         log.warning("acceptance-criteria audit failed (skipping): %s", exc)
@@ -956,13 +1128,19 @@ def run_agent(spec: TaskSpec, workdir: str, tracer) -> AgentOutcome:
         AgentContext(skills=resolved, load_public_skills=False) if resolved else None
     )
 
-    message = build_agent_message(spec)
+    message = build_agent_message(spec, workdir)
+    # The Review phase resolves the "review" role so a different model can
+    # check the implementer's work (cross-model review); all other phases use
+    # the base execute model.
+    llm_role = "review" if spec.phase == "review" else ""
     try:
         with tracer.start_as_current_span("agent.run"):
             llm = LLM(
-                model=os.getenv("AGENT_MODEL", "qwen3-27b"),
-                base_url=os.getenv("AGENT_LLM_BASE_URL", "http://192.168.68.104/v1"),
-                api_key=os.getenv("AGENT_LLM_API_KEY", "local"),
+                model=_llm_setting("AGENT_MODEL", llm_role, "qwen3-27b"),
+                base_url=_llm_setting(
+                    "AGENT_LLM_BASE_URL", llm_role, "http://192.168.68.104/v1"
+                ),
+                api_key=_llm_setting("AGENT_LLM_API_KEY", llm_role, "local"),
             )
             agent = build_agent(llm=llm, cli_mode=True, agent_context=agent_context)
             conversation = LocalConversation(agent=agent, workspace=workdir)
@@ -1045,7 +1223,6 @@ _PROMPT_FILES = {
     "ci_fix": "ci_fix.md",
     "answer": "answer.md",
     "pr_comment": "pr_comment.md",
-    "remediation": "remediation.md",
     "code_quality_scan": "code_quality_scan.md",
     "code_quality_improve": "code_quality_improve.md",
 }
@@ -1068,13 +1245,27 @@ def _prompts_dir() -> str:
     return str(Path(__file__).parent / "prompts")
 
 
-def load_prompt(name: str, variables: dict[str, str]) -> str:
-    """Read a bundled prompt template and substitute ``{{VAR}}`` placeholders.
+def load_prompt(
+    name: str, variables: dict[str, str], workdir: str | None = None
+) -> str:
+    """Read a prompt template and substitute ``{{VAR}}`` placeholders.
+
+    Resolution order: the cloned repo's own ``.devloop/prompts/<name>`` (when
+    *workdir* is given and the file exists) wins over the image/bundled
+    template chain (``_prompts_dir``). Repo-native prompts version with the
+    code they describe and need no image rebuild to change — image-baked
+    per-project prompts are the legacy override path and drift (omneval#67).
 
     Any placeholder the caller does not supply is stripped so it never leaks
     into the agent prompt as a literal ``{{FOO}}``.
     """
-    text = Path(_prompts_dir(), name).read_text(encoding="utf-8")
+    path = Path(_prompts_dir(), name)
+    if workdir:
+        repo_override = Path(workdir, _DEVLOOP_DIR, "prompts", name)
+        if repo_override.is_file():
+            log.info("using repo prompt override %s", repo_override)
+            path = repo_override
+    text = path.read_text(encoding="utf-8")
     for key, value in variables.items():
         text = text.replace("{{" + key + "}}", value)
     return _PLACEHOLDER_RE.sub("", text)
@@ -1170,11 +1361,6 @@ def _prompt_variables(spec: TaskSpec) -> dict[str, str]:
             "ALERT_NAMESPACE": str(alert.get("namespace", "") or "(unknown)"),
             "ALERT_DETAILS": json.dumps(details),
         }
-    if spec.phase == "remediation":
-        return {
-            "BRANCH": spec.branch,
-            "CI_CHECK_FAILURES": spec.extra.get("ci_check_failures", "none"),
-        }
     if spec.phase == "code_quality_scan":
         return {
             "THRESHOLD": str(spec.extra.get("threshold", 7000)),
@@ -1189,7 +1375,7 @@ def _prompt_variables(spec: TaskSpec) -> dict[str, str]:
     return {}
 
 
-def build_agent_message(spec: TaskSpec) -> str:
+def build_agent_message(spec: TaskSpec, workdir: str | None = None) -> str:
     """Build the prompt sent to the agent for this phase.
 
     plan / execute / review / merge / diagnosis / ci_fix / answer / pr_comment
@@ -1205,7 +1391,7 @@ def build_agent_message(spec: TaskSpec) -> str:
     ``Phase.PR_COMMENT`` / ``PRCommentWorkflow``).
     """
     if spec.phase in _PROMPT_FILES:
-        return load_prompt(_PROMPT_FILES[spec.phase], _prompt_variables(spec))
+        return load_prompt(_PROMPT_FILES[spec.phase], _prompt_variables(spec), workdir)
     return spec.instructions
 
 
@@ -1637,53 +1823,6 @@ def handle_diagnosis(spec: TaskSpec, tracer) -> dict:
     return AgentJobResult(status="complete", diagnosis=diagnosis).to_payload()
 
 
-def handle_remediation(spec: TaskSpec, tracer) -> dict:
-    """Remediation phase: diagnose and fix failing CI checks on the PR branch.
-
-    Clones the branch, runs the agent with the remediation prompt (which includes
-    the CI check failure output), commits any fixes, and pushes back.  Returns
-    the number of commits produced so the workflow can decide whether the
-    remediation succeeded.
-    """
-    workdir = os.getenv("WORKDIR", "/workspace/repo")
-    github_url = os.environ["GITHUB_URL"]
-    branch = spec.branch
-
-    with tracer.start_as_current_span("clone"):
-        clone_repo(github_url, branch, workdir)
-    with tracer.start_as_current_span("install_deps"):
-        install_deps(workdir)
-
-    base_sha = _run(["git", "rev-parse", "HEAD"], cwd=workdir).strip()
-    outcome = run_agent(spec, workdir, tracer)
-
-    # Sweep up any uncommitted changes the agent left behind.
-    _run(["git", "add", "-A"], cwd=workdir)
-    if _run(["git", "status", "--porcelain"], cwd=workdir).strip():
-        _run(
-            [
-                "git",
-                "commit",
-                "-m",
-                f"fix: remediate CI checks for #{spec.issue_number}",
-            ],
-            cwd=workdir,
-        )
-
-    commits = _commit_count(workdir, base_sha)
-    if commits > 0:
-        with tracer.start_as_current_span("push"):
-            push_branch(workdir, branch, force=True)
-
-    return AgentJobResult(
-        status="complete",
-        issue_number=spec.issue_number,
-        branch=branch,
-        commits=commits,
-        summary=outcome.summary,
-    ).to_payload()
-
-
 def handle_code_quality_scan(spec: TaskSpec, tracer) -> dict:
     """Code quality scan phase: run sentrux and return structured result."""
     workdir = os.getenv("WORKDIR", "/workspace/repo")
@@ -1727,7 +1866,6 @@ _HANDLERS = {
     "diagnosis": handle_diagnosis,
     "answer": handle_answer,
     "pr_comment": handle_pr_comment,
-    "remediation": handle_remediation,
     "code_quality_scan": handle_code_quality_scan,
     "code_quality_improve": handle_code_quality_improve,
 }

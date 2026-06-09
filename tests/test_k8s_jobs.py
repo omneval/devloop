@@ -326,6 +326,32 @@ def test_render_job_passes_llm_env_when_set(monkeypatch):
     assert env["AGENT_LLM_API_KEY"] == "secret-key-42"
 
 
+def test_render_job_passes_per_role_llm_env_when_set(monkeypatch):
+    """Per-role LLM overrides (review/audit/extract) must be forwarded into the
+    Job container env so the entrypoint can route the Review phase, the
+    criteria audit, and structured extraction to a different model."""
+    monkeypatch.setenv("AGENT_MODEL", "openai/qwen3.6-27b-mtp")
+    monkeypatch.setenv("AGENT_MODEL_REVIEW", "anthropic/claude-sonnet-4-6")
+    monkeypatch.setenv("AGENT_LLM_BASE_URL_REVIEW", "https://api.anthropic.com/v1/")
+    monkeypatch.setenv("AGENT_LLM_API_KEY_REVIEW", "sk-ant-test")
+    monkeypatch.setenv("AGENT_MODEL_AUDIT", "anthropic/claude-haiku-4-5")
+    monkeypatch.delenv("AGENT_MODEL_EXTRACT", raising=False)
+
+    d = _dispatch_input()
+    manifest = k8s_jobs.render_job(d, "agent-omneval-execute-42-a1")
+    env = {
+        e["name"]: e["value"]
+        for e in manifest["spec"]["template"]["spec"]["containers"][0]["env"]
+        if "value" in e
+    }
+
+    assert env["AGENT_MODEL_REVIEW"] == "anthropic/claude-sonnet-4-6"
+    assert env["AGENT_LLM_BASE_URL_REVIEW"] == "https://api.anthropic.com/v1/"
+    assert env["AGENT_LLM_API_KEY_REVIEW"] == "sk-ant-test"
+    assert env["AGENT_MODEL_AUDIT"] == "anthropic/claude-haiku-4-5"
+    assert "AGENT_MODEL_EXTRACT" not in env  # unset roles are not forwarded
+
+
 def test_render_job_omits_llm_env_when_unset(monkeypatch):
     """LLM vars that are absent from the worker env must not appear in the
     Job container env at all — no empty-value stubs that confuse the entrypoint."""

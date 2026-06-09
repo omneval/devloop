@@ -153,6 +153,27 @@ spec:
             - name: AGENT_LLM_API_KEY
               value: {{ .Values.temporalWorker.agentJob.llm.apiKey | quote }}
             {{- end }}
+            {{- range $role, $cfg := (.Values.temporalWorker.agentJob.llm.roles | default dict) }}
+            {{- $suffix := upper $role }}
+            {{- with $cfg.model }}
+            - name: AGENT_MODEL_{{ $suffix }}
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with $cfg.baseUrl }}
+            - name: AGENT_LLM_BASE_URL_{{ $suffix }}
+              value: {{ . | quote }}
+            {{- end }}
+            {{- if and $cfg.apiKeySecret $cfg.apiKeySecret.name }}
+            - name: AGENT_LLM_API_KEY_{{ $suffix }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $cfg.apiKeySecret.name }}
+                  key: {{ $cfg.apiKeySecret.key }}
+            {{- else if $cfg.apiKey }}
+            - name: AGENT_LLM_API_KEY_{{ $suffix }}
+              value: {{ $cfg.apiKey | quote }}
+            {{- end }}
+            {{- end }}
             {{- with .Values.temporalWorker.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}

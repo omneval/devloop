@@ -32,7 +32,6 @@ class Phase(str, Enum):
     EXECUTE = "execute"
     REVIEW = "review"
     DIAGNOSIS = "diagnosis"
-    FIX_PASS = "fix_pass"
     CI_FIX = "ci_fix"
     SUMMARIZE = "summarize"
     ANSWER = "answer"

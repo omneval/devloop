@@ -521,3 +521,180 @@ def test_handle_merge_sets_merged_issues_on_success(origin, monkeypatch):
     result = entrypoint.handle_merge(spec, _noop_tracer())
 
     assert result.get("merged_issues") == [7]
+
+
+# ===========================================================================
+# Cycle 10 — .devloop/config.yaml test command overrides
+# ===========================================================================
+
+
+def test_config_tests_override_discovery(tmp_path):
+    """When .devloop/config.yaml declares tests:, those shell commands are
+    authoritative — built-in ecosystem discovery is skipped entirely."""
+    (tmp_path / "go.mod").write_text("module example.com/m\ngo 1.21\n")
+    devloop_dir = tmp_path / ".devloop"
+    devloop_dir.mkdir()
+    (devloop_dir / "config.yaml").write_text(
+        "tests:\n"
+        "  - name: backend\n"
+        "    command: go vet ./... && go test ./...\n"
+        "  - cd ui && npm test\n"
+    )
+
+    with patch("subprocess.run", return_value=_fake_completed(0, "ok")) as mock_run:
+        passed, output = entrypoint.run_project_tests(str(tmp_path))
+
+    assert passed is True
+    calls = mock_run.call_args_list
+    # both config commands ran as shell strings...
+    shell_cmds = [c.args[0] for c in calls if c.kwargs.get("shell")]
+    assert "go vet ./... && go test ./..." in shell_cmds
+    assert "cd ui && npm test" in shell_cmds
+    # ...and the discovered `go test ./...` list command did NOT run
+    assert not any(
+        isinstance(c.args[0], list) and c.args[0][:2] == ["go", "test"] for c in calls
+    )
+    assert "[backend]" in output
+
+
+def test_config_test_failure_returns_false(tmp_path):
+    devloop_dir = tmp_path / ".devloop"
+    devloop_dir.mkdir()
+    (devloop_dir / "config.yaml").write_text("tests:\n  - exit 1\n")
+
+    with patch("subprocess.run", return_value=_fake_completed(1, "", "boom")):
+        passed, output = entrypoint.run_project_tests(str(tmp_path))
+
+    assert passed is False
+    assert "boom" in output
+
+
+def test_malformed_config_falls_back_to_discovery(tmp_path):
+    """A broken config.yaml degrades to built-in discovery, never fails."""
+    (tmp_path / "go.mod").write_text("module example.com/m\ngo 1.21\n")
+    devloop_dir = tmp_path / ".devloop"
+    devloop_dir.mkdir()
+    (devloop_dir / "config.yaml").write_text("tests: [unclosed\n  - {{{")
+
+    with patch("subprocess.run", return_value=_fake_completed(0, "ok")) as mock_run:
+        passed, _ = entrypoint.run_project_tests(str(tmp_path))
+
+    assert passed is True
+    calls = [c.args[0] for c in mock_run.call_args_list]
+    assert any(isinstance(c, list) and c[:3] == ["go", "test", "./..."] for c in calls)
+
+
+# ===========================================================================
+# Cycle 11 — nested ecosystem discovery (multi-ecosystem monorepos)
+# ===========================================================================
+
+
+def test_nested_node_suite_is_discovered(tmp_path):
+    """A ui/ vitest suite next to a Go root must run — previously only the
+    repo root was checked, so UI suites never gated tests_passed."""
+    (tmp_path / "go.mod").write_text("module example.com/m\ngo 1.21\n")
+    ui = tmp_path / "ui"
+    ui.mkdir()
+    (ui / "package.json").write_text(
+        json.dumps({"name": "ui", "scripts": {"test": "vitest run"}})
+    )
+
+    with patch("subprocess.run", return_value=_fake_completed(0, "ok")) as mock_run:
+        passed, output = entrypoint.run_project_tests(str(tmp_path))
+
+    assert passed is True
+    npm_calls = [
+        c
+        for c in mock_run.call_args_list
+        if isinstance(c.args[0], list) and c.args[0][:2] == ["npm", "test"]
+    ]
+    assert npm_calls, "expected npm test for ui/"
+    assert npm_calls[0].kwargs.get("cwd", "").endswith("ui")
+    assert "[node:ui]" in output
+
+
+def test_nested_python_suite_uses_uv(tmp_path):
+    """A nested Python subproject (sdk/python) runs via `uv run pytest` in its
+    own directory; the root keeps `python -m pytest`."""
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "root"\n')
+    sdk_py = tmp_path / "sdk" / "python"
+    sdk_py.mkdir(parents=True)
+    (sdk_py / "pyproject.toml").write_text('[project]\nname = "sdk"\n')
+
+    with patch("subprocess.run", return_value=_fake_completed(0, "ok")) as mock_run:
+        passed, output = entrypoint.run_project_tests(str(tmp_path))
+
+    assert passed is True
+    cmds = [
+        (c.args[0], c.kwargs.get("cwd", ""))
+        for c in mock_run.call_args_list
+        if isinstance(c.args[0], list)
+    ]
+    assert (["python", "-m", "pytest"], str(tmp_path)) in cmds
+    assert any(
+        cmd == ["uv", "run", "pytest"] and cwd.endswith("python") for cmd, cwd in cmds
+    )
+    assert "[python:sdk/python]" in output
+
+
+def test_discovery_skips_node_modules_and_hidden_dirs(tmp_path):
+    """node_modules/ and dot-dirs must never be discovered as ecosystems."""
+    nm = tmp_path / "node_modules" / "leftpad"
+    nm.mkdir(parents=True)
+    (nm / "package.json").write_text(
+        json.dumps({"name": "leftpad", "scripts": {"test": "jest"}})
+    )
+    hidden = tmp_path / ".cache"
+    hidden.mkdir()
+    (hidden / "go.mod").write_text("module junk\n")
+
+    with patch("subprocess.run") as mock_run:
+        passed, output = entrypoint.run_project_tests(str(tmp_path))
+
+    assert passed is True
+    assert "no tests detected" in output
+    mock_run.assert_not_called()
+
+
+def test_nested_node_suite_installs_deps_first(tmp_path):
+    """A nested npm suite without node_modules gets npm ci/install before
+    npm test (install_deps only covers the repo root)."""
+    ui = tmp_path / "ui"
+    ui.mkdir()
+    (ui / "package.json").write_text(
+        json.dumps({"name": "ui", "scripts": {"test": "vitest run"}})
+    )
+    (ui / "package-lock.json").write_text("{}")
+
+    with patch("subprocess.run", return_value=_fake_completed(0, "ok")) as mock_run:
+        entrypoint.run_project_tests(str(tmp_path))
+
+    cmds = [c.args[0] for c in mock_run.call_args_list if isinstance(c.args[0], list)]
+    assert ["npm", "ci"] in cmds
+    assert cmds.index(["npm", "ci"]) < cmds.index(["npm", "test"])
+
+
+# ===========================================================================
+# Cycle 12 — .devloop/config.yaml install command overrides
+# ===========================================================================
+
+
+def test_config_install_overrides_default_install(tmp_path):
+    """When .devloop/config.yaml declares install:, those commands replace the
+    root ecosystem defaults (no pip/npm/go auto-install)."""
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "x"\n')
+    devloop_dir = tmp_path / ".devloop"
+    devloop_dir.mkdir()
+    (devloop_dir / "config.yaml").write_text(
+        "install:\n  - uv sync --all-groups\n  - cd ui && npm ci\n"
+    )
+
+    with patch("subprocess.run", return_value=_fake_completed(0, "")) as mock_run:
+        entrypoint.install_deps(str(tmp_path))
+
+    shell_cmds = [c.args[0] for c in mock_run.call_args_list if c.kwargs.get("shell")]
+    assert shell_cmds == ["uv sync --all-groups", "cd ui && npm ci"]
+    assert not any(
+        isinstance(c.args[0], list) and "pip" in c.args[0]
+        for c in mock_run.call_args_list
+    )

@@ -195,18 +195,21 @@ def test_build_agent_message_scopes_plan_to_triggering_issue(monkeypatch):
     assert "{{" not in msg
 
 
-def test_remediation_prompt_renders_with_ci_check_failures(monkeypatch):
-    """The remediation prompt is loaded from the bundled template and the
+def test_ci_fix_prompt_renders_with_ci_check_failures(monkeypatch):
+    """The ci_fix prompt is loaded from the bundled template and the
     {{BRANCH}}/{{CI_CHECK_FAILURES}} placeholders are substituted."""
     prompts_dir = Path(__file__).parent / "prompts"
     monkeypatch.setenv("AGENT_PROMPTS_DIR", str(prompts_dir))
     spec = entrypoint.TaskSpec(
-        phase="remediation",
+        phase="ci_fix",
         project_id="omneval",
         issue_number=42,
         branch="agent/issue-42",
         extra={
-            "ci_check_failures": "test-unit: exit code 1\nlint: exit code 2",
+            "ci_check_failures": [
+                {"name": "test-unit", "conclusion": "failure", "summary": "1 failed"},
+                {"name": "lint", "conclusion": "failure"},
+            ],
         },
     )
     msg = entrypoint.build_agent_message(spec)
@@ -214,6 +217,13 @@ def test_remediation_prompt_renders_with_ci_check_failures(monkeypatch):
     assert "test-unit" in msg
     assert "lint" in msg
     assert "{{" not in msg  # every placeholder substituted or stripped
+
+
+def test_remediation_phase_is_gone():
+    """The legacy Remediation phase was replaced by Phase.CI_FIX — the
+    entrypoint must reject 'remediation' as an unknown phase."""
+    assert "remediation" not in entrypoint._HANDLERS
+    assert "remediation" not in entrypoint._PROMPT_FILES
 
 
 def test_structured_extractor_plan_via_llm(monkeypatch):
@@ -568,8 +578,8 @@ class TestLoadSkillsAllowlist:
         assert result == {"execute": ["a", "b"]}
 
 
-def test_remediation_phase_pushes_fix(tmp_path, monkeypatch):
-    """Remediation handler clones the branch, runs the agent, commits fixes,
+def test_ci_fix_phase_pushes_fix(tmp_path, monkeypatch):
+    """The ci_fix handler clones the branch, runs the agent, commits fixes,
     and pushes back when commits are produced."""
     workdir = tmp_path / "repo"
     out_file = tmp_path / "out.json"
@@ -604,19 +614,23 @@ def test_remediation_phase_pushes_fix(tmp_path, monkeypatch):
         "TASK_SPEC",
         json.dumps(
             {
-                "phase": "remediation",
+                "phase": "ci_fix",
                 "project_id": "omneval",
                 "issue_number": 42,
                 "title": "Fix CI",
                 "branch": "agent/issue-42",
-                "extra": {"ci_check_failures": "test-unit: exit code 1"},
+                "extra": {
+                    "ci_check_failures": [
+                        {"name": "test-unit", "conclusion": "failure"}
+                    ]
+                },
             }
         ),
     )
     monkeypatch.setenv("GITHUB_URL", str(bare))
     monkeypatch.setenv("DEFAULT_BRANCH", "main")
     monkeypatch.setenv("WORKDIR", str(workdir))
-    monkeypatch.setenv("OUTPUT_CONFIGMAP", "agent-omneval-remediation-42-a1")
+    monkeypatch.setenv("OUTPUT_CONFIGMAP", "agent-omneval-ci-fix-42-a1")
     monkeypatch.setenv("OUTPUT_FILE", str(out_file))
     monkeypatch.delenv("GITHUB_TOKEN", raising=False)
 
@@ -629,8 +643,8 @@ def test_remediation_phase_pushes_fix(tmp_path, monkeypatch):
     assert payload["branch"] == "agent/issue-42"
 
 
-def test_remediation_phase_no_fix_no_push(tmp_path, monkeypatch):
-    """When the remediation agent produces no commits, the branch is not
+def test_ci_fix_phase_no_fix_no_push(tmp_path, monkeypatch):
+    """When the ci_fix agent produces no commits, the branch is not
     pushed and commits==0 in the result."""
     workdir = tmp_path / "repo"
     out_file = tmp_path / "out.json"
@@ -662,19 +676,21 @@ def test_remediation_phase_no_fix_no_push(tmp_path, monkeypatch):
         "TASK_SPEC",
         json.dumps(
             {
-                "phase": "remediation",
+                "phase": "ci_fix",
                 "project_id": "omneval",
                 "issue_number": 42,
                 "title": "Fix CI",
                 "branch": "agent/issue-42",
-                "extra": {"ci_check_failures": "lint: exit code 1"},
+                "extra": {
+                    "ci_check_failures": [{"name": "lint", "conclusion": "failure"}]
+                },
             }
         ),
     )
     monkeypatch.setenv("GITHUB_URL", str(bare))
     monkeypatch.setenv("DEFAULT_BRANCH", "main")
     monkeypatch.setenv("WORKDIR", str(workdir))
-    monkeypatch.setenv("OUTPUT_CONFIGMAP", "agent-omneval-remediation-42-a1")
+    monkeypatch.setenv("OUTPUT_CONFIGMAP", "agent-omneval-ci-fix-42-a1")
     monkeypatch.setenv("OUTPUT_FILE", str(out_file))
     monkeypatch.delenv("GITHUB_TOKEN", raising=False)
 
@@ -1323,3 +1339,132 @@ class TestCriteriaAuditLoop:
 
         assert entrypoint.main() == 0
         assert audit_calls == []
+
+
+# --------------------------------------------------------------------------- #
+# Per-role LLM routing (review / audit / extract)
+# --------------------------------------------------------------------------- #
+class TestPerRoleLLMRouting:
+    def test_llm_setting_falls_back_to_base_env(self, monkeypatch):
+        monkeypatch.delenv("AGENT_MODEL_REVIEW", raising=False)
+        monkeypatch.setenv("AGENT_MODEL", "base-model")
+        assert entrypoint._llm_setting("AGENT_MODEL", "review") == "base-model"
+
+    def test_llm_setting_prefers_role_env(self, monkeypatch):
+        monkeypatch.setenv("AGENT_MODEL", "base-model")
+        monkeypatch.setenv("AGENT_MODEL_REVIEW", "review-model")
+        assert entrypoint._llm_setting("AGENT_MODEL", "review") == "review-model"
+        # other settings without a role override still fall back
+        monkeypatch.setenv("AGENT_LLM_BASE_URL", "http://base")
+        monkeypatch.delenv("AGENT_LLM_BASE_URL_REVIEW", raising=False)
+        assert entrypoint._llm_setting("AGENT_LLM_BASE_URL", "review") == "http://base"
+
+    def test_llm_setting_empty_role_env_falls_back(self, monkeypatch):
+        """An empty-string role override is treated as unset."""
+        monkeypatch.setenv("AGENT_MODEL", "base-model")
+        monkeypatch.setenv("AGENT_MODEL_AUDIT", "")
+        assert entrypoint._llm_setting("AGENT_MODEL", "audit") == "base-model"
+
+    def test_llm_setting_default_when_nothing_set(self, monkeypatch):
+        monkeypatch.delenv("AGENT_MODEL", raising=False)
+        monkeypatch.delenv("AGENT_MODEL_EXTRACT", raising=False)
+        assert entrypoint._llm_setting("AGENT_MODEL", "extract", "fallback") == (
+            "fallback"
+        )
+
+    def test_structured_extractor_uses_extract_role_model(self, monkeypatch):
+        """structured_extractor resolves AGENT_MODEL_EXTRACT when set."""
+        from unittest.mock import MagicMock, patch
+
+        from openai.types.chat import ChatCompletion, ChatCompletionMessage
+        from openai.types.chat.chat_completion import Choice
+
+        monkeypatch.setenv("AGENT_MODEL", "openai/base-model")
+        monkeypatch.setenv("AGENT_MODEL_EXTRACT", "openai/extract-model")
+
+        mock_response = ChatCompletion(
+            id="t",
+            created=0,
+            model="t",
+            object="chat.completion",
+            choices=[
+                Choice(
+                    index=0,
+                    finish_reason="stop",
+                    message=ChatCompletionMessage(
+                        content='{"issues": []}', role="assistant"
+                    ),
+                )
+            ],
+        )
+        with patch.object(entrypoint, "_get_llm_client") as mock_client_fn:
+            mock_client = MagicMock()
+            mock_client.chat.completions.create.return_value = mock_response
+            mock_client_fn.return_value = mock_client
+
+            entrypoint.structured_extractor("text", entrypoint.PlanOutput)
+
+        mock_client_fn.assert_called_once_with("extract")
+        kwargs = mock_client.chat.completions.create.call_args.kwargs
+        assert kwargs["model"] == "extract-model"  # provider prefix stripped
+
+    def test_audit_uses_audit_role(self, monkeypatch):
+        """audit_acceptance_criteria routes through the 'audit' role."""
+        seen = {}
+
+        def fake_extractor(text, model_cls, system=None, role="extract"):
+            seen["role"] = role
+            return entrypoint.CriteriaAudit(unmet_criteria=[])
+
+        monkeypatch.setattr(entrypoint, "structured_extractor", fake_extractor)
+        result = entrypoint.audit_acceptance_criteria("issue body", "diff text")
+        assert result is not None
+        assert seen["role"] == "audit"
+
+
+# --------------------------------------------------------------------------- #
+# Repo-native prompt overrides (.devloop/prompts/)
+# --------------------------------------------------------------------------- #
+class TestRepoPromptOverrides:
+    def _spec(self):
+        return entrypoint.TaskSpec(
+            phase="execute",
+            project_id="omneval",
+            issue_number=7,
+            title="Add feature",
+            branch="agent/issue-7",
+            extra={},
+        )
+
+    def test_repo_prompt_wins_over_bundled(self, tmp_path, monkeypatch):
+        prompts_dir = Path(__file__).parent / "prompts"
+        monkeypatch.setenv("AGENT_PROMPTS_DIR", str(prompts_dir))
+        repo_prompts = tmp_path / ".devloop" / "prompts"
+        repo_prompts.mkdir(parents=True)
+        (repo_prompts / "implement.md").write_text(
+            "REPO OVERRIDE for {{TASK_ID}}: {{ISSUE_TITLE}}", encoding="utf-8"
+        )
+
+        msg = entrypoint.build_agent_message(self._spec(), str(tmp_path))
+        assert msg == "REPO OVERRIDE for 7: Add feature"
+
+    def test_bundled_prompt_used_when_no_repo_override(self, tmp_path, monkeypatch):
+        prompts_dir = Path(__file__).parent / "prompts"
+        monkeypatch.setenv("AGENT_PROMPTS_DIR", str(prompts_dir))
+
+        with_workdir = entrypoint.build_agent_message(self._spec(), str(tmp_path))
+        without_workdir = entrypoint.build_agent_message(self._spec())
+        assert with_workdir == without_workdir
+        assert "REPO OVERRIDE" not in with_workdir
+
+    def test_repo_override_only_affects_overridden_phase(self, tmp_path, monkeypatch):
+        """Phases without a repo prompt file fall back to the bundled chain."""
+        prompts_dir = Path(__file__).parent / "prompts"
+        monkeypatch.setenv("AGENT_PROMPTS_DIR", str(prompts_dir))
+        repo_prompts = tmp_path / ".devloop" / "prompts"
+        repo_prompts.mkdir(parents=True)
+        (repo_prompts / "review.md").write_text("review override", encoding="utf-8")
+
+        msg = entrypoint.build_agent_message(self._spec(), str(tmp_path))
+        assert msg != "review override"
+        assert "{{" not in msg
