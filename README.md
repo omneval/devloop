@@ -113,8 +113,8 @@ See [docs/getting-started.md](docs/getting-started.md) for the full configuratio
 
 | Variable | Description |
 |----------|-------------|
-| `GITHUB_TOKEN` | devloop-bot PAT (fallback when GitHub App auth is not configured) |
-| `GITHUB_APP_ID` / `GITHUB_APP_PRIVATE_KEY` | GitHub App authentication (short-lived tokens) |
+| `GITHUB_APP_ID` / `GITHUB_APP_PRIVATE_KEY` / `GITHUB_APP_INSTALLATION_ID` | **Recommended** — GitHub App authentication for the worker (short-lived installation tokens, working reviewer requests). See [docs/github-app.md](docs/github-app.md) |
+| `GITHUB_TOKEN` | Per-project token (from `github_token_secret`). Worker-side it's the **fallback** when GitHub App auth is not configured — note a PAT can't deliver formal reviewer requests in single-maintainer setups (GitHub forbids self-review requests). Always mounted into Agent Execution Jobs for `git clone`/`git push` |
 | `GITHUB_WEBHOOK_SECRET` | HMAC secret for verifying webhook signatures |
 | `AGENT_GITHUB_LOGIN` | GitHub login of the bot account (default: `devloop-bot`) |
 | `AGENT_MODEL` | LLM model identifier (forwarded to Agent Execution Jobs) |
