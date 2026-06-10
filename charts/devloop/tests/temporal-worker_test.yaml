@@ -13,6 +13,29 @@ tests:
       - failedTemplate:
           errorMessage: "temporalHost is required but was not set. Provide a value like 'temporal-frontend.agents.svc:7233'"
 
+  - it: forwards agentJob.runner as AGENT_RUNNER (issue #121)
+    template: templates/temporal-worker-deployment.yaml
+    set:
+      temporalHost: "temporal-frontend.agents.svc:7233"
+      temporalWorker.agentJob.runner: "claude-agent-sdk"
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: AGENT_RUNNER
+            value: "claude-agent-sdk"
+
+  - it: omits AGENT_RUNNER when agentJob.runner is unset (openhands default, issue #121)
+    template: templates/temporal-worker-deployment.yaml
+    set:
+      temporalHost: "temporal-frontend.agents.svc:7233"
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: AGENT_RUNNER
+          any: true
+
   - it: renders nothing when the worker is disabled
     set:
       temporalHost: "temporal-frontend.agents.svc:7233"

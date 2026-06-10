@@ -119,6 +119,7 @@ See [docs/getting-started.md](docs/getting-started.md) for the full configuratio
 | `AGENT_GITHUB_LOGIN` | GitHub login of the bot account (default: `devloop-bot`) |
 | `AGENT_MODEL` | LLM model identifier (forwarded to Agent Execution Jobs) |
 | `AGENT_LLM_BASE_URL` | LLM API base URL (forwarded to Agent Execution Jobs) |
+| `AGENT_RUNNER` | Agent harness: `openhands` (default) or `claude-agent-sdk` — per-project override via the registry's `agent_runner` field. See [ADR-0011](docs/adr/0011-pluggable-agent-runner.md) |
 
 ## Running Tests
 

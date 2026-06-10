@@ -43,6 +43,11 @@ from devloop.shared import KEY_HUMAN_ANSWER, KEY_RESULT, AgentJobResult, TaskSpe
 # top-level import is cheap and side-effect-free.
 import skills
 
+# runners.py sits beside this entrypoint at /usr/local/bin for the same reason
+# as skills.py (top-level import so a missing COPY fails every test, not just
+# production). Each runner's SDK import stays lazy inside it (issue #121).
+import runners
+
 log = logging.getLogger("agent-entrypoint")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
@@ -1052,35 +1057,40 @@ def build_agent(llm, cli_mode: bool = True, agent_context=None):
 
 
 def run_agent(spec: TaskSpec, workdir: str, tracer) -> AgentOutcome:
-    """Drive an OpenHands LocalConversation over the cloned workspace.
+    """Drive the configured agent runner over the cloned workspace.
 
     Stub mode (AGENT_STUB=1) returns a fixed success without invoking the model
     — used to prove the dispatch→poll→ConfigMap round-trip (issue #18).
 
-    Real mode uses the openhands-sdk API:
-        LLM(model, base_url, api_key)
+    Real mode (issue #121, ADR-0011):
+        runners.resolve_runner()                       ← AGENT_RUNNER env
         → _load_skills_allowlist(phase)                ← reads AGENT_SKILLS_ENABLED
         → resolve_skills(phase, allowlist)             ← skills.py seam (#32, #36)
-        → AgentContext(skills=..., load_public_skills=False) when skills present
-        → build_agent(llm=llm, cli_mode=True, agent_context=ctx)
-          (hand-rolled preset: terminal + file_editor + task_tracker tools;
-          cli_mode drops the Chromium-only browser tool; agent_context carries
-          installed skills — None when none are installed, no-op path)
-        → LocalConversation(agent=agent, workspace=workdir)
-        → send_message → run → get_agent_final_response(state.events)
+        → session = runner.start(spec, workdir, skills=..., build_agent=...,
+                                 llm_setting=_llm_setting)
+        → text = session.send(message)                 ← one agent turn
+        → (QUESTION: round-trip resumes via session.send on the same session)
+
+    The default ``openhands`` runner reproduces the pre-seam behavior exactly:
+    LLM(model, base_url, api_key) → build_agent (hand-rolled preset, the
+    ADR-0007 override seam; agent_context carries installed skills) →
+    LocalConversation → send_message → run → get_agent_final_response.
 
     Failure modes:
-    - Model/LLM error (run() raises): caught, returns a failed AgentOutcome.
+    - Model/LLM/harness error (start/send raises): caught, returns a failed
+      AgentOutcome.
     - Empty final response (no diff / agent produced no output): files_changed=False.
     Neither case leaves the Job hung; main() always writes a terminal ConfigMap.
     """
     if os.getenv("AGENT_STUB") == "1":
         return AgentOutcome(summary="stub run", files_changed=False)
 
-    # Lazy import so the module stays importable without the SDK installed
-    # (existing integration tests mock run_agent directly).
-    from openhands.sdk import AgentContext, LLM, LocalConversation
-    from openhands.sdk.conversation import get_agent_final_response
+    # Harness selection (issue #121, ADR-0011): AGENT_RUNNER env picks the
+    # runner (openhands default; per-project override via the registry's
+    # agent_runner field). Each runner lazily imports its own SDK, so the
+    # module stays importable without any of them installed (existing
+    # integration tests mock run_agent directly).
+    runner = runners.resolve_runner()
 
     # ------------------------------------------------------------------ #
     # Skill resolution (issues #32, #35, #36)
@@ -1121,32 +1131,21 @@ def run_agent(spec: TaskSpec, workdir: str, tracer) -> AgentOutcome:
     # string when no skills were skipped — no change to the phase summary.
     _skip_notice = skills.format_skipped_notice(skipped)
 
-    # Construct AgentContext only when skills are available.  Empty → None →
-    # agent behaves as before issue #32 (no-op path).  load_public_skills=False
-    # prevents the agent from fetching public skills off GitHub at Job runtime.
-    agent_context = (
-        AgentContext(skills=resolved, load_public_skills=False) if resolved else None
-    )
-
     message = build_agent_message(spec, workdir)
-    # The Review phase resolves the "review" role so a different model can
-    # check the implementer's work (cross-model review); all other phases use
-    # the base execute model.
-    llm_role = "review" if spec.phase == "review" else ""
     try:
         with tracer.start_as_current_span("agent.run"):
-            llm = LLM(
-                model=_llm_setting("AGENT_MODEL", llm_role, "qwen3-27b"),
-                base_url=_llm_setting(
-                    "AGENT_LLM_BASE_URL", llm_role, "http://192.168.68.104/v1"
-                ),
-                api_key=_llm_setting("AGENT_LLM_API_KEY", llm_role, "local"),
+            # build_agent (the ADR-0007 override seam) and _llm_setting are
+            # injected so the runner picks up image-level overrides of either
+            # — runners.py cannot import this module back (it runs as
+            # __main__ in the image).
+            session = runner.start(
+                spec,
+                workdir,
+                skills=resolved,
+                build_agent=build_agent,
+                llm_setting=_llm_setting,
             )
-            agent = build_agent(llm=llm, cli_mode=True, agent_context=agent_context)
-            conversation = LocalConversation(agent=agent, workspace=workdir)
-            conversation.send_message(message)
-            conversation.run()
-            text = get_agent_final_response(conversation.state.events)
+            text = session.send(message)
     except Exception as exc:  # noqa: BLE001
         log.exception("run_agent failed: %s", exc)
         summary = f"agent error: {exc}"
@@ -1187,11 +1186,10 @@ def run_agent(spec: TaskSpec, workdir: str, tracer) -> AgentOutcome:
             best_guess_note = ""
             resume_prompt = f"Human answer: {answer}"
 
-        # Feed the answer (or best-guess instruction) back and re-run.
+        # Feed the answer (or best-guess instruction) back and re-run on the
+        # same runner session (the runner owns conversation continuity).
         try:
-            conversation.send_message(resume_prompt)
-            conversation.run()
-            text = get_agent_final_response(conversation.state.events)
+            text = session.send(resume_prompt)
         except Exception as exc:  # noqa: BLE001
             log.exception("run_agent resume failed: %s", exc)
             return AgentOutcome(

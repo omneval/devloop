@@ -115,6 +115,41 @@ def _dispatch_input(**kw):
 
 
 # --------------------------------------------------------------------------- #
+# render_job — agent runner selection (issue #121)
+# --------------------------------------------------------------------------- #
+def test_render_job_omits_agent_runner_by_default(monkeypatch):
+    monkeypatch.delenv("AGENT_RUNNER", raising=False)
+    manifest = k8s_jobs.render_job(_dispatch_input(), "agent-omneval-execute-42-a1")
+    env_names = {
+        e["name"] for e in manifest["spec"]["template"]["spec"]["containers"][0]["env"]
+    }
+    assert "AGENT_RUNNER" not in env_names
+
+
+def test_render_job_forwards_worker_agent_runner_env(monkeypatch):
+    monkeypatch.setenv("AGENT_RUNNER", "claude-agent-sdk")
+    manifest = k8s_jobs.render_job(_dispatch_input(), "agent-omneval-execute-42-a1")
+    env = {
+        e["name"]: e.get("value")
+        for e in manifest["spec"]["template"]["spec"]["containers"][0]["env"]
+    }
+    assert env["AGENT_RUNNER"] == "claude-agent-sdk"
+
+
+def test_render_job_project_agent_runner_overrides_env(monkeypatch):
+    monkeypatch.setenv("AGENT_RUNNER", "openhands")
+    _REGISTRY["omneval"] = ProjectConfig(
+        **{**_PROJECT.__dict__, "agent_runner": "claude-agent-sdk"}
+    )
+    manifest = k8s_jobs.render_job(_dispatch_input(), "agent-omneval-execute-42-a1")
+    env = {
+        e["name"]: e.get("value")
+        for e in manifest["spec"]["template"]["spec"]["containers"][0]["env"]
+    }
+    assert env["AGENT_RUNNER"] == "claude-agent-sdk"
+
+
+# --------------------------------------------------------------------------- #
 # render_job
 # --------------------------------------------------------------------------- #
 def test_render_job_sets_otlp_and_secret_env(monkeypatch):

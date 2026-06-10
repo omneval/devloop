@@ -264,6 +264,18 @@ def render_job(d: DispatchInput, job_name: str) -> dict:
     if reviewer:
         env.append({"name": "PR_REVIEWER", "value": reviewer})
 
+    # Agent runner selection (issue #121, ADR-0011): the project's registry
+    # entry wins over the deployment-wide AGENT_RUNNER env (Helm
+    # temporalWorker.agentJob.runner). Omitted entirely when neither is set —
+    # the entrypoint defaults to the openhands runner.
+    try:
+        project_runner = get_project(d.project_id).agent_runner
+    except KeyError:
+        project_runner = ""
+    agent_runner = project_runner or os.environ.get("AGENT_RUNNER", "")
+    if agent_runner:
+        env.append({"name": "AGENT_RUNNER", "value": agent_runner})
+
     # Per-project GitHub token (scoped to that owner/org). Omitted for jobs that
     # need no GitHub access, e.g. Alert Response diagnosis.
     # ``GITHUB_TOKEN`` is used for git push/clone; ``GH_TOKEN`` is consumed by

@@ -104,3 +104,14 @@ def test_agent_image_is_optional(tmp_path):
 
     configs = load_projects(path)
     assert configs[0].agent_image == ""
+
+
+def test_agent_runner_is_optional_and_parsed(tmp_path):
+    """agent_runner (issue #121) defaults to "" (worker env / openhands
+    fallback) and parses when present."""
+    configs = load_projects(_write(tmp_path, _VALID_YAML))
+    assert configs[0].agent_runner == ""
+
+    yaml_with_runner = _VALID_YAML + "    agent_runner: claude-agent-sdk\n"
+    configs = load_projects(_write(tmp_path, yaml_with_runner))
+    assert configs[0].agent_runner == "claude-agent-sdk"

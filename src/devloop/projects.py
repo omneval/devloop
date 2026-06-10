@@ -44,6 +44,11 @@ class ProjectConfig:
     # devloop-agent-universal, via Helm temporalWorker.agentJob.defaultImage).
     # Set it only when the project needs a derived image with extra toolchains.
     agent_image: str = ""
+    # Agent runner harness for this project's Agent Execution Jobs (issue #121,
+    # ADR-0011): "openhands" (default) or "claude-agent-sdk". Empty falls back
+    # to the deployment-wide AGENT_RUNNER env (Helm
+    # temporalWorker.agentJob.runner), then to the openhands default.
+    agent_runner: str = ""
 
 
 def load_projects(path: str | Path) -> list[ProjectConfig]:
@@ -71,6 +76,7 @@ def load_projects(path: str | Path) -> list[ProjectConfig]:
                 omneval_ingest_secret=entry["omneval_ingest_secret"],
                 github_token_secret=entry["github_token_secret"],
                 pr_reviewer=entry.get("pr_reviewer", ""),
+                agent_runner=entry.get("agent_runner", ""),
             )
         )
     logger.info(

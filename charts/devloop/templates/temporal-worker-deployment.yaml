@@ -124,6 +124,10 @@ spec:
             # chart appVersion (the release pipeline tags both identically).
             - name: AGENT_DEFAULT_IMAGE
               value: {{ .Values.temporalWorker.agentJob.defaultImage | default (printf "ghcr.io/omneval/devloop-agent-universal:%s" .Chart.AppVersion) | quote }}
+            {{- with .Values.temporalWorker.agentJob.runner }}
+            - name: AGENT_RUNNER
+              value: {{ . | quote }}
+            {{- end }}
             {{- with .Values.temporalWorker.agentJob.resources.requests.cpu }}
             - name: AGENT_JOB_CPU
               value: {{ . | quote }}

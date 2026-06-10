@@ -465,6 +465,7 @@ Replace `<project-id>` with the value from your Project Registry. Because the ol
 | `omneval_ingest_secret` | Yes    | string | K8s secret name for Omneval ingest API key       |
 | `github_token_secret` | Yes      | string | K8s secret name for the devloop-bot GitHub token (also used for posting issue comments). Used as the auth fallback when GitHub App auth (`githubApp.*` / `GITHUB_APP_ID` + `GITHUB_APP_PRIVATE_KEY`) is not configured — see [GitHub App Setup](github-app.md) |
 | `pr_reviewer`         | No       | string | GitHub login requested as reviewer after CI Fix Loop and Review phases complete |
+| `agent_runner`        | No       | string | Agent harness for this project's jobs: `openhands` (default) or `claude-agent-sdk`. Overrides the deployment-wide `temporalWorker.agentJob.runner` Helm value — see [ADR-0011](adr/0011-pluggable-agent-runner.md) |
 
 ## Configuration Reference
 

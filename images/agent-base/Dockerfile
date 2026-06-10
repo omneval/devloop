@@ -93,6 +93,11 @@ COPY entrypoint.py /usr/local/bin/agent-entrypoint.py
 # with "No module named 'skills'".
 COPY skills.py /usr/local/bin/skills.py
 
+# Agent runner seam (issue #121, ADR-0011). Same placement contract as
+# skills.py: it must sit beside the entrypoint so the bare `import runners`
+# resolves via sys.path[0].
+COPY runners.py /usr/local/bin/runners.py
+
 # Baked skills (issue #32). Vendored SKILL.md files are copied into the
 # convergence directory. The entrypoint resolves them at startup via
 # load_installed_skills (openhands-sdk 1.24.0) and injects them into the

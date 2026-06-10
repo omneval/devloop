@@ -62,6 +62,14 @@ temporalWorker:
     # top of agent-base), so enrolling a project requires no image build.
     # Forwarded to the worker as AGENT_DEFAULT_IMAGE.
     defaultImage: ""
+    # Agent runner harness for Agent Execution Jobs (issue #121, ADR-0011):
+    # "openhands" (the default when empty) drives any OpenAI-compatible
+    # endpoint via the OpenHands SDK; "claude-agent-sdk" drives Anthropic
+    # models via their native harness (requires a derived agent image with
+    # the claude-agent-sdk package + Claude Code CLI, and an Anthropic key in
+    # agentJob.llm.apiKey/apiKeySecret). Forwarded as AGENT_RUNNER; a
+    # project's registry entry can override per-project via `agent_runner`.
+    runner: ""
     # ServiceAccount assigned to each spawned Agent Execution Job pod.
     # When create: true, the chart creates the SA, a Role (configmaps
     # create/get/update/patch), and a RoleBinding in the release namespace.
