@@ -122,6 +122,37 @@ temporalWorker:
       limits:
         # cpu: "4"      # AGENT_JOB_CPU_LIMIT     — omitted: no CPU throttling
         memory: "4Gi"   # AGENT_JOB_MEMORY_LIMIT  — e.g. "4Gi"
+    # Egress lockdown for Agent Execution Job pods (issue #123).
+    #
+    # Agent jobs execute code from the enrolled repo (install scripts, tests,
+    # the agent's own commands) while holding a push-capable GitHub token and
+    # an omneval ingest key — see docs/security-model.md for the full threat
+    # model. This NetworkPolicy restricts their egress to:
+    #   - DNS (53/UDP+TCP)
+    #   - HTTPS (443/TCP) — GitHub and package registries publish no stable
+    #     CIDRs, and a vanilla NetworkPolicy is L3/L4 only, so HTTPS is
+    #     allowed by port rather than by hostname. Hostname-level pinning
+    #     (e.g. *.github.com only) needs a CNI policy engine such as Cilium —
+    #     the agents.homelab/project and agents.homelab/phase pod labels are
+    #     the selector surface for that.
+    #   - the Kubernetes API on 6443/TCP (the Job writes its result
+    #     ConfigMap through the API; 443-fronted API servers are already
+    #     covered by the HTTPS rule)
+    #   - every port parsed from llm.baseUrl and llm.roles.*.baseUrl
+    #   - the port of otlpEndpoint below (omneval trace ingest)
+    # Everything else is denied. Takes effect only where a NetworkPolicy-
+    # enforcing CNI runs; on clusters without one it renders inert.
+    networkPolicy:
+      # Opt-out: set false to skip rendering the policy entirely.
+      enabled: true
+      # OTLP trace ingest endpoint the agent jobs export spans to. Must
+      # mirror the worker's OTEL_EXPORTER_OTLP_ENDPOINT / OMNEVAL_OTLP_ENDPOINT
+      # (this default matches the worker's built-in default).
+      otlpEndpoint: "http://omneval-ingest.omneval.svc.cluster.local:8000"
+      # Extra egress rules appended verbatim to the policy (standard
+      # NetworkPolicyEgressRule objects) — the escape hatch for clusters with
+      # e.g. an HTTP-only package mirror or a nonstandard API server port.
+      extraEgress: []
     # LLM connection details forwarded to every Agent Execution Job.
     llm:
       model: ""           # AGENT_MODEL — e.g. "openai/gpt-4o"
