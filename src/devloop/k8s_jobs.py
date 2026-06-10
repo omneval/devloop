@@ -421,7 +421,18 @@ async def _poll_to_terminal(
 # --------------------------------------------------------------------------- #
 @activity.defn
 async def dispatch_agent_job(d: DispatchInput) -> AgentJobResult:
-    """Render + create an Agent Execution Job, then poll it to completion."""
+    """Render + create an Agent Execution Job, then poll it to completion.
+
+    When ``JOB_RUNNER=docker``, delegates to the docker dispatch module which
+    runs the agent as a ``docker run`` container (local quickstart path, issue
+    #116). The K8s path remains the default.
+    """
+    if os.getenv("JOB_RUNNER") == "docker":
+        from . import docker_dispatch
+
+        log.info("dispatching agent job via docker (JOB_RUNNER=docker)")
+        return await docker_dispatch.dispatch_agent_job_docker(d)
+
     attempt = activity.info().attempt
     # Jobs without an issue number (Alert Response diagnosis) share a name across
     # workflows; disambiguate by a hash of the workflow id so concurrent alerts

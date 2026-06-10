@@ -17,6 +17,7 @@ dependencies = [
     "uvicorn>=0.34.0",
     "openai>=2.41.0",
     "pyjwt[crypto]>=2.10.1",
+    "docker>=7.1.0",
 ]
 
 [dependency-groups]
