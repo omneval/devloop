@@ -27,7 +27,7 @@ Triggered by GitHub webhook events, devloop processes issues labeled `agent-read
 - **Docker** — only needed if you build a custom agent image; the published `devloop-agent-universal` image (Go, Node.js, Helm toolchains) covers most projects out of the box.
 - **Kubernetes cluster** — devloop deploys as a Helm chart; `kubectl` must be configured.
 - **Helm 3** — for deploying the `charts/devloop/` chart.
-- **Temporal** — durable orchestration layer; consumers deploy Temporal independently (see [Temporal Prerequisites](docs/temporal-prerequisites.md)).
+- **Temporal** — durable orchestration layer. Either deploy it independently (see [Temporal Prerequisites](docs/temporal-prerequisites.md)) or let the chart bundle it for evaluation with `--set temporal.enabled=true`.
 - **Public webhook endpoint** — a hostname or tunnel (Cloudflare Tunnel, ngrok, load balancer) that GitHub can reach at `/webhook/github`.
 
 ## Installation & Setup
@@ -96,7 +96,8 @@ devloop is configured primarily through Helm values ([`charts/devloop/values.yam
 
 | Value | Description |
 |-------|-------------|
-| `temporalHost` | **Required** — Temporal frontend gRPC address (e.g. `temporal-frontend.agents.svc:7233`) |
+| `temporalHost` | Temporal frontend gRPC address (e.g. `temporal-frontend.agents.svc:7233`). **Required** unless `temporal.enabled=true` |
+| `temporal.enabled` | Deploy the official Temporal chart as an evaluation subchart (default `false`) — `temporalHost` then defaults to its frontend Service |
 | `temporalWorker.agentJob.llm.model` | LLM model identifier (e.g. `openai/gpt-4o`) |
 | `temporalWorker.agentJob.llm.baseUrl` | LLM API base URL (must support `response_format`) |
 | `temporalWorker.agentJob.llm.apiKey` | LLM API key (use `apiKeySecret` for production) |

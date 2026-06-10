@@ -1,9 +1,32 @@
 {{/*
-Required value validator: fails if `temporalHost` is empty.
+Required value validator: fails if `temporalHost` is empty and the bundled
+Temporal subchart is not enabled (issue #117).
 */}}
 {{- define "devloop.validate.temporalHost" -}}
-{{- if eq .Values.temporalHost "" -}}
-  {{- fail "temporalHost is required but was not set. Provide a value like 'temporal-frontend.agents.svc:7233'" -}}
+{{- if and (eq .Values.temporalHost "") (not .Values.temporal.enabled) -}}
+  {{- fail "temporalHost is required but was not set. Provide a value like 'temporal-frontend.agents.svc:7233', or set temporal.enabled=true to deploy the bundled Temporal subchart" -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+Effective Temporal frontend address. An explicit `temporalHost` always wins;
+otherwise, when the bundled Temporal subchart is enabled, default to its
+frontend Service. The subchart names that Service `<fullname>-frontend`, where
+<fullname> follows the standard Helm convention: `temporal.fullnameOverride`
+if set, the bare release name if it already contains "temporal", else
+`<release>-temporal`.
+*/}}
+{{- define "devloop.temporalHost" -}}
+{{- if .Values.temporalHost -}}
+{{- .Values.temporalHost -}}
+{{- else if .Values.temporal.enabled -}}
+{{- $fullname := printf "%s-temporal" .Release.Name -}}
+{{- if .Values.temporal.fullnameOverride -}}
+{{- $fullname = .Values.temporal.fullnameOverride -}}
+{{- else if contains "temporal" .Release.Name -}}
+{{- $fullname = .Release.Name -}}
+{{- end -}}
+{{- printf "%s-frontend.%s.svc.cluster.local:7233" $fullname .Release.Namespace -}}
 {{- end -}}
 {{- end -}}
 

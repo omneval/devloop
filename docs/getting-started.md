@@ -177,7 +177,27 @@ need Option B.
 
 ## Step 4: Install Temporal
 
-devloop requires a Temporal cluster. See [Temporal Prerequisites](temporal-prerequisites.md) for a complete reference. Quick start:
+devloop requires a Temporal cluster. There are two ways to get one:
+
+### Option A — Bundled Temporal subchart (fastest path for evaluation)
+
+The devloop chart can deploy Temporal for you. Skip this step entirely and
+add `--set temporal.enabled=true` to the `helm install devloop` command in
+Step 6d — the chart deploys the official `temporal` Helm chart as a subchart
+(single server replica, single-node Cassandra persistence, no
+Elasticsearch/Prometheus/Grafana) and `temporalHost` automatically defaults
+to the subchart's frontend Service. Nothing else to configure.
+
+This is an **evaluation** profile: Cassandra runs as a single in-cluster node
+with default storage, so treat its state as disposable. An explicitly set
+`temporalHost` always takes precedence over the subchart default, which makes
+the later migration to an external Temporal a pure values change.
+
+### Option B — External Temporal (recommended for production)
+
+Run Temporal as its own installation with real persistence. See
+[Temporal Prerequisites](temporal-prerequisites.md) for a complete reference.
+Quick start:
 
 ```bash
 helm repo add temporal https://charts.temporalio.io
@@ -339,6 +359,9 @@ kubectl create configmap devloop-projects \
 Create a `devloop-values.yaml`:
 
 ```yaml
+# Point at your external Temporal (Step 4 Option B). If you chose the bundled
+# subchart (Option A), replace this line with `temporal.enabled: true` and
+# temporalHost defaults to the subchart's frontend Service automatically.
 temporalHost: temporal-frontend.agents.svc.cluster.local:7233
 
 temporalWorker:
@@ -470,7 +493,8 @@ Replace `<project-id>` with the value from your Project Registry. Because the ol
 
 | Setting                          | Description                                                                                   |
 |----------------------------------|-----------------------------------------------------------------------------------------------|
-| `temporalHost`                   | Temporal frontend gRPC address; set in Helm values to point at your Temporal cluster          |
+| `temporalHost`                   | Temporal frontend gRPC address; set in Helm values to point at your Temporal cluster. May be omitted when `temporal.enabled=true` — it then defaults to the bundled subchart's frontend Service |
+| `temporal.enabled`               | Deploy the official `temporal` chart as a subchart (evaluation profile: single replica, single-node Cassandra, no Elasticsearch/Prometheus/Grafana). Default `false`; production should bring an external Temporal instead |
 | `GITHUB_TOKEN`                   | devloop-bot GitHub token used to post comments, open PRs, and request reviewers (per project via `github_token_secret`) — used when GitHub App auth is not configured |
 | `GITHUB_APP_ID` / `githubApp.appId` | **Recommended** — GitHub App ID; together with `GITHUB_APP_PRIVATE_KEY` switches devloop-bot to GitHub App authentication (short-lived installation tokens) instead of a PAT. See [GitHub App Setup](github-app.md) |
 | `GITHUB_APP_PRIVATE_KEY` / `githubApp.privateKeySecret` | RSA private key for the GitHub App, sourced from a K8s Secret (`{name, key}`) and forwarded via `secretKeyRef`. Used to sign the JWTs devloop exchanges for installation access tokens |

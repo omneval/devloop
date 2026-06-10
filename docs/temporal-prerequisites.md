@@ -1,6 +1,6 @@
 # Temporal Prerequisites
 
-devloop requires a running Temporal cluster. The devloop Helm chart does **not** deploy Temporal — you must provide it independently. This guide shows how to install Temporal via the official [temporalio/helm-charts](https://github.com/temporalio/helm-charts) chart on a Kubernetes cluster.
+devloop requires a running Temporal cluster. By default the devloop Helm chart does **not** deploy Temporal — you provide it independently, as described below. For evaluation, the chart can alternatively bundle Temporal as a subchart: `helm install devloop ... --set temporal.enabled=true` deploys the official chart (single replica, single-node Cassandra) and points the worker at it automatically — see [Getting Started Step 4](getting-started.md#step-4-install-temporal). This guide covers the independent install path via the official [temporalio/helm-charts](https://github.com/temporalio/helm-charts) chart.
 
 ## Quick Install
 

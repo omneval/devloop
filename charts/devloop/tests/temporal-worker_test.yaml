@@ -11,7 +11,44 @@ tests:
       temporalHost: ""
     asserts:
       - failedTemplate:
-          errorMessage: "temporalHost is required but was not set. Provide a value like 'temporal-frontend.agents.svc:7233'"
+          errorMessage: "temporalHost is required but was not set. Provide a value like 'temporal-frontend.agents.svc:7233', or set temporal.enabled=true to deploy the bundled Temporal subchart"
+
+  - it: defaults TEMPORAL_HOST to the bundled subchart frontend when temporal.enabled (issue #117)
+    template: templates/temporal-worker-deployment.yaml
+    set:
+      temporalHost: ""
+      temporal.enabled: true
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: TEMPORAL_HOST
+            value: "RELEASE-NAME-temporal-frontend.NAMESPACE.svc.cluster.local:7233"
+
+  - it: explicit temporalHost wins over the bundled subchart default (issue #117)
+    template: templates/temporal-worker-deployment.yaml
+    set:
+      temporalHost: "external-temporal.example.com:7233"
+      temporal.enabled: true
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: TEMPORAL_HOST
+            value: "external-temporal.example.com:7233"
+
+  - it: honors temporal.fullnameOverride when deriving the subchart frontend host (issue #117)
+    template: templates/temporal-worker-deployment.yaml
+    set:
+      temporalHost: ""
+      temporal.enabled: true
+      temporal.fullnameOverride: "my-temporal"
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: TEMPORAL_HOST
+            value: "my-temporal-frontend.NAMESPACE.svc.cluster.local:7233"
 
   - it: renders nothing when the worker is disabled
     set:
