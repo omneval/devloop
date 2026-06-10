@@ -115,34 +115,112 @@ the agent's activity (PRs, review requests, status comments, replies) clearly
 attributed and lets the webhook receiver filter out the bot's own
 comments/reviews so they don't loop back and re-trigger workflows.
 
-There are two ways to authenticate as that identity. **Pick one:**
+The standard way to do this is a **GitHub App** — registered and wired up in
+3a–3d below. A real bot identity with no bot account to manage, short-lived
+(1-hour) installation tokens minted on demand (nothing long-lived to leak or
+rotate), per-repo installation scoping, and — critically for single-maintainer
+setups — **working reviewer requests** (see the PAT fallback below for why a
+PAT often can't deliver those).
 
-| Path | Best for |
-|------|----------|
-| **GitHub App** (recommended) | Production deployments, multiple repos/orgs, or operators who want to avoid managing a bot account. Short-lived (1h) tokens generated on demand — nothing long-lived to leak or rotate. Installable per-repo, and publishable so other devloop users can install it on their own repos without creating a bot account. |
-| **Fine-grained PAT** (simpler fallback) | Quick local setups, single-repo experiments, or anyone who'd rather not register a GitHub App. One token to create and store; works exactly as before. |
-
-devloop auto-detects which one is configured: if `GITHUB_APP_ID` and
+devloop auto-detects which auth is configured: if `GITHUB_APP_ID` and
 `GITHUB_APP_PRIVATE_KEY` are both set on the worker, it authenticates as a
 GitHub App; otherwise it falls back to each project's PAT
-(`github_token_secret`). **Existing PAT-based deployments need no changes.**
+(`github_token_secret`).
 
-### Option A — GitHub App (recommended)
+### 3a. Register the GitHub App
 
-Register a `devloop` GitHub App with the exact permission set devloop needs
-(Contents rw, Pull requests rw, Issues rw, Checks read, Workflows rw), install it on your
-enrolled repos, and wire the App ID + private key + installation ID into the
-chart via the new `githubApp.*` values (`appId`, `privateKeySecret`,
-`installationId` → forwarded as `GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY`,
-`GITHUB_APP_INSTALLATION_ID`).
+Go to **Settings → Developer settings → GitHub Apps → New GitHub App** (or
+your organization's equivalent page), or paste this manifest into a
+[GitHub App manifest flow](https://docs.github.com/en/apps/sharing-github-apps/registering-a-github-app-from-a-manifest)
+to create it in one step:
 
-Full walkthrough — including the app manifest, the required permission table,
-private-key/Secret setup, and how token minting + refresh works — lives in
-**[GitHub App Setup for devloop-bot](github-app.md)**. Follow that guide, then
-skip directly to [Step 4](#step-4-install-temporal) below; you do **not** also
-need Option B.
+```json
+{
+  "name": "devloop",
+  "url": "https://github.com/<your-org>/devloop",
+  "hook_attributes": { "url": "" },
+  "redirect_url": "https://github.com/<your-org>/devloop",
+  "public": false,
+  "default_permissions": {
+    "contents": "write",
+    "pull_requests": "write",
+    "issues": "write",
+    "checks": "read",
+    "workflows": "write"
+  },
+  "default_events": []
+}
+```
 
-### Option B — Fine-grained PAT (simpler fallback)
+If registering manually: name it `devloop` (or `devloop-<your-org>` — app
+names are globally unique), keep the App's own **webhook disabled** (devloop's
+webhook receiver from Step 2 is the integration point), and grant exactly
+these **Repository permissions**: Contents (read/write), Pull requests
+(read/write), Issues (read/write), Checks (read), Workflows (read/write) —
+nothing else. **Don't skip Workflows**: without it, any agent branch touching
+`.github/workflows/*` is rejected on push with an opaque "exit status 1".
+
+### 3b. Generate a private key
+
+On the app's settings page, scroll to **Private keys** → **Generate a private
+key**. GitHub downloads a `.pem` file — the RSA key devloop uses to sign the
+JWTs it exchanges for installation tokens. Note the **App ID** shown at the
+top of the same page.
+
+### 3c. Install the App on your repositories
+
+From the app's page click **Install** and select the repos you're enrolling.
+Note the **installation ID** — the numeric segment of the installation's
+settings URL: `https://github.com/settings/installations/<installation_id>`.
+
+### 3d. Store the private key as a Kubernetes Secret
+
+```bash
+kubectl create secret generic devloop-github-app-key \
+  --from-file=privateKey=/path/to/devloop.<date>.private-key.pem \
+  -n agents
+```
+
+You'll wire the App ID, installation ID, and this Secret into the chart in
+Step 6d via the `githubApp.*` values:
+
+```yaml
+githubApp:
+  appId: "123456"                      # GITHUB_APP_ID
+  installationId: "987654"             # GITHUB_APP_INSTALLATION_ID
+  privateKeySecret:
+    name: devloop-github-app-key       # Secret from 3d
+    key: privateKey
+```
+
+That's the App setup for the worker — every GitHub API call devloop's
+workflows make (opening PRs, status comments, reviewer requests, labels) now
+uses short-lived App installation tokens. One thing the App does **not**
+cover: Agent Execution Job pods authenticate `git clone`/`git push` with the
+per-project `github_token_secret` from the Project Registry (App installation
+tokens expire after an hour, so they aren't mounted into jobs). You'll create
+that Secret in Step 6b — it needs a token with the **Contents** and
+**Workflows** read/write permissions (see the permission list in the PAT
+fallback section below).
+
+For the deeper reference — how token minting and refresh work, publishing the
+app for other operators — see
+**[GitHub App Setup for devloop-bot](github-app.md)**. Continue to
+[Step 4](#step-4-install-temporal).
+
+### Fallback — Fine-grained PAT (quick evaluation only)
+
+If you'd rather not register a GitHub App for a quick single-repo evaluation,
+a fine-grained PAT works, with one important caveat:
+
+> **Reviewer requests don't work in the common single-maintainer setup.** A
+> PAT authenticates as the account that created it; if that's also the human
+> reviewer's account (typical for solo setups), GitHub forbids the formal
+> review request — you can't request a review from yourself. devloop degrades
+> to a best-effort workaround (assigning the PR and @-mentioning the reviewer
+> in a comment instead), so `pr_reviewer` never produces a real "Review
+> requested" entry. The GitHub App path doesn't have this problem: the App is
+> its own identity, so review requests work even on a solo project.
 
 1. **Create a GitHub account** dedicated to the bot (e.g. `devloop-bot`), and
    add it as a collaborator (or member, for an org) with write access to each
@@ -168,12 +246,30 @@ need Option B.
 
    ```bash
    kubectl create secret generic your-project-github-token \
-     --from-literal=token=$DEVLOOP_BOT_PAT \
+     --from-literal=GITHUB_TOKEN=$DEVLOOP_BOT_PAT \
      -n agents
    ```
 
+   (The key inside the Secret must be `GITHUB_TOKEN` — both the worker and
+   the Agent Execution Job read that exact key.)
+
    Repeat per enrolled project (or reuse the same secret name across projects
    that share the same bot account and permission scope).
+
+### Migrating an existing PAT deployment to the GitHub App
+
+Existing PAT-based deployments keep working unchanged — App auth is opt-in.
+To migrate: follow 3a–3d above, add the `githubApp.*` values to your Helm
+release, and `helm upgrade`. The moment `GITHUB_APP_ID` and
+`GITHUB_APP_PRIVATE_KEY` are both present on the worker, the worker's GitHub
+API calls switch to App tokens and stop consulting each project's
+`github_token_secret`. **Keep those Secrets**, though: Agent Execution Jobs
+still mount them for `git clone`/`git push`. After migrating you can narrow
+the PAT inside them to just **Contents** and **Workflows** read/write (the
+worker no longer needs its Pull requests / Issues / Checks permissions).
+There is no runtime fallback to the PAT if App-token minting fails (e.g. a
+wrong `installationId` 404s on every call), so verify a Dev Loop run
+end-to-end after upgrading.
 
 ## Step 4: Install Temporal
 
@@ -294,12 +390,19 @@ projects:
 
 ### 6b: Create Kubernetes Secrets
 
-Create the secrets referenced in `projects.yaml` and by the worker itself:
+Create the secrets referenced in `projects.yaml` and by the worker itself.
+(The GitHub App private-key Secret was already created in Step 3d.)
+
+The per-project GitHub token Secret is needed in **both** auth modes: Agent
+Execution Jobs mount it (key `GITHUB_TOKEN`) for `git clone`/`git push` — App
+installation tokens are too short-lived for that. On the GitHub App path the
+token only needs **Contents** and **Workflows** read/write; on the PAT
+fallback path it's the full-permission PAT from Step 3.
 
 ```bash
-# devloop-bot GitHub token for the agent (see Step 3)
+# Per-project GitHub token for agent git operations (see Step 3)
 kubectl create secret generic your-project-github-token \
-  --from-literal=token=$GITHUB_TOKEN \
+  --from-literal=GITHUB_TOKEN=$GITHUB_TOKEN \
   -n agents
 
 # Omneval ingest secret
@@ -342,6 +445,14 @@ Create a `devloop-values.yaml`:
 
 ```yaml
 temporalHost: temporal-frontend.agents.svc.cluster.local:7233
+
+# GitHub App auth (Step 3) — omit this block only on the PAT fallback path
+githubApp:
+  appId: "123456"
+  installationId: "987654"
+  privateKeySecret:
+    name: devloop-github-app-key
+    key: privateKey
 
 temporalWorker:
   agentGithubLogin: "devloop-bot"
