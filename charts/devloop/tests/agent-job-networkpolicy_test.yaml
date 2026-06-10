@@ -1,0 +1,118 @@
+suite: agent job egress network policy
+templates:
+  - templates/agent-job-networkpolicy.yaml
+tests:
+  - it: renders by default with DNS, HTTPS, kube API, and the default OTLP port
+    asserts:
+      - containsDocument:
+          kind: NetworkPolicy
+          apiVersion: networking.k8s.io/v1
+          name: RELEASE-NAME-agent-job-egress
+      - equal:
+          path: metadata.namespace
+          value: NAMESPACE
+      - equal:
+          path: spec.podSelector.matchExpressions
+          value:
+            - key: agents.homelab/project
+              operator: Exists
+      - equal:
+          path: spec.policyTypes
+          value:
+            - Egress
+      - contains:
+          path: spec.egress
+          content:
+            ports:
+              - port: 53
+                protocol: UDP
+              - port: 53
+                protocol: TCP
+      # Default OTLP endpoint (http://omneval-ingest...:8000) contributes 8000.
+      - contains:
+          path: spec.egress
+          content:
+            ports:
+              - port: 443
+                protocol: TCP
+              - port: 6443
+                protocol: TCP
+              - port: 8000
+                protocol: TCP
+
+  - it: derives ports from the LLM base URLs, including per-role endpoints (issue #123)
+    set:
+      temporalWorker.agentJob.llm.baseUrl: "http://dgx.local:11434/v1"
+      temporalWorker.agentJob.llm.roles:
+        review:
+          baseUrl: "http://reviewer.local:8081/v1"
+        audit:
+          # https default port — must NOT add a duplicate 443 entry
+          baseUrl: "https://api.anthropic.com/v1/"
+      temporalWorker.agentJob.networkPolicy.otlpEndpoint: "http://omneval-ingest.omneval.svc.cluster.local:4318"
+    asserts:
+      - contains:
+          path: spec.egress
+          content:
+            ports:
+              - port: 443
+                protocol: TCP
+              - port: 6443
+                protocol: TCP
+              - port: 11434
+                protocol: TCP
+              - port: 4318
+                protocol: TCP
+              - port: 8081
+                protocol: TCP
+
+  - it: deduplicates ports shared between endpoints
+    set:
+      temporalWorker.agentJob.llm.baseUrl: "http://shared.local:8000/v1"
+      # default otlpEndpoint also resolves to port 8000
+    asserts:
+      - contains:
+          path: spec.egress
+          content:
+            ports:
+              - port: 443
+                protocol: TCP
+              - port: 6443
+                protocol: TCP
+              - port: 8000
+                protocol: TCP
+
+  - it: appends extraEgress rules verbatim
+    set:
+      temporalWorker.agentJob.networkPolicy.extraEgress:
+        - ports:
+            - port: 8080
+              protocol: TCP
+          to:
+            - ipBlock:
+                cidr: 10.0.0.0/8
+    asserts:
+      - contains:
+          path: spec.egress
+          content:
+            ports:
+              - port: 8080
+                protocol: TCP
+            to:
+              - ipBlock:
+                  cidr: 10.0.0.0/8
+
+  - it: is created in agentsNamespace when set (where the jobs run)
+    set:
+      agentsNamespace: "agent-workloads"
+    asserts:
+      - equal:
+          path: metadata.namespace
+          value: agent-workloads
+
+  - it: disables cleanly via networkPolicy.enabled=false
+    set:
+      temporalWorker.agentJob.networkPolicy.enabled: false
+    asserts:
+      - hasDocuments:
+          count: 0

@@ -39,6 +39,23 @@ the release name so that multiple installs in the same namespace don't collide.
 {{- end }}
 
 {{/*
+Port of an endpoint URL: "http://host:8000/v1" -> 8000, falling back to the
+scheme default (80 for http, 443 otherwise) when the URL carries no explicit
+port. Used to derive the agent-job egress NetworkPolicy allowlist from the
+configured LLM/OTLP endpoints (issue #123).
+*/}}
+{{- define "devloop.urlPort" -}}
+{{- $u := urlParse . -}}
+{{- if contains ":" $u.host -}}
+{{- last (splitList ":" $u.host) -}}
+{{- else if eq $u.scheme "http" -}}
+80
+{{- else -}}
+443
+{{- end -}}
+{{- end -}}
+
+{{/*
 Common health probes (used by all components).
 */}}
 {{- define "devloop.healthProbes" -}}

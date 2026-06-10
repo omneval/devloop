@@ -348,7 +348,14 @@ def render_job(d: DispatchInput, job_name: str) -> dict:
             "ttlSecondsAfterFinished": int(d.retention_seconds),
             "template": {
                 "metadata": {
-                    "labels": {"agents.homelab/project": d.project_id},
+                    # Pod-level labels are the selector surface for operator
+                    # policy (the chart's agent-job egress NetworkPolicy and
+                    # any CNI policy engine) — keep project AND phase here,
+                    # not just on the Job (issue #123).
+                    "labels": {
+                        "agents.homelab/project": d.project_id,
+                        "agents.homelab/phase": spec.phase,
+                    },
                 },
                 "spec": pod_spec,
             },

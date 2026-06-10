@@ -104,10 +104,22 @@ devloop is configured primarily through Helm values ([`charts/devloop/values.yam
 | `temporalWorker.projectsConfigMap` | ConfigMap name/key for the Project Registry file |
 | `temporalWorker.maxConcurrentJobs` | Maximum concurrent Agent Execution Jobs (default: `1`) |
 | `temporalWorker.ciFixMaxIterations` | Max CI fix loop retries (default: `5`) |
+| `temporalWorker.agentJob.networkPolicy.*` | Egress lockdown for Agent Execution Job pods (default on; opt-out via `enabled: false`) — see [Security Model](docs/security-model.md) |
 | `githubApp.*` | GitHub App authentication (recommended over PAT) |
 | `summarization.*` | Weekly digest schedule and delivery options |
 
 See [docs/getting-started.md](docs/getting-started.md) for the full configuration reference.
+
+## Security
+
+Agent Execution Jobs run code from the enrolled repo with a push-capable
+GitHub token — that's the product, and it's also the threat model. The chart
+ships a default-on egress NetworkPolicy for agent job pods (DNS, HTTPS, the
+Kubernetes API, and your configured LLM/OTLP endpoints; everything else
+denied), and **[docs/security-model.md](docs/security-model.md)** documents
+what each credential can reach, why branch protection on the default branch
+is required, the `agents.homelab/*` pod labels for your own policy engine,
+and the GitHub App permission set as the scoping mechanism.
 
 ### Environment Variables
 
