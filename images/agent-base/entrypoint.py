@@ -257,11 +257,15 @@ def _name_openhands_llm_spans(service: str) -> None:
 
 def setup_tracing():
     """Configure an OTLP tracer from OTEL_* env. Returns a tracer (no-op if the
-    OpenTelemetry SDK is unavailable, e.g. in the stub/test path)."""
+    OpenTelemetry SDK is unavailable — e.g. the stub/test path — or no OTLP
+    endpoint is configured, so a local run doesn't retry-spam the SDK default
+    localhost:4318 collector that isn't there)."""
     # Fix OpenHands' LLM-span service.name before it initialises lmnr (below,
     # any provider setup, and run_agent's openhands import all happen after).
     _name_openhands_llm_spans(os.getenv("OTEL_SERVICE_NAME", "agent"))
     try:
+        if not os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT"):
+            raise RuntimeError("no OTLP endpoint configured")
         from opentelemetry import trace
         from opentelemetry.sdk.resources import Resource
         from opentelemetry.sdk.trace import TracerProvider
@@ -571,6 +575,35 @@ def _ensure_node_deps(cwd: str, timeout: int) -> None:
     subprocess.run(cmd, cwd=cwd, text=True, capture_output=True, timeout=timeout)
 
 
+def _current_span():
+    """Active OTel span, or ``None`` when the SDK is unavailable (stub/test
+    path). Lets phase handlers attach KPI attributes (issue #122) to the span
+    that is already open without threading span handles everywhere."""
+    try:
+        from opentelemetry import trace
+
+        return trace.get_current_span()
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _set_span_attr(name: str, value) -> None:
+    """Best-effort ``set_attribute`` on the current span — KPI emission must
+    never break a phase."""
+    span = _current_span()
+    if span is None:
+        return
+    try:
+        span.set_attribute(name, value)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _suite_label_attr(label: str) -> str:
+    """Sanitize a test-suite label into an attribute-key segment."""
+    return re.sub(r"[^a-zA-Z0-9_-]+", "_", label.strip()) or "suite"
+
+
 def run_project_tests(workdir: str, timeout: int = 600) -> tuple[bool, str]:
     """Run the project's test suite(s); ALL must pass for the result to be True.
 
@@ -621,6 +654,12 @@ def run_project_tests(workdir: str, timeout: int = 600) -> tuple[bool, str]:
         )
         out = (result.stdout or "") + (result.stderr or "")
         combined_output.append(f"[{label}]\n{out}")
+        # Per-suite KPI attribute on the enclosing "tests" span (issue #122)
+        # so suite-level pass rates are queryable in omneval.
+        _set_span_attr(
+            f"devloop.tests.{_suite_label_attr(label)}.passed",
+            result.returncode == 0,
+        )
         if result.returncode != 0:
             all_passed = False
             log.warning("%s test suite FAILED (exit %d)", label, result.returncode)
@@ -1135,6 +1174,10 @@ def run_agent(spec: TaskSpec, workdir: str, tracer) -> AgentOutcome:
     llm_role = "review" if spec.phase == "review" else ""
     try:
         with tracer.start_as_current_span("agent.run"):
+            # Prompt size in characters — cheap context-starvation signal
+            # (issue #122). Per-call token usage is captured separately by
+            # the LLM instrumentation on the model spans.
+            _set_span_attr("devloop.prompt.chars", len(message))
             llm = LLM(
                 model=_llm_setting("AGENT_MODEL", llm_role, "qwen3-27b"),
                 base_url=_llm_setting(
@@ -1513,6 +1556,8 @@ def handle_execute(spec: TaskSpec, tracer) -> dict:
     except ValueError:
         max_passes = 2
     unmet: list[str] = []
+    unmet_start = -1  # first audit's unmet count; -1 = audit never ran
+    criteria_passes_used = 0
     if issue_body and _commit_count(workdir, base_sha) > 0:
         for audit_pass in range(max_passes + 1):
             with tracer.start_as_current_span("criteria_audit") as audit_span:
@@ -1520,6 +1565,8 @@ def handle_execute(spec: TaskSpec, tracer) -> dict:
                     issue_body, _workdir_diff(workdir, base_sha)
                 )
                 unmet = list(audit.unmet_criteria) if audit else []
+                if audit is not None and unmet_start < 0:
+                    unmet_start = len(unmet)
                 if audit_span is not None:
                     audit_span.set_attribute("audit.pass", audit_pass)
                     audit_span.set_attribute("audit.unmet", len(unmet))
@@ -1539,13 +1586,21 @@ def handle_execute(spec: TaskSpec, tracer) -> dict:
                 len(unmet),
             )
             spec.extra["feedback"] = _format_unmet_feedback(unmet)
+            criteria_passes_used += 1
             outcome = run_agent(spec, workdir, tracer)
             _sweep_commit(
                 workdir,
                 f"agent: address unmet acceptance criteria for #{spec.issue_number}",
             )
 
+    # Execute-phase KPI attributes on the phase root span (issue #122).
+    _set_span_attr("devloop.execute.criteria_passes_used", criteria_passes_used)
+    if unmet_start >= 0:
+        _set_span_attr("devloop.execute.unmet_criteria_start", unmet_start)
+        _set_span_attr("devloop.execute.unmet_criteria_end", len(unmet))
+
     commits = _commit_count(workdir, base_sha)
+    _set_span_attr("devloop.execute.commits", commits)
     if commits == 0:
         # No work produced — the workflow skips this issue (no branch/PR).
         return AgentJobResult(
@@ -1556,6 +1611,7 @@ def handle_execute(spec: TaskSpec, tracer) -> dict:
 
     with tracer.start_as_current_span("tests"):
         tests_passed, test_output = run_project_tests(workdir)
+    _set_span_attr("devloop.execute.tests_passed", tests_passed)
     with tracer.start_as_current_span("push"):
         push_branch(workdir, branch, force=True)
 
@@ -1615,6 +1671,11 @@ def handle_review(spec: TaskSpec, tracer) -> dict:
     outcome = run_agent(spec, workdir, tracer)
     review_model = structured_extractor(outcome.summary, ReviewOutput)
     review = review_model.model_dump()
+    # Review-phase KPI attributes on the phase root span (issue #122).
+    _set_span_attr("devloop.review.verdict", review.get("verdict", ""))
+    _set_span_attr(
+        "devloop.review.inline_comments", len(review.get("inline_comments") or [])
+    )
     return AgentJobResult(
         status="complete",
         issue_number=spec.issue_number,
@@ -1921,16 +1982,27 @@ def main() -> int:
             ).to_payload()
         )
         return 1
-    try:
-        payload = handler(spec, tracer)
-        write_output(payload)
-        return 0
-    except Exception as exc:  # noqa: BLE001
-        log.exception("agent job failed")
-        write_output(
-            AgentJobResult(status="failed", error=_describe_exception(exc)).to_payload()
-        )
-        return 1
+    # Root span per phase run: the KPI attributes the handlers set via
+    # _set_span_attr land here (issue #122), giving omneval one span per
+    # phase carrying the phase's outcome.
+    with tracer.start_as_current_span(f"phase.{spec.phase}"):
+        _set_span_attr("devloop.phase", spec.phase)
+        _set_span_attr("devloop.project", spec.project_id)
+        _set_span_attr("devloop.issue_number", spec.issue_number)
+        try:
+            payload = handler(spec, tracer)
+            _set_span_attr("devloop.result.status", payload.get("status", ""))
+            write_output(payload)
+            return 0
+        except Exception as exc:  # noqa: BLE001
+            log.exception("agent job failed")
+            _set_span_attr("devloop.result.status", "failed")
+            write_output(
+                AgentJobResult(
+                    status="failed", error=_describe_exception(exc)
+                ).to_payload()
+            )
+            return 1
 
 
 if __name__ == "__main__":

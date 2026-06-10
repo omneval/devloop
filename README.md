@@ -19,6 +19,7 @@ Triggered by GitHub webhook events, devloop processes issues labeled `agent-read
 - **Summarization** — A scheduled workflow generates plain-English digests of closed issues and git diffs, posted as GitHub Issues and optionally forwarded to an outbound webhook.
 - **Repo-native config** — An enrolled repo can carry `.devloop/config.yaml` (install/test commands that gate its PRs) and `.devloop/prompts/<phase>.md` (per-phase prompt overrides) so agent customization versions with the code — no per-project image rebuild needed.
 - **Agent Skills** — Reusable, model-agnostic capabilities in the AgentSkills format, with progressive disclosure and per-phase allowlists via `skillsByPhase`. The batteries-included skills are taken from https://github.com/mattpocock/skills . Go check out his stuff!
+- **Eval flywheel** — Every phase emits KPI span attributes (commits, per-suite test results, criteria-audit passes, review verdicts, loop iterations, label→PR wall-clock) into omneval, and `devloop-bench` replays a golden set of closed issues scored by an LLM judge so prompt/model/harness changes become measured A/B decisions. See the "KPI span attributes" section in [CONTEXT.md](CONTEXT.md).
 
 ## Prerequisites
 

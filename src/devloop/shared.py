@@ -399,3 +399,26 @@ class PlanIssueInput:
 
     project_id: str
     issue_number: int
+
+
+@dataclass
+class WorkflowKpiInput:
+    """Input for the emit_workflow_kpis activity (issue #122).
+
+    One emission per issue the Dev Loop carried to reviewer notification.
+    All counters are absolute for that issue's run; ``label_to_pr_seconds``
+    is the wall-clock from workflow start (≈ the ``agent-ready`` labeling,
+    since the webhook is the sole entry point) to the reviewer hand-off.
+    """
+
+    project_id: str
+    issue_number: int = 0
+    ci_fix_iterations: int = 0
+    review_fix_passes: int = 0
+    answer_jobs: int = 0
+    execute_attempts: int = 0
+    review_verdict: str = ""
+    label_to_pr_seconds: float = 0.0
+    pr_opened: bool = False
+    commits: int = 0
+    ci_exhausted: bool = False

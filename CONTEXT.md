@@ -118,6 +118,27 @@ Publish packages to PyPI with `uv build` + `uv publish` (OIDC trusted publisher 
 
 **Image tag format**: `sha-<7-char-hash>-<unix-epoch>` for builds from main; semver (`v1.2.3`) for releases. The epoch component allows FluxCD ImagePolicy to select the newest build by alphabetical ordering without requiring semver on every commit.
 
+**KPI span attributes (issue #122)**: every agent run and Dev Loop issue emits per-phase outcomes as OTel span attributes so model/prompt/harness decisions can be measured in omneval instead of argued from anecdotes.
+
+From the agent entrypoint (one `phase.<phase>` root span per Agent Execution Job, service name = the phase):
+
+| Attribute | Span | Meaning |
+|---|---|---|
+| `devloop.phase` / `devloop.project` / `devloop.issue_number` | `phase.<phase>` | identity of the run |
+| `devloop.result.status` | `phase.<phase>` | terminal payload status (`complete` / `failed` / `awaiting_human`) |
+| `devloop.execute.commits` | `phase.execute` | commits the agent produced |
+| `devloop.execute.tests_passed` | `phase.execute` | all suites green |
+| `devloop.execute.criteria_passes_used` | `phase.execute` | extra agent passes spent on the acceptance-criteria audit loop |
+| `devloop.execute.unmet_criteria_start` / `_end` | `phase.execute` | unmet-criteria count at the first and final audit |
+| `devloop.tests.<suite>.passed` | `tests` | per-suite pass/fail (suite label sanitized) |
+| `devloop.review.verdict` / `devloop.review.inline_comments` | `phase.review` | reviewer verdict and finding count |
+| `devloop.prompt.chars` | `agent.run` | rendered prompt size (context-starvation signal; per-call token usage lives on the LLM spans) |
+| `skills.loaded` / `skills.skipped` / `skills.selection_mode` | `skills.load` | skill resolution health (issue #35/#36) |
+
+From the workflow (one `devloop.workflow.kpi` span per issue carried to reviewer notification, service name `devloop-workflow`, emitted by the `emit_workflow_kpis` activity — best-effort, never fails the workflow): `devloop.workflow.ci_fix_iterations`, `.review_fix_passes`, `.answer_jobs`, `.execute_attempts`, `.review_verdict`, `.label_to_pr_seconds` (workflow start ≈ labeling, since the webhook is the sole entry point), `.pr_opened`, `.commits`, `.ci_exhausted`.
+
+**devloop bench (issue #122)**: `devloop-bench --project X --issues 67,68 --scratch-repo org/scratch` replays a golden set of closed issues against the current deployment and scores each resulting agent PR with an LLM judge (model via `AGENT_MODEL_JUDGE` → `AGENT_MODEL_REVIEW` → `AGENT_MODEL`) against the issue's acceptance criteria and the historical human-merged PR. `--no-replay` judges the human PR itself (judge calibration). See `src/devloop/bench.py`.
+
 ---
 
 ## Architecture decisions
