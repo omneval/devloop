@@ -340,6 +340,35 @@ async def test_resolve_token_falls_back_to_pat_when_app_not_configured(monkeypat
     assert token == "pat-token-value"
 
 
+async def test_resolve_token_uses_env_when_secret_name_empty(monkeypatch):
+    """Local quickstart (issue #116): a registry entry with an empty
+    github_token_secret resolves the worker's own GITHUB_TOKEN env var instead
+    of reaching for the Kubernetes API (which doesn't exist locally)."""
+    monkeypatch.delenv("GITHUB_APP_ID", raising=False)
+    monkeypatch.delenv("GITHUB_APP_PRIVATE_KEY", raising=False)
+    monkeypatch.setenv("GITHUB_TOKEN", "gho_local_cli_token")
+    monkeypatch.setattr(
+        github_ops.cluster,
+        "read_secret_value",
+        lambda *a, **k: (_ for _ in ()).throw(
+            AssertionError("K8s Secret path should not run for an empty name")
+        ),
+    )
+    local_project = ProjectConfig(
+        id="local",
+        github_url="https://github.com/omneval/omneval",
+        default_branch="main",
+        agent_image="img",
+        agent_label="agent-ready",
+        omneval_ingest_secret="s",
+        github_token_secret="",
+    )
+
+    token = await github_ops._resolve_token(local_project)
+
+    assert token == "gho_local_cli_token"
+
+
 # --------------------------------------------------------------------------- #
 # Backward compatibility: _client() still builds a working PAT-authed client
 # --------------------------------------------------------------------------- #

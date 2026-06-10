@@ -137,25 +137,45 @@ def _run_container(
     # OUTPUT_FILE is the path *inside* the container (mounted at the same path)
     docker_env["OUTPUT_FILE"] = output_path
 
+    container = None
     try:
+        # No auto-remove: docker-py's remove=True races container.wait() (the
+        # daemon can reap the container before wait() reads its exit status,
+        # surfacing a 404 *after* the agent did all its work). We wait, grab
+        # the exit code (and logs on failure), then remove explicitly.
         container = client.containers.run(
             image,
             command=["python", "/usr/local/bin/agent-entrypoint.py"],
             environment=docker_env,
             volumes={bind_host_path: {"bind": output_path, "mode": "rw"}},
             detach=True,
-            remove=True,
         )
 
-        # Wait for completion
         result = container.wait()
-        return result.get("StatusCode", 1)
+        exit_code = result.get("StatusCode", 1)
+        if exit_code != 0:
+            try:
+                tail = container.logs(tail=50).decode(errors="replace")
+                log.error(
+                    "agent container exited %d; last log lines:\n%s",
+                    exit_code,
+                    tail,
+                )
+            except Exception:
+                log.debug("could not read container logs", exc_info=True)
+        return exit_code
     except Exception as exc:
         log.exception("docker container failed")
         raise ApplicationError(
             f"docker container error: {exc}",
             type="DockerContainerError",
         ) from exc
+    finally:
+        if container is not None:
+            try:
+                container.remove(force=True)
+            except Exception:
+                log.debug("could not remove container", exc_info=True)
 
 
 async def dispatch_agent_job_docker(d: DispatchInput) -> AgentJobResult:

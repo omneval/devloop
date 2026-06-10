@@ -21,7 +21,8 @@ real draft PR — all from localhost.
 ## Step 1 — Start Local Infrastructure
 
 The included [`docker-compose.yml`](../docker-compose.yml) starts a Temporal
-server (with embedded Cassandra) and the Temporal Web UI in one command:
+server (backed by a throwaway Postgres) and the Temporal Web UI in one
+command:
 
 ```bash
 docker compose up -d
@@ -32,8 +33,8 @@ This launches:
 | Service | Port | Purpose |
 |---------|------|---------|
 | `temporal` | `7233` | Temporal gRPC server (default namespace) |
-| `temporal-web` | `8233` | Temporal Web UI |
-| `cassandra` | (internal) | Persistence layer for Temporal |
+| `temporal-ui` | `8233` | Temporal Web UI (http://localhost:8233) |
+| `postgresql` | (internal) | Persistence layer for Temporal |
 
 > **Alternative**: If you prefer the Temporal CLI, you can skip the compose
 > file and run `temporal server start-dev` instead.
@@ -84,9 +85,10 @@ EOF
 ```
 
 > **Note**: The `omneval_ingest_secret` and `github_token_secret` fields are
-> required by the schema but can be empty strings for local evaluation. The
-> worker authenticates to GitHub via the `gh` CLI's stored credential when
-> `GITHUB_TOKEN` is not set as a separate secret.
+> required by the schema but can be empty strings for local evaluation. When
+> `github_token_secret` is empty, the worker resolves GitHub credentials from
+> its own `GITHUB_TOKEN` environment variable (exported from `gh auth token`
+> in Step 4) instead of reading a Kubernetes Secret.
 
 ## Step 4 — Run the Worker Locally
 
@@ -95,20 +97,21 @@ so that agent jobs execute via `docker run` instead of Kubernetes Jobs:
 
 ```bash
 export JOB_RUNNER=docker
-export TEMPORAL_ADDRESS=localhost:7233
-export TEMPORAL_NAMESPACE=default
+export TEMPORAL_HOST=localhost:7233
+export PROJECTS_FILE=agents/projects.yaml
 export GITHUB_TOKEN=$(gh auth token)
 export AGENT_MODEL=gpt-4o
 export AGENT_LLM_API_KEY="your-api-key-here"
 
 uv sync --all-groups
-uv run python -m devloop.worker \
-  --project-registry agents/projects.yaml
+uv run python -m devloop.worker
 ```
 
-The worker starts the temporal worker process, listens on `:8088` for webhook
-events, and registers activities including `dispatch_agent_job` (which now
-delegates to Docker when `JOB_RUNNER=docker`).
+The worker reads its configuration from environment variables (there are no
+CLI flags): `TEMPORAL_HOST` for the Temporal frontend, `PROJECTS_FILE` for the
+registry path. It starts the Temporal worker process, listens on `:8088` for
+webhook events, and registers activities including `dispatch_agent_job`
+(which delegates to Docker when `JOB_RUNNER=docker`).
 
 ## Step 5 — Trigger the Dev Loop
 
@@ -163,9 +166,9 @@ code.
 | Variable | Purpose | Default |
 |----------|---------|---------|
 | `JOB_RUNNER` | Set to `docker` to use Docker dispatch instead of Kubernetes | (K8s) |
-| `TEMPORAL_ADDRESS` | Temporal server gRPC address | `localhost:7233` |
-| `TEMPORAL_NAMESPACE` | Temporal namespace | `default` |
-| `GITHUB_TOKEN` | GitHub token for agent auth | (from `gh auth token`) |
+| `TEMPORAL_HOST` | Temporal server gRPC address | `localhost:7233` |
+| `PROJECTS_FILE` | Path to the project registry YAML | `./projects.yaml` |
+| `GITHUB_TOKEN` | GitHub token used by the worker's GitHub activities (when `github_token_secret` is empty) and forwarded into agent containers | (from `gh auth token`) |
 | `AGENT_MODEL` | LLM model for the agent | (from chart default) |
 | `AGENT_LLM_API_KEY` | LLM API key | (required) |
 | `AGENT_LLM_BASE_URL` | LLM base URL (optional, for local models) | (provider default) |
@@ -196,10 +199,10 @@ docker logs <container-id>
 ## Cleanup
 
 ```bash
-docker compose down       # stop and remove Temporal + Cassandra + Web UI
+docker compose down -v    # stop Temporal + Postgres + Web UI, drop the volume
 # Stop the gh webhook forward (Ctrl+C in its terminal)
 # Stop the worker (Ctrl+C in its terminal)
 ```
 
-No persistent state remains — the compose stack stores data in memory only,
-and Docker containers are removed after each run (`--rm`).
+`docker compose down -v` also removes the throwaway Postgres volume. Agent
+containers are removed automatically after each dispatch reads their result.

@@ -145,7 +145,11 @@ def test_run_container_invokes_docker_sdk():
             # image is positional
             assert call_args.args[0] == "test:latest"
             assert call_args.kwargs["detach"] is True
-            assert call_args.kwargs["remove"] is True
+            # No auto-remove: remove=True races container.wait() in docker-py
+            # (the daemon can reap the container before wait() reads the exit
+            # status). Removal happens explicitly after wait instead.
+            assert "remove" not in call_args.kwargs
+            container_mock.remove.assert_called_once_with(force=True)
             # OUTPUT_FILE should be in environment
             assert "OUTPUT_FILE" in call_args.kwargs["environment"]
             assert "KEY" in call_args.kwargs["environment"]
