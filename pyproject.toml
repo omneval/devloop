@@ -18,6 +18,10 @@ dependencies = [
     "openai>=2.41.0",
     "pyjwt[crypto]>=2.10.1",
     "docker>=7.1.0",
+    # Workflow KPI span emission (issue #122). The kpi module degrades to a
+    # log line if these are absent, but the reference worker ships them.
+    "opentelemetry-sdk>=1.27",
+    "opentelemetry-exporter-otlp-proto-http>=1.27",
 ]
 
 [dependency-groups]
@@ -27,6 +31,9 @@ dev = [
     "httpx>=0.28",
     "ruff>=0.9",
 ]
+
+[project.scripts]
+devloop-bench = "devloop.bench:main"
 
 [build-system]
 requires = ["hatchling", "hatch-vcs"]

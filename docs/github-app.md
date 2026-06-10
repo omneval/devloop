@@ -135,10 +135,14 @@ The choice between GitHub App auth and PAT auth is made **once, at
 configuration-detection time**, based solely on whether `GITHUB_APP_ID` and
 `GITHUB_APP_PRIVATE_KEY` are set — there is no runtime fallback to the PAT if
 App-token minting fails (e.g. a wrong `installationId` produces a 404 on every
-call). Existing `github_token_secret` entries in the project registry are
-simply not consulted once GitHub App auth is configured; see
-[Backward Compatibility](#backward-compatibility) for when the PAT path is
-used instead.
+call). Existing `github_token_secret` entries in the project registry are no
+longer consulted for the worker's API calls once GitHub App auth is
+configured — but they are still mounted into Agent Execution Job pods for
+`git clone`/`git push` (installation tokens expire after an hour, too short
+for a job), so keep each project's token Secret in place; it only needs
+**Contents** and **Workflows** read/write once the App handles everything
+else. See [Backward Compatibility](#backward-compatibility) for when the PAT
+path is used instead.
 
 ## How Token Generation Works
 

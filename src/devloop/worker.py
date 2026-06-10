@@ -45,6 +45,7 @@ from .github_ops import (
     request_github_reviewer,
     update_github_issue,
 )
+from .kpi import emit_workflow_kpis
 from .summarize_activities import publish_summary, summarize_changes
 
 # Workflows
@@ -126,6 +127,7 @@ ORCHESTRATION_ACTIVITIES = [
     publish_summary,
     create_github_issue,
     update_github_issue,
+    emit_workflow_kpis,
 ]
 
 WORKFLOWS = [

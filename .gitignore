@@ -223,3 +223,6 @@ __marimo__/
 
 .DS_Store
 **/.DS_store
+
+# Helm dependency archives (fetched by 'helm dependency build'; Chart.lock is committed)
+charts/devloop/charts/*.tgz

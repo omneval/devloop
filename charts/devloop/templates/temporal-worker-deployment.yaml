@@ -43,7 +43,7 @@ spec:
               protocol: TCP
           env:
             - name: TEMPORAL_HOST
-              value: {{ .Values.temporalHost | quote }}
+              value: {{ include "devloop.temporalHost" . | quote }}
             - name: AGENTS_NAMESPACE
               value: {{ .Values.agentsNamespace | default .Release.Namespace | quote }}
             - name: TASK_QUEUE
