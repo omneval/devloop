@@ -3,8 +3,8 @@
 
 This guide walks through running the full Dev Loop on a single machine with
 zero Kubernetes, no public hostname, and no self-deployed Temporal cluster.
-The only prerequisites are **Docker**, **`gh`**, the **Temporal CLI**
-(`temporal`), and a **GitHub account** with repository access.
+The only prerequisites are **Docker**, **`gh`**, and a **GitHub account**
+with repository access.
 
 End result: labeling an issue `agent-ready` on a real GitHub repo produces a
 real draft PR — all from localhost.
@@ -13,27 +13,36 @@ real draft PR — all from localhost.
 
 | Tool | Install |
 |------|---------|
-| **Docker** | https://docs.docker.com/get-docker/ |
+| **Docker + Docker Compose** | https://docs.docker.com/get-docker/ |
 | **GitHub CLI** | `brew install gh` / `sudo apt install gh` — then `gh auth login` |
-| **Temporal CLI** | `brew install temporal` or download from https://temporal.io/download/cli |
 | **Python + uv** | `curl -LsSf https://astral.sh/uv/install.sh | sh` |
 | **devloop source** | `git clone https://github.com/omneval/devloop.git && cd devloop` |
 
-## Step 1 — Start a Temporal Dev Server
+## Step 1 — Start Local Infrastructure
+
+The included [`docker-compose.yml`](../docker-compose.yml) starts a Temporal
+server (with embedded Cassandra) and the Temporal Web UI in one command:
 
 ```bash
-temporal server start-dev
+docker compose up -d
 ```
 
-This launches a single-process Temporal server on `localhost:7233` with the
-default namespace `default`. No external dependencies, no persistent data
-beyond the process lifetime.
+This launches:
 
-Confirm it is running:
+| Service | Port | Purpose |
+|---------|------|---------|
+| `temporal` | `7233` | Temporal gRPC server (default namespace) |
+| `temporal-web` | `8233` | Temporal Web UI |
+| `cassandra` | (internal) | Persistence layer for Temporal |
+
+> **Alternative**: If you prefer the Temporal CLI, you can skip the compose
+> file and run `temporal server start-dev` instead.
+
+Confirm Temporal is reachable:
 
 ```bash
-temporal operator cluster system
-# Expected: "Namespace: default"
+docker compose ps
+# All three services should be "running"
 ```
 
 ## Step 2 — Forward GitHub Webhooks Locally
@@ -164,8 +173,8 @@ code.
 
 ## Troubleshooting
 
-**Worker fails to connect to Temporal**: Make sure `temporal server start-dev`
-is running and `TEMPORAL_ADDRESS` is set correctly.
+**Worker fails to connect to Temporal**: Make sure the compose services are
+running (`docker compose ps`) and `TEMPORAL_ADDRESS` is set correctly.
 
 **Webhook events not arriving**: Check that `gh webhook forward` is connected
 (`gh webhook forward` shows delivery logs). Verify the repo webhook
@@ -187,10 +196,10 @@ docker logs <container-id>
 ## Cleanup
 
 ```bash
-# Stop the temporal dev server (Ctrl+C in its terminal)
+docker compose down       # stop and remove Temporal + Cassandra + Web UI
 # Stop the gh webhook forward (Ctrl+C in its terminal)
 # Stop the worker (Ctrl+C in its terminal)
 ```
 
-No persistent state remains — the temporal dev server stores data in memory
-only, and Docker containers are removed after each run (`--rm`).
+No persistent state remains — the compose stack stores data in memory only,
+and Docker containers are removed after each run (`--rm`).
