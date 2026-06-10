@@ -33,6 +33,7 @@ def _registry():
 
 # --- Phase enum additions --- #
 
+
 def test_phase_code_quality_scan_value():
     assert Phase.CODE_QUALITY_SCAN == "code_quality_scan"
     assert Phase.CODE_QUALITY_SCAN.value == "code_quality_scan"
@@ -45,8 +46,10 @@ def test_phase_code_quality_improve_value():
 
 # --- CreateGithubIssueInput dataclass --- #
 
+
 def test_create_github_issue_input_fields():
     from dataclasses import fields
+
     inp = CreateGithubIssueInput(
         project_id="omneval",
         title="My title",
@@ -63,8 +66,10 @@ def test_create_github_issue_input_fields():
 
 # --- UpdateGithubIssueInput dataclass --- #
 
+
 def test_update_github_issue_input_fields():
     from dataclasses import fields
+
     inp = UpdateGithubIssueInput(project_id="omneval", issue_number=42)
     assert inp.project_id == "omneval"
     assert inp.issue_number == 42
@@ -75,6 +80,7 @@ def test_update_github_issue_input_fields():
 
 
 # --- Fake HTTP helpers --- #
+
 
 class FakeResp:
     def __init__(self, data, status=200):
@@ -135,10 +141,12 @@ class ErrorClient:
 def _async_client_factory(make_client):
     async def _fake(cfg):
         return make_client()
+
     return _fake
 
 
 # --- create_github_issue activity tests --- #
+
 
 def test_create_github_issue_has_activity_defn():
     assert hasattr(create_github_issue, "__temporal_activity_definition"), (
@@ -149,9 +157,7 @@ def test_create_github_issue_has_activity_defn():
 @pytest.mark.asyncio
 async def test_create_github_issue_returns_issue_number(monkeypatch):
     fake = FakeClient(post_return={"number": 42})
-    monkeypatch.setattr(
-        github_ops, "_client", _async_client_factory(lambda: fake)
-    )
+    monkeypatch.setattr(github_ops, "_client", _async_client_factory(lambda: fake))
     result = await ActivityEnvironment().run(
         create_github_issue,
         CreateGithubIssueInput(
@@ -167,9 +173,7 @@ async def test_create_github_issue_returns_issue_number(monkeypatch):
 @pytest.mark.asyncio
 async def test_create_github_issue_posts_to_correct_endpoint(monkeypatch):
     fake = FakeClient(post_return={"number": 10})
-    monkeypatch.setattr(
-        github_ops, "_client", _async_client_factory(lambda: fake)
-    )
+    monkeypatch.setattr(github_ops, "_client", _async_client_factory(lambda: fake))
     await ActivityEnvironment().run(
         create_github_issue,
         CreateGithubIssueInput(
@@ -190,7 +194,9 @@ async def test_create_github_issue_posts_to_correct_endpoint(monkeypatch):
 @pytest.mark.asyncio
 async def test_create_github_issue_degrades_on_http_error(monkeypatch):
     monkeypatch.setattr(
-        github_ops, "_client", _async_client_factory(lambda: ErrorClient(500, "server error"))
+        github_ops,
+        "_client",
+        _async_client_factory(lambda: ErrorClient(500, "server error")),
     )
     result = await ActivityEnvironment().run(
         create_github_issue,
@@ -206,6 +212,7 @@ async def test_create_github_issue_degrades_on_http_error(monkeypatch):
 
 # --- update_github_issue activity tests --- #
 
+
 def test_update_github_issue_has_activity_defn():
     assert hasattr(update_github_issue, "__temporal_activity_definition"), (
         "update_github_issue is missing @activity.defn"
@@ -216,9 +223,7 @@ def test_update_github_issue_has_activity_defn():
 async def test_update_github_issue_patches_body(monkeypatch):
     patches = []
     fake = FakeClient(patch_capture=patches)
-    monkeypatch.setattr(
-        github_ops, "_client", _async_client_factory(lambda: fake)
-    )
+    monkeypatch.setattr(github_ops, "_client", _async_client_factory(lambda: fake))
     result = await ActivityEnvironment().run(
         update_github_issue,
         UpdateGithubIssueInput(
@@ -239,9 +244,7 @@ async def test_update_github_issue_patches_body(monkeypatch):
 async def test_update_github_issue_patches_state(monkeypatch):
     patches = []
     fake = FakeClient(patch_capture=patches)
-    monkeypatch.setattr(
-        github_ops, "_client", _async_client_factory(lambda: fake)
-    )
+    monkeypatch.setattr(github_ops, "_client", _async_client_factory(lambda: fake))
     await ActivityEnvironment().run(
         update_github_issue,
         UpdateGithubIssueInput(
@@ -259,9 +262,7 @@ async def test_update_github_issue_patches_state(monkeypatch):
 async def test_update_github_issue_patches_both_fields(monkeypatch):
     patches = []
     fake = FakeClient(patch_capture=patches)
-    monkeypatch.setattr(
-        github_ops, "_client", _async_client_factory(lambda: fake)
-    )
+    monkeypatch.setattr(github_ops, "_client", _async_client_factory(lambda: fake))
     await ActivityEnvironment().run(
         update_github_issue,
         UpdateGithubIssueInput(
@@ -279,7 +280,9 @@ async def test_update_github_issue_patches_both_fields(monkeypatch):
 @pytest.mark.asyncio
 async def test_update_github_issue_degrades_on_http_error(monkeypatch):
     monkeypatch.setattr(
-        github_ops, "_client", _async_client_factory(lambda: ErrorClient(404, "not found"))
+        github_ops,
+        "_client",
+        _async_client_factory(lambda: ErrorClient(404, "not found")),
     )
     # Must not raise
     result = await ActivityEnvironment().run(

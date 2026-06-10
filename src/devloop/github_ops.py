@@ -44,6 +44,7 @@ from .shared import (
     GetPRDiffInput,
     GithubNotificationInput,
     OpenAgentPRsInput,
+    PlanIssueInput,
     PollCIChecksInput,
     PostCommentsInput,
     RequestReviewerInput,
@@ -235,6 +236,19 @@ async def _resolve_token(cfg: ProjectConfig) -> str:
 
 # Agent issue branches are named ``agent/issue-<N>[-slug]`` (see entrypoint.py).
 _AGENT_BRANCH = re.compile(r"^agent/issue-(\d+)")
+
+
+def _make_issue_branch(issue_number: int, title: str) -> str:
+    """Generate a branch slug in the ``agent/issue-{id}-{slug}`` convention.
+
+    The slug is the title lower-cased, stripped of non-alphanumeric characters
+    (spaces become hyphens, everything else dropped), with leading/trailing
+    hyphens removed. If the title is empty the slug portion is omitted entirely.
+    """
+    slug = re.sub(r"[^a-z0-9]+", "-", title.strip().lower()).strip("-")
+    if slug:
+        return f"agent/issue-{issue_number}-{slug}"
+    return f"agent/issue-{issue_number}"
 
 
 def agent_pr_issue_numbers(pulls: list[dict[str, Any]]) -> list[int]:
@@ -658,6 +672,64 @@ async def open_agent_pr_issue_numbers(inp: OpenAgentPRsInput) -> list[int]:
     numbers = agent_pr_issue_numbers(pulls)
     log.info("issues with open agent PRs in %s: %s", repo, numbers)
     return numbers
+
+
+@activity.defn
+async def plan_issue(inp: PlanIssueInput) -> dict:
+    """Lightweight replacement for the Plan Agent Execution Job (issue #120).
+
+    Fetches the triggering issue from GitHub, confirms it is open and carries
+    the project's agent label, then returns a one-issue plan dict that
+    ``_execute_phase`` already consumes::
+
+        {"issues": [{"id": 42, "title": "Fix auth bug",
+                     "branch": "agent/issue-42-fix-auth-bug"}]}
+
+    Returns ``{"issues": []}`` when the issue is closed, unlabeled, or the
+    API call fails — in every case the Dev Loop round ends gracefully with
+    "no unblocked issues".
+    """
+    cfg = get_project(inp.project_id)
+    repo = parse_github_repo(cfg.github_url)
+    agent_label = cfg.agent_label
+    issue_number = inp.issue_number
+
+    try:
+        with await _client(cfg) as c:
+            resp = c.get(f"/repos/{repo}/issues/{issue_number}")
+            resp.raise_for_status()
+            issue = resp.json()
+    except Exception as exc:
+        log.warning(
+            "plan_issue: failed to fetch issue %d in %s: %s", issue_number, repo, exc
+        )
+        return {"issues": []}
+
+    # Issue must be open and carry the agent label
+    if issue.get("state") != "open":
+        log.info("plan_issue: issue %d is closed — skipping", issue_number)
+        return {"issues": []}
+
+    label_names = {lb.get("name", "") for lb in issue.get("labels", [])}
+    if agent_label not in label_names:
+        log.info(
+            "plan_issue: issue %d missing agent label %r — skipping",
+            issue_number,
+            agent_label,
+        )
+        return {"issues": []}
+
+    title = issue.get("title", "")
+    branch = _make_issue_branch(issue_number, title)
+    return {
+        "issues": [
+            {
+                "id": issue_number,
+                "title": title,
+                "branch": branch,
+            }
+        ]
+    }
 
 
 @activity.defn

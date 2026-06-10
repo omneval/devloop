@@ -35,6 +35,11 @@ class Mocks:
     plan_rounds: list[dict] = field(default_factory=list)
     plan_default: dict = field(default_factory=lambda: {"issues": []})
     plan_calls: int = 0
+    # plan_issue activity calls (issue #120) — returns plan_issue_result or
+    # cycles through plan_issue_rounds; once exhausted falls back to plan_default
+    plan_issue_calls: int = 0
+    plan_issue_rounds: list[dict] = field(default_factory=list)
+    plan_issue_result: dict | None = None
     dispatch_behavior: dict = field(
         default_factory=dict
     )  # (phase, issue) -> AgentJobResult
@@ -241,6 +246,19 @@ def _make_activities():
     async def cleanup_configmap(job_name: str) -> None:
         M.cleaned_up.append(job_name)
 
+    @activity.defn(name="plan_issue")
+    async def plan_issue(inp) -> dict:
+        """Mock plan_issue activity (issue #120).
+
+        Returns a pre-configured result or cycles through rounds.
+        """
+        M.plan_issue_calls += 1
+        if M.plan_issue_result is not None:
+            return M.plan_issue_result
+        if M.plan_issue_calls <= len(M.plan_issue_rounds):
+            return M.plan_issue_rounds[M.plan_issue_calls - 1]
+        return M.plan_default
+
     # dispatch_agent_job is dispatched on JOB_DISPATCH_QUEUE (issue #73); the
     # rest stay on ORCHESTRATION_QUEUE. Returned as two lists so the test
     # harness can register each with the Worker polling its queue.
@@ -250,6 +268,7 @@ def _make_activities():
             answer_agent_job,
             await_agent_job,
             open_agent_pr_issue_numbers,
+            plan_issue,
             post_pr_comments,
             post_github_comment,
             request_github_reviewer,
@@ -318,15 +337,15 @@ def test_render_plan_names_next_issue_and_candidates():
 async def test_configmap_cleaned_up_after_each_completed_dispatch(reset_mocks):
     """Every completed Agent Execution Job must have its output ConfigMap
     deleted once the workflow has consumed the result."""
-    reset_mocks.plan_rounds = [_one_issue(1)]
+    reset_mocks.plan_issue_result = _one_issue(1)
     inp = DevLoopInput(
         project_id="omneval",
         triggering_issue=1,
         max_iterations=1,
     )
     await _env_and_run(inp)
-    # plan + execute + review = 3 dispatches → 3 configmap cleanups
-    assert len(reset_mocks.cleaned_up) >= 3
+    # execute + review = 2 dispatches (plan is now a lightweight activity)
+    assert len(reset_mocks.cleaned_up) >= 2
 
 
 # --------------------------------------------------------------------------- #
@@ -352,19 +371,54 @@ async def test_plan_skips_issue_with_open_review_pr(reset_mocks):
 
 @pytest.mark.asyncio
 async def test_plan_phase_scopes_to_triggering_issue(reset_mocks):
-    """The Plan TaskSpec must carry the triggering issue's number so the Plan
-    agent scopes its work to that single issue rather than replanning the
-    whole agent-ready backlog (which let the agent pick a different — and
-    possibly much larger — issue to execute first, surprising whoever applied
-    the agent_label to trigger this run; caught in real-cluster E2E testing)."""
-    reset_mocks.plan_rounds = [_one_issue(7)]
+    """The plan_issue activity receives the triggering issue's number so the
+    workflow scopes its work to that single issue rather than replanning the
+    whole agent-ready backlog (issue #120). Previously this went through a
+    full Plan Agent Job; now it's a lightweight activity call."""
+    reset_mocks.plan_issue_result = _one_issue(7)
     await _env_and_run(DevLoopInput("omneval", triggering_issue=7), [])
 
-    plan_specs = [
-        s for p, s in zip(M.dispatched_phases, M.dispatched_specs) if p == "plan"
-    ]
-    assert plan_specs
-    assert plan_specs[0]["issue_number"] == 7
+    # plan_issue activity was called (not dispatch_agent_job for plan)
+    assert M.plan_issue_calls >= 1
+    assert "plan" not in M.dispatched_phases
+
+
+@pytest.mark.asyncio
+async def test_webhook_run_uses_plan_issue_activity(reset_mocks):
+    """Webhook-triggered run (triggering_issue > 0) dispatches plan_issue
+    activity instead of a full Plan Agent Execution Job (issue #120)."""
+    reset_mocks.plan_issue_result = {
+        "issues": [
+            {
+                "id": "42",
+                "title": "Fix auth bug",
+                "branch": "agent/issue-42-fix-auth-bug",
+            }
+        ]
+    }
+    result = await _env_and_run(
+        DevLoopInput("omneval", triggering_issue=42),
+        [],
+    )
+    assert result.status == "completed"
+    # plan_issue activity was called (not dispatch_agent_job for plan)
+    assert M.plan_issue_calls >= 1
+    # No "plan" phase dispatched — webhook uses lightweight activity
+    assert "plan" not in M.dispatched_phases
+    # But execute and review phases are still dispatched
+    assert "execute" in M.dispatched_phases
+    assert "review" in M.dispatched_phases
+
+
+@pytest.mark.asyncio
+async def test_non_webhook_run_still_dispatches_plan_job(reset_mocks):
+    """When triggering_issue == 0 (non-webhook), the Plan Agent Execution Job
+    is still dispatched — the activity path only applies to webhook runs."""
+    reset_mocks.plan_rounds = [_one_issue(1)]
+    await _env_and_run(DevLoopInput("omneval"), [])
+
+    assert "plan" in M.dispatched_phases
+    assert M.plan_issue_calls == 0
 
 
 @pytest.mark.asyncio

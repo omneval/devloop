@@ -39,6 +39,7 @@ from devloop import schedules
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _project(project_id: str = "myrepo") -> ProjectConfig:
     return ProjectConfig(
         id=project_id,
@@ -54,6 +55,7 @@ def _project(project_id: str = "myrepo") -> ProjectConfig:
 # ---------------------------------------------------------------------------
 # Fake-client for schedule tests (mirrors test_schedules.py pattern)
 # ---------------------------------------------------------------------------
+
 
 class _FakeHandle:
     def __init__(self, raises: Exception | None = None):
@@ -90,9 +92,11 @@ class _FakeClient:
 # Fake activities for workflow tests
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class _WorkflowCalls:
     """Captures all activity calls made during a workflow run."""
+
     issues_created: list[CreateGithubIssueInput] = field(default_factory=list)
     issues_updated: list[UpdateGithubIssueInput] = field(default_factory=list)
     comments_posted: list[dict] = field(default_factory=list)
@@ -113,11 +117,17 @@ def _make_activities(calls: _WorkflowCalls, scan_plan: dict, improve_summary: st
 
     @activity.defn(name="post_github_comment")
     async def post_github_comment(inp: GithubNotificationInput) -> None:
-        calls.comments_posted.append({"issue_number": inp.issue_number, "body": inp.body})
+        calls.comments_posted.append(
+            {"issue_number": inp.issue_number, "body": inp.body}
+        )
 
     @activity.defn(name="dispatch_agent_job")
     async def dispatch_agent_job(inp: DispatchInput) -> AgentJobResult:
-        phase = inp.task_spec.phase if not isinstance(inp.task_spec, dict) else inp.task_spec["phase"]
+        phase = (
+            inp.task_spec.phase
+            if not isinstance(inp.task_spec, dict)
+            else inp.task_spec["phase"]
+        )
         calls.dispatches.append({"task_spec": inp.task_spec})
         if phase == Phase.CODE_QUALITY_SCAN.value:
             return AgentJobResult(
@@ -131,10 +141,20 @@ def _make_activities(calls: _WorkflowCalls, scan_plan: dict, improve_summary: st
             summary=improve_summary or "filed 3 issues",
         )
 
-    return [create_github_issue, update_github_issue, post_github_comment, dispatch_agent_job]
+    return [
+        create_github_issue,
+        update_github_issue,
+        post_github_comment,
+        dispatch_agent_job,
+    ]
 
 
-async def _run_workflow(inp: CodeQualityInput, calls: _WorkflowCalls, scan_plan: dict, improve_summary: str = ""):
+async def _run_workflow(
+    inp: CodeQualityInput,
+    calls: _WorkflowCalls,
+    scan_plan: dict,
+    improve_summary: str = "",
+):
     """Run CodeQualityWorkflow with fake activities in a time-skipping env."""
     acts = _make_activities(calls, scan_plan, improve_summary)
     async with await WorkflowEnvironment.start_time_skipping() as env:
@@ -162,11 +182,17 @@ async def _run_workflow(inp: CodeQualityInput, calls: _WorkflowCalls, scan_plan:
 # Cycle 1: Pass path — score >= threshold
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_pass_path_closes_issue_with_check_comment():
     """When score >= threshold the parent issue is closed and a ✅ comment posted."""
     calls = _WorkflowCalls()
-    scan_plan = {"score": 8000, "report": "all good", "scan_error": False, "error_message": ""}
+    scan_plan = {
+        "score": 8000,
+        "report": "all good",
+        "scan_error": False,
+        "error_message": "",
+    }
     inp = CodeQualityInput(project_id="myrepo", threshold=7000)
 
     await _run_workflow(inp, calls, scan_plan)
@@ -189,6 +215,7 @@ async def test_pass_path_closes_issue_with_check_comment():
 # Cycle 2: Abort path — scan_error = True
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_abort_path_closes_issue_without_improve_dispatch():
     """When scan_error=True the issue is closed with an error body and improve is NOT dispatched."""
@@ -209,7 +236,8 @@ async def test_abort_path_closes_issue_without_improve_dispatch():
 
     # No improve phase dispatched
     improve_dispatches = [
-        d for d in calls.dispatches
+        d
+        for d in calls.dispatches
         if d["task_spec"].phase == Phase.CODE_QUALITY_IMPROVE.value
     ]
     assert improve_dispatches == []
@@ -219,18 +247,25 @@ async def test_abort_path_closes_issue_without_improve_dispatch():
 # Cycle 3: Fail path — score < threshold
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_fail_path_dispatches_improve_and_posts_completion_comment():
     """When score < threshold the improve phase is dispatched and a 📋 comment posted."""
     calls = _WorkflowCalls()
-    scan_plan = {"score": 5000, "report": "many issues", "scan_error": False, "error_message": ""}
+    scan_plan = {
+        "score": 5000,
+        "report": "many issues",
+        "scan_error": False,
+        "error_message": "",
+    }
     inp = CodeQualityInput(project_id="myrepo", threshold=7000)
 
     await _run_workflow(inp, calls, scan_plan, improve_summary="filed 5 issues")
 
     # Improve phase dispatched
     improve_dispatches = [
-        d for d in calls.dispatches
+        d
+        for d in calls.dispatches
         if d["task_spec"].phase == Phase.CODE_QUALITY_IMPROVE.value
     ]
     assert len(improve_dispatches) == 1
@@ -247,6 +282,7 @@ async def test_fail_path_dispatches_improve_and_posts_completion_comment():
 # ---------------------------------------------------------------------------
 # Cycle 4: ensure_schedules creates code-quality schedule when enabled
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_ensure_schedules_creates_code_quality_when_enabled():
@@ -267,6 +303,7 @@ async def test_ensure_schedules_creates_code_quality_when_enabled():
 # ---------------------------------------------------------------------------
 # Cycle 5: ensure_schedules deletes code-quality schedule when disabled
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_ensure_schedules_deletes_code_quality_when_disabled():

@@ -1,4 +1,5 @@
 """CodeQualityWorkflow — scheduled sentrux scan with AI-driven improvement issue filing (issue #82)."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -18,7 +19,7 @@ with workflow.unsafe.imports_passed_through():
 @dataclass
 class CodeQualityInput:
     project_id: str
-    threshold: int = 7000       # 0–10000 native sentrux scale
+    threshold: int = 7000  # 0–10000 native sentrux scale
     agent_label: str = "agent-ready"
 
 
@@ -46,7 +47,9 @@ class CodeQualityWorkflow(_WorkflowCommon):
         )
 
         # Step 2: Post queued comment before scan
-        await self._comment(project_id, parent_issue_number, "⏳ queued — sentrux scan starting")
+        await self._comment(
+            project_id, parent_issue_number, "⏳ queued — sentrux scan starting"
+        )
 
         # Step 3: Dispatch scan phase
         scan_result = await self._dispatch(
@@ -97,7 +100,11 @@ class CodeQualityWorkflow(_WorkflowCommon):
                 start_to_close_timeout=_GITHUB_COMMENT_TIMEOUT,
                 retry_policy=_RETRY,
             )
-            await self._comment(project_id, parent_issue_number, f"✅ Quality check passed: {score}/{threshold}")
+            await self._comment(
+                project_id,
+                parent_issue_number,
+                f"✅ Quality check passed: {score}/{threshold}",
+            )
             await workflow.execute_activity(
                 "update_github_issue",
                 UpdateGithubIssueInput(
@@ -128,7 +135,9 @@ class CodeQualityWorkflow(_WorkflowCommon):
         )
 
         # Step 8: Post queued comment before improve phase
-        await self._comment(project_id, parent_issue_number, "⏳ queued — filing improvement issues")
+        await self._comment(
+            project_id, parent_issue_number, "⏳ queued — filing improvement issues"
+        )
 
         # Step 9: Dispatch improve phase
         improve_result = await self._dispatch(

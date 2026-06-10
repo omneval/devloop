@@ -179,6 +179,143 @@ async def test_post_pr_comments_posts_inline_only_no_summary(monkeypatch):
 
 
 # --------------------------------------------------------------------------- #
+# _make_issue_branch — pure helper that generates a branch slug from title
+# --------------------------------------------------------------------------- #
+def test_make_issue_branch_simple_title():
+    assert (
+        github_ops._make_issue_branch(42, "Fix auth bug")
+        == "agent/issue-42-fix-auth-bug"
+    )
+
+
+def test_make_issue_branch_special_chars_and_uppercase():
+    assert (
+        github_ops._make_issue_branch(1, "Add [WIP] User Settings! Page...")
+        == "agent/issue-1-add-wip-user-settings-page"
+    )
+
+
+def test_make_issue_branch_empty_title_falls_back_to_number():
+    assert github_ops._make_issue_branch(7, "") == "agent/issue-7"
+
+
+def test_make_issue_branch_multi_word_with_underscores():
+    assert (
+        github_ops._make_issue_branch(3, "update error handling logic")
+        == "agent/issue-3-update-error-handling-logic"
+    )
+
+
+# --------------------------------------------------------------------------- #
+# plan_issue — lightweight activity that replaces Plan agent job (#120)
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+async def test_plan_issue_returns_plan_for_open_labeled_issue(monkeypatch):
+    """Open issue with agent label → returns one-issue plan dict."""
+    issue_payload = {
+        "number": 42,
+        "title": "Fix auth bug",
+        "state": "open",
+        "labels": [{"name": "agent-ready"}, {"name": "bug"}],
+    }
+    monkeypatch.setattr(
+        github_ops,
+        "_client",
+        _async_client_factory(lambda: FakeClient(get_pages=[issue_payload])),
+    )
+    result = await github_ops.plan_issue(
+        github_ops.PlanIssueInput(project_id="omneval", issue_number=42)
+    )
+    assert result == {
+        "issues": [
+            {
+                "id": 42,
+                "title": "Fix auth bug",
+                "branch": "agent/issue-42-fix-auth-bug",
+            }
+        ]
+    }
+
+
+@pytest.mark.asyncio
+async def test_plan_issue_returns_empty_for_closed_issue(monkeypatch):
+    """Closed issue → empty plan (round ends gracefully)."""
+    issue_payload = {
+        "number": 99,
+        "title": "Done already",
+        "state": "closed",
+        "labels": [{"name": "agent-ready"}],
+    }
+    monkeypatch.setattr(
+        github_ops,
+        "_client",
+        _async_client_factory(lambda: FakeClient(get_pages=[issue_payload])),
+    )
+    result = await github_ops.plan_issue(
+        github_ops.PlanIssueInput(project_id="omneval", issue_number=99)
+    )
+    assert result == {"issues": []}
+
+
+@pytest.mark.asyncio
+async def test_plan_issue_returns_empty_when_agent_label_missing(monkeypatch):
+    """Issue without the agent label → empty plan (not unblocked)."""
+    issue_payload = {
+        "number": 10,
+        "title": "Needs label",
+        "state": "open",
+        "labels": [{"name": "enhancement"}],
+    }
+    monkeypatch.setattr(
+        github_ops,
+        "_client",
+        _async_client_factory(lambda: FakeClient(get_pages=[issue_payload])),
+    )
+    result = await github_ops.plan_issue(
+        github_ops.PlanIssueInput(project_id="omneval", issue_number=10)
+    )
+    assert result == {"issues": []}
+
+
+@pytest.mark.asyncio
+async def test_plan_issue_degrades_gracefully_on_api_error(monkeypatch):
+    """GitHub API error → logged and empty plan (round ends gracefully)."""
+    monkeypatch.setattr(
+        github_ops,
+        "_client",
+        _async_client_factory(lambda: FakeClient(get_pages=[])),
+    )
+
+    # FakeClient.get() with empty _get_pages returns FakeResp([], 200) which
+    # raises_for_status fine but returns empty list — simulate a real error:
+    def _error_factory(cfg):
+        async def _c():
+            return _ErrorClient()
+
+        return _c
+
+    monkeypatch.setattr(github_ops, "_client", _error_factory(cfg=_PROJECT))
+    result = await github_ops.plan_issue(
+        github_ops.PlanIssueInput(project_id="omneval", issue_number=5)
+    )
+    assert result == {"issues": []}
+
+
+class _ErrorClient:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def get(self, url, params=None):
+        resp = FakeResp({}, status=500)
+        resp.raise_for_status()  # raises RuntimeError
+
+
+# --------------------------------------------------------------------------- #
 # agent_pr_issue_numbers — planner filter for issues already up for review
 # --------------------------------------------------------------------------- #
 def test_agent_pr_issue_numbers_parses_agent_branches():

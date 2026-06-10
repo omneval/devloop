@@ -30,6 +30,7 @@ from .shared import (
     JobStatus,
     OpenAgentPRsInput,
     Phase,
+    PlanIssueInput,
     PostCommentsInput,
     TaskSpec,
 )
@@ -227,28 +228,46 @@ class DevLoopWorkflow(_WorkflowCommon):
 
     # ---- Plan phase (#20, #74) ----------------------------------------- #
     async def _plan_phase(self, inp: DevLoopInput, rnd: int) -> dict | None:
-        """Dispatch the Plan Agent Execution Job and return the plan directly.
+        """Return the plan dict for this round.
 
-        Scoped to ``inp.triggering_issue`` — the issue whose ``agent_label``
-        triggered this run — rather than the entire agent-ready backlog. A
-        labeling event signals intent to work *that* issue; replanning across
-        every open issue let the agent pick a different (and possibly much
-        larger) one to execute first, surprising whoever applied the label.
+        When ``inp.triggering_issue > 0`` (webhook-triggered runs), the Plan
+        phase is a lightweight ``plan_issue`` activity: one GitHub API call to
+        confirm the issue is open and still labeled, then a string-format for
+        the branch slug. This avoids the full Agent Execution Job that used to
+        be required (issue #120).
 
-        No human-approval gate. ``_drop_issues_in_review`` filters out the
-        issue if it already has an open agent PR (e.g. a prior round already
-        queued it) so the planner doesn't re-surface it.
+        When ``triggering_issue == 0`` (e.g. CodeQualityWorkflow's improve
+        phase) the agent-driven planner is used — those flows genuinely need
+        backlog reasoning.
+
+        ``_drop_issues_in_review`` filters out issues that already have an
+        open agent PR so the workflow doesn't re-surface them.
         """
-        spec = TaskSpec(
-            phase="plan",
-            project_id=inp.project_id,
-            issue_number=inp.triggering_issue,
-            extra={"agent_label": inp.agent_label},
-        )
-        result = await self._dispatch(
-            inp.project_id, spec, poll_interval_seconds=inp.poll_interval_seconds
-        )
-        plan = result.plan or {"issues": []}
+        if inp.triggering_issue > 0:
+            # Lightweight path: single-issue plan via activity (issue #120).
+            plan = await workflow.execute_activity(
+                "plan_issue",
+                PlanIssueInput(
+                    project_id=inp.project_id,
+                    issue_number=inp.triggering_issue,
+                ),
+                result_type=dict,
+                start_to_close_timeout=timedelta(minutes=2),
+                retry_policy=_RETRY,
+            )
+        else:
+            # Backlog reasoning path: dispatch Plan Agent Execution Job.
+            spec = TaskSpec(
+                phase="plan",
+                project_id=inp.project_id,
+                issue_number=inp.triggering_issue,
+                extra={"agent_label": inp.agent_label},
+            )
+            result = await self._dispatch(
+                inp.project_id, spec, poll_interval_seconds=inp.poll_interval_seconds
+            )
+            plan = result.plan or {"issues": []}
+
         issues = plan.get("issues") or []
         issues = await self._drop_issues_in_review(inp, issues)
         return {**plan, "issues": issues}

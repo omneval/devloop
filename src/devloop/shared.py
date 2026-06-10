@@ -385,3 +385,17 @@ class UpdateGithubIssueInput:
     issue_number: int
     body: str = ""
     state: str = ""  # accepts "closed" or "" (no change)
+
+
+@dataclass
+class PlanIssueInput:
+    """Input for the plan_issue activity (issue #120).
+
+    Lightweight replacement for the Plan Agent Execution Job on webhook-triggered
+    runs: fetches the triggering issue from GitHub, confirms it is open and
+    carries the project's agent label, and returns a one-issue plan dict that
+    ``_execute_phase`` already consumes.
+    """
+
+    project_id: str
+    issue_number: int
