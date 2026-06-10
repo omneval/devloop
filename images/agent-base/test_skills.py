@@ -493,3 +493,87 @@ def test_install_configmap_skills_skips_subdirs_without_skill_md(monkeypatch, tm
 
     assert installed == ["my-skill"]
     assert (convergence / "my-skill" / "SKILL.md").exists()
+
+
+# ---------------------------------------------------------------------------
+# install_repo_skills — repo-native .devloop/skills/ delivery
+# ---------------------------------------------------------------------------
+
+
+class TestInstallRepoSkills:
+    def _repo(self, tmp_path, name="my-skill", files=None):
+        skill_dir = tmp_path / "repo" / ".devloop" / "skills" / name
+        skill_dir.mkdir(parents=True)
+        for rel, content in (
+            files or {"SKILL.md": "---\nname: my-skill\n---\nbody"}
+        ).items():
+            p = skill_dir / rel
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(content, encoding="utf-8")
+        return tmp_path / "repo"
+
+    def test_installs_multi_file_skill_tree(self, tmp_path, monkeypatch):
+        skills_mod = _import_skills()
+        convergence = tmp_path / "convergence"
+        convergence.mkdir()
+        monkeypatch.setenv("AGENT_SKILLS_DIR", str(convergence))
+        repo = self._repo(
+            tmp_path,
+            files={
+                "SKILL.md": "---\nname: my-skill\n---\nbody",
+                "references/deep.md": "reference doc",
+            },
+        )
+
+        installed = skills_mod.install_repo_skills(str(repo))
+
+        assert installed == ["my-skill"]
+        assert (convergence / "my-skill" / "SKILL.md").is_file()
+        assert (convergence / "my-skill" / "references" / "deep.md").is_file()
+
+    def test_repo_skill_replaces_existing_convergence_entry(
+        self, tmp_path, monkeypatch
+    ):
+        """Most-specific wins: a repo skill overwrites a baked/ConfigMap skill
+        of the same name, including stale extra files."""
+        skills_mod = _import_skills()
+        convergence = tmp_path / "convergence"
+        baked = convergence / "my-skill"
+        baked.mkdir(parents=True)
+        (baked / "SKILL.md").write_text("baked version")
+        (baked / "stale.md").write_text("should disappear")
+        monkeypatch.setenv("AGENT_SKILLS_DIR", str(convergence))
+        repo = self._repo(tmp_path)
+
+        installed = skills_mod.install_repo_skills(str(repo))
+
+        assert installed == ["my-skill"]
+        assert "body" in (convergence / "my-skill" / "SKILL.md").read_text()
+        assert not (convergence / "my-skill" / "stale.md").exists()
+
+    def test_no_devloop_skills_dir_is_noop(self, tmp_path, monkeypatch):
+        skills_mod = _import_skills()
+        convergence = tmp_path / "convergence"
+        convergence.mkdir()
+        monkeypatch.setenv("AGENT_SKILLS_DIR", str(convergence))
+        repo = tmp_path / "repo"
+        repo.mkdir()
+
+        assert skills_mod.install_repo_skills(str(repo)) == []
+        assert list(convergence.iterdir()) == []
+
+    def test_skips_entries_without_skill_md_and_non_dirs(self, tmp_path, monkeypatch):
+        skills_mod = _import_skills()
+        convergence = tmp_path / "convergence"
+        convergence.mkdir()
+        monkeypatch.setenv("AGENT_SKILLS_DIR", str(convergence))
+        repo = self._repo(tmp_path, name="good")
+        skills_root = repo / ".devloop" / "skills"
+        (skills_root / "no-manifest").mkdir()
+        (skills_root / "stray-file.md").write_text("not a skill dir")
+
+        installed = skills_mod.install_repo_skills(str(repo))
+
+        assert installed == ["good"]
+        assert not (convergence / "no-manifest").exists()
+        assert not (convergence / "stray-file.md").exists()

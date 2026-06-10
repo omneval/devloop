@@ -216,6 +216,8 @@ your-project/
   .devloop/
     config.yaml          # install: / tests: shell-command gates
     prompts/implement.md # optional per-phase prompt overrides
+    skills/<name>/       # optional project-specific Agent Skills
+      SKILL.md           # (full multi-file trees supported)
 ```
 
 Build a custom image only when your project needs a toolchain the universal

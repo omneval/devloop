@@ -17,7 +17,7 @@ Triggered by GitHub webhook events, devloop processes issues labeled `agent-read
 - **CI Fix Loop** — After the agent pushes changes, failing CI checks trigger automatic fix attempts (up to a configurable limit) before the PR is handed to a human reviewer.
 - **PR Comment Re-engagement** — Human review comments or `@devloop-bot` mentions on an open agent PR re-engage the agent on the existing branch.
 - **Summarization** — A scheduled workflow generates plain-English digests of closed issues and git diffs, posted as GitHub Issues and optionally forwarded to an outbound webhook.
-- **Repo-native config** — An enrolled repo can carry `.devloop/config.yaml` (install/test commands that gate its PRs) and `.devloop/prompts/<phase>.md` (per-phase prompt overrides) so agent customization versions with the code — no per-project image rebuild needed.
+- **Repo-native config** — An enrolled repo can carry `.devloop/config.yaml` (install/test commands that gate its PRs), `.devloop/prompts/<phase>.md` (per-phase prompt overrides), and `.devloop/skills/<name>/` (project-specific Agent Skills, multi-file trees included) so agent customization versions with the code — no per-project image rebuild needed.
 - **Agent Skills** — Reusable, model-agnostic capabilities in the AgentSkills format, with progressive disclosure and per-phase allowlists via `skillsByPhase`. The batteries-included skills are taken from https://github.com/mattpocock/skills . Go check out his stuff!
 
 ## Prerequisites

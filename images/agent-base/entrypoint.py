@@ -1095,6 +1095,22 @@ def run_agent(spec: TaskSpec, workdir: str, tracer) -> AgentOutcome:
     resolved: list = []
     skipped: list[dict] = []
     with tracer.start_as_current_span("skills.load") as _skills_span:
+        # Repo-native skills (.devloop/skills/ in the cloned repo) install
+        # into the convergence directory before resolution, replacing baked
+        # or ConfigMap-delivered skills of the same name — most-specific
+        # wins. Best-effort: a failure never blocks the phase.
+        _repo_installed: list[str] = []
+        try:
+            _repo_installed = skills.install_repo_skills(workdir)
+        except Exception as _exc:  # noqa: BLE001 — skill errors must not block
+            log.warning("repo skill install failed (continuing): %s", _exc)
+        if _repo_installed:
+            log.info(
+                "installed %d repo skill(s) from .devloop/skills: %s",
+                len(_repo_installed),
+                ", ".join(_repo_installed),
+            )
+
         try:
             resolved, skipped = skills.resolve_skills(spec.phase, _allowlist)
         except Exception as _exc:  # noqa: BLE001 — skill errors must not block the phase
@@ -1111,6 +1127,7 @@ def run_agent(spec: TaskSpec, workdir: str, tracer) -> AgentOutcome:
         if _skills_span is not None:
             _skills_span.set_attribute("skills.loaded", len(resolved))
             _skills_span.set_attribute("skills.skipped", len(skipped))
+            _skills_span.set_attribute("skills.repo_installed", len(_repo_installed))
             _skills_span.set_attribute("skills.selection_mode", _selection_mode)
             if skipped:
                 _skills_span.set_attribute(

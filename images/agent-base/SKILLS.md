@@ -132,21 +132,23 @@ same-named skill in the derived layer overwrites the base image's version.
 
 ---
 
-## ConfigMap-delivered skills (pending wiring)
+## Delivery channels and precedence
 
-The stage-and-install mechanic is designed and `install_configmap_skills(staging_path)` is
-implemented in `skills.py`, but two pieces are not yet wired on this branch:
+Skills reach the convergence directory through three channels; on a name
+collision the most-specific channel wins:
 
-1. The Helm chart `skills:` value and `agent-skills-configmap.yaml` template.
-2. The `main()` call to `install_configmap_skills` at pod startup.
-
-Until those land, only baked skills are loaded. When complete, operators will supply skills
-via a `skills:` Helm value (each key is a skill name; each value is the full `SKILL.md`
-content) and the entrypoint will copy each file into the convergence directory at pod start.
-
-**Limitation when wired**: ConfigMap skills are single-file only — a ConfigMap cannot express
-`scripts/`, `assets/`, or `references/` subdirectories, and has a 1 MiB total size limit.
-Multi-file skills must be baked into an image.
+1. **Baked** (image `COPY` at build time) — generic skills shared by every
+   project; the agent-base bundles `tdd`, `improve-codebase-architecture`,
+   and `to-issues`.
+2. **ConfigMap** (`install_configmap_skills`, called by `main()` at pod start
+   when `AGENT_SKILLS_CONFIGMAP` is set) — operator-supplied, deploy-time
+   skills via the Helm `skills:` value. **Single-file only**: a ConfigMap
+   cannot express `scripts/`, `assets/`, or `references/` subdirectories and
+   has a 1 MiB total size limit.
+3. **Repo-native** (`install_repo_skills`, called by `run_agent` after the
+   clone) — `.devloop/skills/<name>/` directories in the enrolled repo, full
+   AgentSkills trees included. The channel for project-specific and
+   multi-file skills; versions with the code it serves.
 
 See ADR-0008 and `docs/operator-skills.md` for the design rationale.
 
