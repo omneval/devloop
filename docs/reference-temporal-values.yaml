@@ -1,0 +1,55 @@
+# Reference Temporal Helm values for devloop
+# Source: https://github.com/temporalio/helm-charts
+# Tested with temporalio/helm-charts v0.0.2+
+#
+# Deploys Temporal with SQLite and Dynamic Config suitable for development and
+# small-scale production. For production workloads, replace SQLite with
+# Postgres or MySQL — see docs/temporal-prerequisites.md.
+
+persistence:
+  default:
+    driver: "sql"
+    options:
+      host: "temporal-sqlite"
+      port: 5432
+      user: "temporal"
+      password: "temporal"
+      database: "temporal"
+
+database:
+  setNull: true
+
+sqlite:
+  enabled: true
+  image:
+    repository: temporalio/sqlite
+    tag: latest
+
+dynamicConfig:
+  - value:
+      - "*..*"
+      - value:
+          limits.maxIDLength: 256
+      - constraints: {}
+  - value:
+      - "*.Matching.LongPollExpirationInterval"
+      - value:
+          days: 1
+      - constraints: {}
+
+web:
+  enabled: false
+
+ui:
+  enabled: false
+
+frontend:
+  service:
+    ports:
+      grpc: 7233
+  config:
+    publicClientHostPort: "temporal-frontend.agents.svc.cluster.local:7233"
+
+client:
+  host: "temporal-frontend.agents.svc.cluster.local"
+  port: 7233

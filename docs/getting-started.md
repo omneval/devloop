@@ -9,8 +9,10 @@ first project, and verifying everything works.
 devloop is **fully autonomous and webhook-driven**. There is no poller, no
 chat bot, and no human approval gates — once an issue is labeled
 `agent-ready`, GitHub delivers a webhook event and the Dev Loop runs end to
-end (Plan → Execute → CI Fix Loop → Review → Merge), posting status updates as
-comments on the GitHub Issue and opening a PR for human consumption. The
+end (Plan → Execute → CI Fix Loop → Review), posting status updates as
+comments on the GitHub Issue and opening a PR for human consumption. devloop
+never merges: a human reviews and merges the PR, and the PR's `Closes #N`
+line then closes the originating issue. The
 devloop-specific images are `devloop-agent-base` (the shared toolchain baked
 into every per-project agent image), `devloop-agent-universal` (the
 batteries-included default agent image — no per-project image build
@@ -518,14 +520,15 @@ endpoint also routes `pull_request_review` and `issue_comment` events from
 human reviewers on open agent PRs into a `PRCommentWorkflow`, so the agent can
 respond to feedback without any human needing to restart or approve anything.
 
-**Fully autonomous — no approval gates**: Once triggered, the Dev Loop runs
-Plan → Execute → CI Fix Loop → Review → Merge end to end without pausing for
-human sign-off at any stage. If the agent has a clarifying question mid-run, a
-fresh `Phase.ANSWER` agent is spawned to answer it autonomously (bounded by
-`temporalWorker.maxQuestionsPerPhase`) rather than blocking on a human. The PR
-that comes out the other end — plus the GitHub Issue comment trail — is the
-review surface for humans; there is no separate plan-approval or merge-approval
-step to configure.
+**Fully autonomous — no approval gates, but devloop never merges**: Once
+triggered, the Dev Loop runs Plan → Execute → CI Fix Loop → Review end to end
+without pausing for human sign-off at any stage. If the agent has a clarifying
+question mid-run, a fresh `Phase.ANSWER` agent is spawned to answer it
+autonomously (bounded by `temporalWorker.maxQuestionsPerPhase`) rather than
+blocking on a human. The PR that comes out the other end — plus the GitHub
+Issue comment trail — is the review surface for humans; there is no separate
+plan-approval step to configure, and merging is the one action reserved for a
+human (see Step 8).
 
 **Workflow notifications**: All Dev Loop status updates (queued, implemented,
 parked, review findings, CI Fix Loop progress) are posted as comments on the
@@ -587,6 +590,31 @@ it and starts the Dev Loop. Status comments appear on the GitHub Issue as the
 Dev Loop progresses, and a PR opens automatically once the agent has changes
 ready for review.
 
+## Step 8: Review, Merge, and Close Your First Issue
+
+The Dev Loop's terminal state is a PR waiting on you — here is what to expect
+from label to closed issue:
+
+1. **Draft PR opens** — during the Execute phase the agent pushes an
+   `agent/issue-<N>` branch and opens a *draft* PR whose body ends with
+   `Closes #<N>`, linking it to the originating issue.
+2. **CI Fix Loop** — if the PR's CI checks fail, the agent iterates on fixes
+   (up to `temporalWorker.ciFixMaxIterations`, default 5). If CI still fails
+   after that, the PR is handed over anyway with a "CI still failing" note.
+3. **Review phase** — a separate review agent examines the diff and posts its
+   findings as PR comments; `needs_fixes` verdicts trigger automatic fix
+   passes (up to `temporalWorker.reviewFixMaxIterations`).
+4. **Handover** — the PR is marked **ready for review**, and the project's
+   `pr_reviewer` (if set in `projects.yaml`) is requested as reviewer. On the
+   PAT fallback path with a single maintainer, the reviewer is assigned and
+   @-mentioned instead (GitHub forbids requesting a review from yourself).
+5. **You review and merge** — devloop never merges. Leave review comments or
+   `@devloop-bot` mentions on the open PR and the agent re-engages on the
+   same branch (a `PRCommentWorkflow`); when you're satisfied, merge the PR.
+6. **Issue closes** — merging fires the PR body's `Closes #<N>`, so GitHub
+   closes the original issue automatically. Your first issue is now closed,
+   end to end.
+
 ## Manually Triggering or Restarting a Dev Loop
 
 If a workflow finishes while open `agent-ready` issues remain in the repository, those issues will not be re-triggered automatically. Use one of these approaches:
@@ -600,12 +628,14 @@ If a workflow finishes while open `agent-ready` issues remain in the repository,
 ```bash
 temporal workflow start \
   --workflow-type DevLoopWorkflow \
-  --task-queue homelab-orchestration \
+  --task-queue devloop-orchestration \
   --workflow-id devloop-<project-id> \
   --input '{"project_id": "<project-id>", "agent_label": "agent-ready"}'
 ```
 
-Replace `<project-id>` with the value from your Project Registry. Because the old run is in a terminal state (Failed or Completed), starting with the same workflow ID creates a clean new execution.
+Replace `devloop-orchestration` with your `temporalWorker.taskQueue` value if
+you changed it from the default, and `<project-id>` with the value from your
+Project Registry. Because the old run is in a terminal state (Failed or Completed), starting with the same workflow ID creates a clean new execution.
 
 ## Project Registry Schema
 
@@ -637,8 +667,8 @@ Replace `<project-id>` with the value from your Project Registry. Because the ol
 | `temporalWorker.ciFixMaxIterations` | Maximum number of `Phase.CI_FIX` retry attempts the CI Fix Loop spends trying to turn a PR's failing CI checks green before handing it to the human reviewer with a "CI still failing" note. Default `5` |
 | `temporalWorker.executeMaxIterations` | Maximum number of Execute Agent Execution Job dispatch attempts the Execute phase retry loop spends when a dispatch produces zero commits, before parking the issue. Default `1` |
 | `temporalWorker.maxQuestionsPerPhase` | Maximum number of mid-run `AWAITING_HUMAN` questions a single phase run may spawn `Phase.ANSWER` agent jobs for before the workflow proceeds with the agent's best guess. Default `3` |
-| `agent.gitName`                  | Git author name used by Agent Execution Jobs when committing to enrolled repos (forwarded as `GIT_AUTHOR_NAME`). Default `homelab-agent` — set to your `devloop-bot` account name for clean attribution |
-| `agent.gitEmail`                 | Git author email used by Agent Execution Jobs when committing (forwarded as `GIT_AUTHOR_EMAIL`). Default `agent@blosshomelab.com` — set to a `devloop-bot`-associated address |
+| `agent.gitName`                  | Git author name used by Agent Execution Jobs when committing to enrolled repos (forwarded as `GIT_AUTHOR_NAME`). Default `devloop-bot` — set to your bot account name for clean attribution |
+| `agent.gitEmail`                 | Git author email used by Agent Execution Jobs when committing (forwarded as `GIT_AUTHOR_EMAIL`). Default `devloop-bot@omneval.com` — set to an address associated with your bot account (e.g. `<bot>@users.noreply.github.com`) |
 
 ### Summarization (`summarization.*`)
 

@@ -102,17 +102,20 @@ helm install devloop charts/devloop/ \
   --namespace agents --create-namespace
 ```
 
-4. **Enroll a project** — create a `projects.yaml` and set it as a ConfigMap:
+4. **Enroll a project** — create a `projects.yaml` and set it as a ConfigMap
+   (the top-level `projects:` key is required — the registry loader rejects a
+   bare list):
 
 ```yaml
-- id: my-project
-  github_url: https://github.com/your-org/your-project
-  default_branch: main
-  # agent_image is optional — omitted, the project runs on the published
-  # devloop-agent-universal image (Go, Node, Helm toolchains included).
-  agent_label: agent-ready
-  omneval_ingest_secret: omneval-ingest-secret
-  github_token_secret: devloop-bot-token
+projects:
+  - id: my-project
+    github_url: https://github.com/your-org/your-project
+    default_branch: main
+    # agent_image is optional — omitted, the project runs on the published
+    # devloop-agent-universal image (Go, Node, Helm toolchains included).
+    agent_label: agent-ready
+    omneval_ingest_secret: omneval-ingest-secret
+    github_token_secret: devloop-bot-token
 ```
 
 5. **Verify** — create an issue with the `agent-ready` label in your GitHub repository. The webhook fires immediately; check worker logs:
@@ -218,36 +221,32 @@ consumer constraint.
 ### Per-Phase Skill Configuration (`skillsByPhase`)
 
 The `skillsByPhase` Helm value lets you control which skills are available to the agent
-during each phase of the Dev Loop. This is set in the `devloop` ConfigMap and forwarded
-to Agent Execution Jobs as the `AGENT_SKILLS_BY_PHASE` environment variable.
+during each phase of the Dev Loop. The chart forwards it to the temporal-worker as the
+`AGENT_SKILLS_BY_PHASE` environment variable; the worker then extracts the active
+phase's entry into each Agent Execution Job's `AGENT_SKILLS_ENABLED`.
 
-Key phases include:
+Keys are the Dev Loop phase names:
 
 | Phase | Purpose |
 |-------|---------|
 | `plan` | Analysis and planning phase |
 | `execute` | Primary implementation phase |
-| `remediation` | Runs when the Execute phase produces no commits; the agent revisits the issue with a fresh approach |
-| `fix_pass` | Runs after CI checks fail on the PR; the agent iterates to turn red CI green |
+| `ci_fix` | Runs after CI checks fail on the PR; the agent iterates to turn red CI green |
 | `review` | PR review phase |
+| `pr_comment` | Re-engagement on an open agent PR (human review comments / `@devloop-bot` mentions, and review-verdict fix passes) |
 
 **Example Helm values:**
 
 ```yaml
 skillsByPhase:
   execute: [tdd, code-review]
-  remediation: [tdd]
-  fix_pass: [tdd]
+  ci_fix: [tdd]
   review: [code-review]
 ```
 
 - **Key absent** → all installed skills are available for that phase.
 - **Key = `[]`** → no skills available for that phase.
 - **Key = list** → exactly those skills are available.
-
-When `remediation` or `fix_pass` are not explicitly configured, they inherit the full set
-of installed skills. Set them explicitly if you want to restrict which tools the agent
-has during recovery passes.
 
 ---
 

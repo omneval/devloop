@@ -17,7 +17,7 @@ helm install temporal temporal/temporal \
 
 The following `values.yaml` is known to work with devloop. It deploys Temporal with SQLite and Dynamic Config suitable for development and small-scale production. For production workloads, replace SQLite with Postgres or MySQL.
 
-Save this as `reference-temporal-values.yaml`:
+This file ships in the repo as [`docs/reference-temporal-values.yaml`](reference-temporal-values.yaml) (the path the Quick Install above assumes, run from a clone of this repository). If you're working outside a clone, save the following as `reference-temporal-values.yaml` and adjust the `-f` path accordingly:
 
 ```yaml
 # Reference Temporal Helm values for devloop
@@ -82,10 +82,11 @@ kubectl get pods -n agents -l app=temporal
 kubectl port-forward svc/temporal-frontend -n agents 7233:7233
 ```
 
-You can also use the Temporal CLI (`tctl`) to verify connectivity:
+You can also use the [Temporal CLI](https://docs.temporal.io/cli) to verify
+connectivity (with the port-forward from above still running):
 
 ```bash
-tctl --address 127.0.0.1:7233 operator cluster health
+temporal operator cluster health --address 127.0.0.1:7233
 ```
 
 ## Connecting devloop to Temporal
