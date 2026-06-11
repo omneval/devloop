@@ -14,7 +14,7 @@ real draft PR — all from localhost.
 | Tool | Install |
 |------|---------|
 | **Docker + Docker Compose** | https://docs.docker.com/get-docker/ |
-| **GitHub CLI** | `brew install gh` / `sudo apt install gh` — then `gh auth login` |
+| **GitHub CLI** | `brew install gh` / `sudo apt install gh` — then `gh auth login` and `gh extension install cli/gh-webhook` (the extension provides `gh webhook forward`, used in Step 2) |
 | **Python + uv** | `curl -LsSf https://astral.sh/uv/install.sh | sh` |
 | **devloop source** | `git clone https://github.com/omneval/devloop.git && cd devloop` |
 
@@ -48,8 +48,9 @@ docker compose ps
 
 ## Step 2 — Forward GitHub Webhooks Locally
 
-`gh webhook forward` bridges real GitHub webhook deliveries to localhost
-without any tunnel or public hostname:
+`gh webhook forward` (from the `cli/gh-webhook` extension — see Prerequisites)
+bridges real GitHub webhook deliveries to localhost without any tunnel or
+public hostname, creating the repository webhook for you:
 
 ```bash
 gh webhook forward \
@@ -132,10 +133,18 @@ The Dev Loop runs end to end:
 1. **Plan** — the worker runs a lightweight `plan_issue` activity that analyzes
    the issue and produces a task specification.
 2. **Execute** — `dispatch_agent_job` runs the agent image via `docker run`,
-   mounting a local output file for results (the `OUTPUT_FILE` protocol).
-3. **CI Fix Loop** — if CI checks fail, the agent retries up to
-   `CI_FIX_MAX_ITERATIONS` times.
-4. **Review & Merge** — a draft PR opens on the enrolled repo.
+   mounting a local output file for results (the `OUTPUT_FILE` protocol). The
+   agent pushes an `agent/issue-<N>` branch and opens a **draft PR** whose
+   body ends with `Closes #<N>`.
+3. **CI Fix Loop** — if CI checks fail on the PR, the agent retries up to
+   `CI_FIX_MAX_ITERATIONS` times (default 5).
+4. **Review** — a review agent posts its findings on the PR, then the PR is
+   marked **ready for review** and handed to you.
+5. **You merge — the issue closes** — devloop never merges. Review the PR
+   (comments and `@devloop-bot` mentions re-engage the agent on the same
+   branch) and merge it when satisfied; the `Closes #<N>` in the PR body then
+   closes your original issue automatically. That's the full loop: label →
+   PR → merge → first issue closed.
 
 You can watch Temporal's UI at http://localhost:8233 to see the workflow
 progress in real time.
