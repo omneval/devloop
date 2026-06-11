@@ -150,9 +150,16 @@ class ClaudeAgentSdkRunner:
                 len(skills),
             )
         llm_role = "review" if spec.phase == "review" else ""
+        # AGENT_MODEL is configured in litellm provider-prefixed form (e.g.
+        # "anthropic/claude-sonnet-4-6") for the openhands runner's litellm
+        # routing. The Claude Agent SDK/CLI expects a bare model name or
+        # alias (e.g. "claude-sonnet-4-6", "sonnet"), so strip any
+        # "<provider>/" prefix before handing it to ClaudeAgentOptions.
+        raw_model = llm_setting("AGENT_MODEL", llm_role, "") or ""
+        model = raw_model.partition("/")[2] or raw_model
         return _ClaudeSession(
             workdir=workdir,
-            model=llm_setting("AGENT_MODEL", llm_role, "") or "",
+            model=model,
             api_key=llm_setting("AGENT_LLM_API_KEY", llm_role, "") or "",
         )
 

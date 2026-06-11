@@ -129,6 +129,23 @@ def test_claude_session_runs_a_turn_in_the_workspace(fake_claude_sdk):
     assert "resume" not in kwargs  # first turn — nothing to resume
 
 
+def test_claude_runner_strips_litellm_provider_prefix_from_model(fake_claude_sdk):
+    """AGENT_MODEL is configured litellm-style (e.g. "anthropic/claude-sonnet-4-6")
+    for the openhands runner's routing; the Claude Agent SDK/CLI expects a bare
+    model name or alias, so the "<provider>/" prefix must be stripped."""
+    runner = runners.ClaudeAgentSdkRunner()
+    session = runner.start(
+        _spec(),
+        "/w",
+        skills=None,
+        build_agent=MagicMock(),
+        llm_setting=_llm_setting_stub({"AGENT_MODEL": "anthropic/claude-sonnet-4-6"}),
+    )
+    session.send("go")
+
+    assert fake_claude_sdk.options_cls.call_args.kwargs["model"] == "claude-sonnet-4-6"
+
+
 def test_claude_session_resumes_with_captured_session_id(fake_claude_sdk):
     runner = runners.ClaudeAgentSdkRunner()
     session = runner.start(
