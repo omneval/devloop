@@ -177,7 +177,7 @@ code.
 ## Troubleshooting
 
 **Worker fails to connect to Temporal**: Make sure the compose services are
-running (`docker compose ps`) and `TEMPORAL_ADDRESS` is set correctly.
+running (`docker compose ps`) and `TEMPORAL_HOST` is set correctly.
 
 **Webhook events not arriving**: Check that `gh webhook forward` is connected
 (`gh webhook forward` shows delivery logs). Verify the repo webhook
@@ -206,3 +206,10 @@ docker compose down -v    # stop Temporal + Postgres + Web UI, drop the volume
 
 `docker compose down -v` also removes the throwaway Postgres volume. Agent
 containers are removed automatically after each dispatch reads their result.
+
+## Next Steps
+
+Once you've seen the Dev Loop work end to end locally, see the
+**[Getting Started Guide](getting-started.md)** for deploying devloop to a
+Kubernetes cluster with the Helm chart, a public webhook endpoint, and
+GitHub App authentication.

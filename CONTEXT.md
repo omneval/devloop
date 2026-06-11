@@ -1,6 +1,6 @@
 # devloop
 
-An open-source framework that packages the Dev Loop engine so any team can run autonomous, agent-driven code improvement workflows on their own Kubernetes cluster. Ships two container images, the `omneval-devloop` Python SDK, and a Helm chart. Temporal is a documented prerequisite that consumers bring independently.
+An open-source framework that packages the Dev Loop engine so any team can run autonomous, agent-driven code improvement workflows on their own Kubernetes cluster. Ships three container images, the `omneval-devloop` Python SDK, and a Helm chart. Temporal is a documented prerequisite that consumers bring independently.
 
 ## Language
 

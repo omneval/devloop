@@ -5,7 +5,7 @@
 [![PyPI](https://img.shields.io/pypi/v/omneval-devloop.svg)](https://pypi.org/project/omneval-devloop/)
 [![Python >=3.12](https://img.shields.io/badge/python->=3.12-blue.svg)](https://www.python.org/downloads/)
 
-devloop is an open-source framework that runs autonomous, agent-driven code improvement workflows on your own Kubernetes cluster. It packages the Dev Loop engine — Plan → Execute → CI Fix Loop → Review — as a reusable Python SDK (`omneval-devloop`), two container images, and a Helm chart so any team can deploy it without forking.
+devloop is an open-source framework that runs autonomous, agent-driven code improvement workflows on your own Kubernetes cluster. It packages the Dev Loop engine — Plan → Execute → CI Fix Loop → Review — as a reusable Python SDK (`omneval-devloop`), three container images, and a Helm chart so any team can deploy it without forking.
 
 Triggered by GitHub webhook events, devloop processes issues labeled `agent-ready`: an OpenHands agent reads the issue, writes code, opens a PR, and requests a reviewer. There are no human-approval gates and devloop never merges — it posts a summary comment for a human to review and merge.
 
@@ -22,6 +22,11 @@ Triggered by GitHub webhook events, devloop processes issues labeled `agent-read
 - **Eval flywheel** — Every phase emits KPI span attributes (commits, per-suite test results, criteria-audit passes, review verdicts, loop iterations, label→PR wall-clock) into omneval, and `devloop-bench` replays a golden set of closed issues scored by an LLM judge so prompt/model/harness changes become measured A/B decisions. See the "KPI span attributes" section in [CONTEXT.md](CONTEXT.md).
 
 ## Prerequisites
+
+The full list below is for a production Kubernetes deployment. To just try
+devloop out, the **[Local Quickstart](docs/local-quickstart.md)** only needs
+Docker, the GitHub CLI (`gh`), Python, and `uv` — no Kubernetes, Helm, or
+public hostname.
 
 - **Python >= 3.12** — the SDK and helper scripts require Python 3.12 or later.
 - **[uv](https://github.com/astral-sh/uv)** — Python package manager used exclusively for dependency management.
@@ -57,8 +62,35 @@ The project consists of:
 
 ## Quick Start
 
+There are two ways to run devloop, depending on what you're trying to do:
+
+- **Just want to try it out?** Run the whole Dev Loop on your laptop with
+  Docker Compose — no Kubernetes cluster, no public hostname, no Helm. See
+  **[Local Quickstart](docs/local-quickstart.md)**.
+- **Ready to run it for real?** Deploy the Helm chart to your Kubernetes
+  cluster, with Temporal and a public webhook endpoint. Follow the steps
+  below or the full **[Getting Started Guide](docs/getting-started.md)**.
+
+### Local Quickstart (Docker Compose)
+
+```bash
+git clone https://github.com/omneval/devloop.git
+cd devloop
+docker compose up -d                 # Temporal server + Web UI on :8233
+gh webhook forward --repo=OWNER/REPO \
+  --events=issues,issue_comment,pull_request_review \
+  --url=http://localhost:8088/webhook/github
+```
+
+Then configure and run the worker with `JOB_RUNNER=docker` so agent jobs run
+as `docker run` containers instead of Kubernetes Jobs. Full walkthrough,
+including the project registry and environment variables:
+**[docs/local-quickstart.md](docs/local-quickstart.md)**.
+
+### Kubernetes
+
 1. **Expose a webhook endpoint** — follow [Step 1](docs/getting-started.md#step-1-expose-a-webhook-ingress-endpoint) (Cloudflare Tunnel, load balancer, or ngrok).
-2. **Install Temporal** — follow [Temporal Prerequisites](docs/temporal-prerequisites.md).
+2. **Install Temporal** — follow [Temporal Prerequisites](docs/temporal-prerequisites.md), or skip this step and add `--set temporal.enabled=true` below for a bundled evaluation install.
 3. **Deploy the Helm chart**:
 
 ```bash

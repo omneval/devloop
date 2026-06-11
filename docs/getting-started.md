@@ -10,10 +10,17 @@ devloop is **fully autonomous and webhook-driven**. There is no poller, no
 chat bot, and no human approval gates — once an issue is labeled
 `agent-ready`, GitHub delivers a webhook event and the Dev Loop runs end to
 end (Plan → Execute → CI Fix Loop → Review → Merge), posting status updates as
-comments on the GitHub Issue and opening a PR for human consumption. The only
-two devloop-specific images are `devloop-agent-base` (the shared toolchain
-baked into every per-project agent image) and `devloop-temporal-worker` (the
-single long-running deployment).
+comments on the GitHub Issue and opening a PR for human consumption. The
+devloop-specific images are `devloop-agent-base` (the shared toolchain baked
+into every per-project agent image), `devloop-agent-universal` (the
+batteries-included default agent image — no per-project image build
+required), and `devloop-temporal-worker` (the single long-running
+deployment).
+
+> **Just want to try it out first?** This guide covers a full Kubernetes
+> deployment with a public webhook endpoint. If you'd rather run the whole
+> Dev Loop on your laptop with Docker Compose — no cluster, no public
+> hostname — see the **[Local Quickstart](local-quickstart.md)** instead.
 
 **Prerequisites**: A Kubernetes cluster with Helm 3 and `kubectl` configured,
 and a public hostname or tunnel that can reach your cluster (see Step 1 — this
@@ -528,12 +535,23 @@ no separate messaging platform is required.
 
 **Weekly summaries**: Once a week (Monday 08:00 UTC by default), devloop opens a GitHub Issue on each enrolled repo titled `[devloop] <project-id> — <date> digest`, labeled `devloop-summary` (the label is created automatically if it does not exist), summarizing the week's merged changes and closed issues in plain English. No extra configuration is required — see `summarization.*` below to customize the schedule, disable it, or forward the digest to an outbound webhook.
 
-Deploy:
+Deploy from the published OCI chart (replace `<VERSION>` with the
+[latest release tag](https://github.com/omneval/devloop/releases), e.g.
+`0.1.0`):
 
 ```bash
-helm repo add devloop https://charts.omneval.dev/devloop
-helm repo update
-helm install devloop devloop/devloop \
+helm install devloop oci://ghcr.io/omneval/charts/devloop \
+  --version <VERSION> \
+  --namespace agents \
+  --create-namespace \
+  -f devloop-values.yaml
+```
+
+Alternatively, deploy directly from a local clone of this repository (useful
+for tracking `main` or testing chart changes):
+
+```bash
+helm install devloop charts/devloop/ \
   --namespace agents \
   --create-namespace \
   -f devloop-values.yaml
