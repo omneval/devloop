@@ -84,6 +84,8 @@ class Mocks:
     answer_job_status: str = JobStatus.COMPLETE.value
     # configmap cleanup recorder
     cleaned_up: list = field(default_factory=list)
+    # workflow KPI emissions recorded by the emit_workflow_kpis mock (#122)
+    kpi_inputs: list = field(default_factory=list)
 
     @property
     def notifications(self):
@@ -246,6 +248,10 @@ def _make_activities():
     async def cleanup_configmap(job_name: str) -> None:
         M.cleaned_up.append(job_name)
 
+    @activity.defn(name="emit_workflow_kpis")
+    async def emit_workflow_kpis(inp) -> None:
+        M.kpi_inputs.append(inp)
+
     @activity.defn(name="plan_issue")
     async def plan_issue(inp) -> dict:
         """Mock plan_issue activity (issue #120).
@@ -274,6 +280,7 @@ def _make_activities():
             request_github_reviewer,
             poll_ci_checks,
             cleanup_configmap,
+            emit_workflow_kpis,
         ],
     }
 
@@ -346,6 +353,63 @@ async def test_configmap_cleaned_up_after_each_completed_dispatch(reset_mocks):
     await _env_and_run(inp)
     # execute + review = 2 dispatches (plan is now a lightweight activity)
     assert len(reset_mocks.cleaned_up) >= 2
+
+
+# --------------------------------------------------------------------------- #
+# Workflow KPI emission (issue #122)
+# --------------------------------------------------------------------------- #
+@pytest.mark.asyncio
+async def test_workflow_emits_kpis_per_completed_issue(reset_mocks):
+    """One emit_workflow_kpis per issue carried to reviewer notification,
+    carrying the issue number, verdict, and loop counters."""
+    reset_mocks.plan_issue_result = _one_issue(1)
+    reset_mocks.review_payload = {
+        "summary": "ok",
+        "verdict": "lgtm",
+        "inline_comments": [],
+    }
+    inp = DevLoopInput(project_id="omneval", triggering_issue=1, max_iterations=1)
+    await _env_and_run(inp)
+
+    assert len(reset_mocks.kpi_inputs) == 1
+    kpi = reset_mocks.kpi_inputs[0]
+    assert kpi["project_id"] == "omneval"
+    assert kpi["issue_number"] == 1
+    assert kpi["review_verdict"] == "lgtm"
+    assert kpi["execute_attempts"] == 1
+    assert kpi["pr_opened"] is True
+    assert kpi["commits"] == 1
+    assert kpi["label_to_pr_seconds"] >= 0
+
+
+@pytest.mark.asyncio
+async def test_workflow_kpis_count_ci_fix_iterations(reset_mocks):
+    """CI fix attempts spent inside _ci_fix_loop surface in the KPI payload."""
+    reset_mocks.plan_issue_result = _one_issue(1)
+    reset_mocks.ci_poll_results = [
+        CIChecksResult(
+            all_passed=False,
+            failures=[CICheckFailure(name="ci", conclusion="failure")],
+        ),
+        CIChecksResult(all_passed=True, failures=[]),
+    ]
+    inp = DevLoopInput(project_id="omneval", triggering_issue=1, max_iterations=1)
+    await _env_and_run(inp)
+
+    assert len(reset_mocks.kpi_inputs) == 1
+    assert reset_mocks.kpi_inputs[0]["ci_fix_iterations"] == 1
+
+
+@pytest.mark.asyncio
+async def test_workflow_skips_kpis_for_parked_issue(reset_mocks):
+    """An issue parked with zero commits emits no KPI span (it never reached
+    reviewer notification) and its counters don't leak into the next issue."""
+    reset_mocks.plan_issue_result = _one_issue(1)
+    reset_mocks.execute_commits = 0
+    inp = DevLoopInput(project_id="omneval", triggering_issue=1, max_iterations=1)
+    await _env_and_run(inp)
+
+    assert reset_mocks.kpi_inputs == []
 
 
 # --------------------------------------------------------------------------- #

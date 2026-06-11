@@ -1058,3 +1058,35 @@ def test_installed_skills_flow_through_to_agent_context(monkeypatch, tmp_path):
         Agent_cls.assert_called_once()
         agent_ctx_arg = Agent_cls.call_args.kwargs.get("agent_context")
         assert agent_ctx_arg is AgentContext_cls.return_value
+
+
+# --------------------------------------------------------------------------- #
+# Repo-native skills (.devloop/skills/) install before resolution
+# --------------------------------------------------------------------------- #
+
+
+def test_repo_skills_installed_into_convergence_before_resolution(
+    monkeypatch, tmp_path
+):
+    """run_agent installs the cloned repo's .devloop/skills/ into the
+    convergence directory before skill resolution, so a project-specific
+    multi-file skill is available to the agent (most-specific wins)."""
+    monkeypatch.delenv("AGENT_STUB", raising=False)
+    convergence = tmp_path / "convergence"
+    convergence.mkdir()
+    monkeypatch.setenv("AGENT_SKILLS_DIR", str(convergence))
+
+    workdir = tmp_path / "repo"
+    skill = workdir / ".devloop" / "skills" / "repo-skill"
+    skill.mkdir(parents=True)
+    (skill / "SKILL.md").write_text(
+        "---\nname: repo-skill\ndescription: project-specific skill\n---\nbody\n"
+    )
+    (skill / "references").mkdir()
+    (skill / "references" / "extra.md").write_text("reference\n")
+
+    with _fake_sdk(final_response="done"):
+        entrypoint.run_agent(_spec(), str(workdir), _noop_tracer())
+
+    assert (convergence / "repo-skill" / "SKILL.md").is_file()
+    assert (convergence / "repo-skill" / "references" / "extra.md").is_file()

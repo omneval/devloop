@@ -170,6 +170,61 @@ def resolve_skills(
     return resolved, skipped
 
 
+def install_repo_skills(workdir: str) -> list[str]:
+    """Install repo-native skills from ``<workdir>/.devloop/skills/`` into the
+    convergence directory.
+
+    A repo skill is a directory containing a ``SKILL.md`` (the AgentSkills
+    layout), optionally with reference files and subdirectories — the full
+    tree is copied. This is the delivery channel for *multi-file* and
+    *project-specific* skills, which ConfigMap delivery cannot express (a
+    ConfigMap has no subdirectories) and which don't belong in a shared
+    image. Like ``.devloop/prompts/``, repo skills version with the code
+    they serve.
+
+    Precedence — most-specific wins: repo skills are installed after both
+    baked and ConfigMap-delivered skills (``run_agent`` calls this after the
+    clone, while ConfigMap skills install at pod start) and replace an
+    existing convergence entry of the same name.
+
+    Best-effort like the ConfigMap path: a malformed entry (not a directory,
+    or no SKILL.md) is logged and skipped; nothing here fails the phase.
+
+    Returns the names of skills that were successfully installed.
+    """
+    source = Path(workdir) / ".devloop" / "skills"
+    if not source.is_dir():
+        return []
+
+    skills_dir_env = os.environ.get("AGENT_SKILLS_DIR")
+    convergence = Path(skills_dir_env if skills_dir_env else _DEFAULT_SKILLS_DIR)
+
+    installed: list[str] = []
+    for entry in sorted(source.iterdir()):
+        if not entry.is_dir():
+            log.warning(
+                "repo skill entry %s is not a directory — skipping "
+                "(a skill is a directory containing SKILL.md)",
+                entry,
+            )
+            continue
+        if not (entry / "SKILL.md").is_file():
+            log.warning("repo skill %r has no SKILL.md — skipping", entry.name)
+            continue
+        dest = convergence / entry.name
+        try:
+            if dest.exists():
+                shutil.rmtree(dest)
+            shutil.copytree(entry, dest)
+            installed.append(entry.name)
+            log.info("installed repo skill %r → %s", entry.name, dest)
+        except OSError as exc:
+            log.warning(
+                "failed to install repo skill %r: %s — skipping", entry.name, exc
+            )
+    return installed
+
+
 def install_configmap_skills(staging_path: str) -> list[str]:
     """Install skills from a ConfigMap staging directory into the convergence dir.
 

@@ -17,8 +17,9 @@ Triggered by GitHub webhook events, devloop processes issues labeled `agent-read
 - **CI Fix Loop** — After the agent pushes changes, failing CI checks trigger automatic fix attempts (up to a configurable limit) before the PR is handed to a human reviewer.
 - **PR Comment Re-engagement** — Human review comments or `@devloop-bot` mentions on an open agent PR re-engage the agent on the existing branch.
 - **Summarization** — A scheduled workflow generates plain-English digests of closed issues and git diffs, posted as GitHub Issues and optionally forwarded to an outbound webhook.
-- **Repo-native config** — An enrolled repo can carry `.devloop/config.yaml` (install/test commands that gate its PRs) and `.devloop/prompts/<phase>.md` (per-phase prompt overrides) so agent customization versions with the code — no per-project image rebuild needed.
+- **Repo-native config** — An enrolled repo can carry `.devloop/config.yaml` (install/test commands that gate its PRs), `.devloop/prompts/<phase>.md` (per-phase prompt overrides), and `.devloop/skills/<name>/` (project-specific Agent Skills, multi-file trees included) so agent customization versions with the code — no per-project image rebuild needed.
 - **Agent Skills** — Reusable, model-agnostic capabilities in the AgentSkills format, with progressive disclosure and per-phase allowlists via `skillsByPhase`. The batteries-included skills are taken from https://github.com/mattpocock/skills . Go check out his stuff!
+- **Eval flywheel** — Every phase emits KPI span attributes (commits, per-suite test results, criteria-audit passes, review verdicts, loop iterations, label→PR wall-clock) into omneval, and `devloop-bench` replays a golden set of closed issues scored by an LLM judge so prompt/model/harness changes become measured A/B decisions. See the "KPI span attributes" section in [CONTEXT.md](CONTEXT.md).
 
 ## Prerequisites
 
@@ -27,7 +28,7 @@ Triggered by GitHub webhook events, devloop processes issues labeled `agent-read
 - **Docker** — only needed if you build a custom agent image; the published `devloop-agent-universal` image (Go, Node.js, Helm toolchains) covers most projects out of the box.
 - **Kubernetes cluster** — devloop deploys as a Helm chart; `kubectl` must be configured.
 - **Helm 3** — for deploying the `charts/devloop/` chart.
-- **Temporal** — durable orchestration layer; consumers deploy Temporal independently (see [Temporal Prerequisites](docs/temporal-prerequisites.md)).
+- **Temporal** — durable orchestration layer. Either deploy it independently (see [Temporal Prerequisites](docs/temporal-prerequisites.md)) or let the chart bundle it for evaluation with `--set temporal.enabled=true`.
 - **Public webhook endpoint** — a hostname or tunnel (Cloudflare Tunnel, ngrok, load balancer) that GitHub can reach at `/webhook/github`.
 
 ## Installation & Setup
@@ -96,7 +97,8 @@ devloop is configured primarily through Helm values ([`charts/devloop/values.yam
 
 | Value | Description |
 |-------|-------------|
-| `temporalHost` | **Required** — Temporal frontend gRPC address (e.g. `temporal-frontend.agents.svc:7233`) |
+| `temporalHost` | Temporal frontend gRPC address (e.g. `temporal-frontend.agents.svc:7233`). **Required** unless `temporal.enabled=true` |
+| `temporal.enabled` | Deploy the official Temporal chart as an evaluation subchart (default `false`) — `temporalHost` then defaults to its frontend Service |
 | `temporalWorker.agentJob.llm.model` | LLM model identifier (e.g. `openai/gpt-4o`) |
 | `temporalWorker.agentJob.llm.baseUrl` | LLM API base URL (must support `response_format`) |
 | `temporalWorker.agentJob.llm.apiKey` | LLM API key (use `apiKeySecret` for production) |
@@ -104,17 +106,29 @@ devloop is configured primarily through Helm values ([`charts/devloop/values.yam
 | `temporalWorker.projectsConfigMap` | ConfigMap name/key for the Project Registry file |
 | `temporalWorker.maxConcurrentJobs` | Maximum concurrent Agent Execution Jobs (default: `1`) |
 | `temporalWorker.ciFixMaxIterations` | Max CI fix loop retries (default: `5`) |
+| `temporalWorker.agentJob.networkPolicy.*` | Egress lockdown for Agent Execution Job pods (default on; opt-out via `enabled: false`) — see [Security Model](docs/security-model.md) |
 | `githubApp.*` | GitHub App authentication (recommended over PAT) |
 | `summarization.*` | Weekly digest schedule and delivery options |
 
 See [docs/getting-started.md](docs/getting-started.md) for the full configuration reference.
 
+## Security
+
+Agent Execution Jobs run code from the enrolled repo with a push-capable
+GitHub token — that's the product, and it's also the threat model. The chart
+ships a default-on egress NetworkPolicy for agent job pods (DNS, HTTPS, the
+Kubernetes API, and your configured LLM/OTLP endpoints; everything else
+denied), and **[docs/security-model.md](docs/security-model.md)** documents
+what each credential can reach, why branch protection on the default branch
+is required, the `agents.homelab/*` pod labels for your own policy engine,
+and the GitHub App permission set as the scoping mechanism.
+
 ### Environment Variables
 
 | Variable | Description |
 |----------|-------------|
-| `GITHUB_TOKEN` | devloop-bot PAT (fallback when GitHub App auth is not configured) |
-| `GITHUB_APP_ID` / `GITHUB_APP_PRIVATE_KEY` | GitHub App authentication (short-lived tokens) |
+| `GITHUB_APP_ID` / `GITHUB_APP_PRIVATE_KEY` / `GITHUB_APP_INSTALLATION_ID` | **Recommended** — GitHub App authentication for the worker (short-lived installation tokens, working reviewer requests). See [docs/github-app.md](docs/github-app.md) |
+| `GITHUB_TOKEN` | Per-project token (from `github_token_secret`). Worker-side it's the **fallback** when GitHub App auth is not configured — note a PAT can't deliver formal reviewer requests in single-maintainer setups (GitHub forbids self-review requests). Always mounted into Agent Execution Jobs for `git clone`/`git push` |
 | `GITHUB_WEBHOOK_SECRET` | HMAC secret for verifying webhook signatures |
 | `AGENT_GITHUB_LOGIN` | GitHub login of the bot account (default: `devloop-bot`) |
 | `AGENT_MODEL` | LLM model identifier (forwarded to Agent Execution Jobs) |

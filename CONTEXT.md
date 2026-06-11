@@ -33,7 +33,7 @@ The markdown file (e.g. `implement.md`, `review.md`) that becomes the agent's pr
 _Avoid_: prompt template, phase prompt, system prompt
 
 **Repo-native agent config**:
-The `.devloop/` directory an enrolled repo may carry to configure its own agent runs, loaded by the Agent Execution Job after clone — so per-project customization versions with the code instead of being baked into a Docker image (where it drifts). `.devloop/config.yaml` declares `install:` and `tests:` shell-command lists (strings or `{name, command}` entries, run from the repo root) that override the entrypoint's built-in ecosystem defaults; `.devloop/prompts/<phase>.md` overrides individual [Phase prompt templates](#phase-prompt-template), winning over image-baked overrides. When `tests:` is absent, the entrypoint discovers per-directory suites (go.mod / pyproject.toml / package.json) up to 2 levels deep, so multi-ecosystem monorepos are verified beyond the repo root. A malformed config degrades to the built-in discovery; it never fails the phase.
+The `.devloop/` directory an enrolled repo may carry to configure its own agent runs, loaded by the Agent Execution Job after clone — so per-project customization versions with the code instead of being baked into a Docker image (where it drifts). `.devloop/config.yaml` declares `install:` and `tests:` shell-command lists (strings or `{name, command}` entries, run from the repo root) that override the entrypoint's built-in ecosystem defaults; `.devloop/prompts/<phase>.md` overrides individual [Phase prompt templates](#phase-prompt-template), winning over image-baked overrides; `.devloop/skills/<name>/` directories (full AgentSkills trees, `SKILL.md` plus reference files) are installed into the [Skills convergence directory](#skills-convergence-directory) before resolution, replacing baked or ConfigMap-delivered skills of the same name — the channel for project-specific and multi-file skills that a ConfigMap cannot express. When `tests:` is absent, the entrypoint discovers per-directory suites (go.mod / pyproject.toml / package.json) up to 2 levels deep, so multi-ecosystem monorepos are verified beyond the repo root. A malformed config degrades to the built-in discovery; it never fails the phase.
 _Avoid_: devloop dotfile, repo config file, agent manifest
 
 **Agent Job output ConfigMap**:
@@ -65,7 +65,7 @@ A reusable, model-agnostic capability in the AgentSkills `SKILL.md` format (YAML
 _Avoid_: plugin, tool, microagent, prompt template
 
 **Skills convergence directory**:
-The single on-image directory where every Agent Skill resolves regardless of how it was delivered (`/usr/local/share/agent-skills/installed`, overridable via `AGENT_SKILLS_DIR`). Skills baked into the Agent Base Image or a per-project image sit here directly; skills delivered at deploy time via a Helm-managed ConfigMap are mounted to a separate read-only staging path and installed into this directory by the entrypoint at pod start (ConfigMap wins on name collision). The agent loads the merged set once via `load_installed_skills()`. A volume mount cannot target this directory directly — it would hide the baked skills — which is why ConfigMap skills are staged-and-installed, not mounted in place.
+The single on-image directory where every Agent Skill resolves regardless of how it was delivered (`/usr/local/share/agent-skills/installed`, overridable via `AGENT_SKILLS_DIR`). Skills baked into the Agent Base Image or a per-project image sit here directly; skills delivered at deploy time via a Helm-managed ConfigMap are mounted to a separate read-only staging path and installed into this directory by the entrypoint at pod start (ConfigMap wins over baked on name collision); repo-native skills from the cloned repo's `.devloop/skills/` install last, after the clone (repo wins over both — most-specific delivery channel takes precedence). The agent loads the merged set once via `load_installed_skills()`. A volume mount cannot target this directory directly — it would hide the baked skills — which is why ConfigMap skills are staged-and-installed, not mounted in place.
 _Avoid_: skills folder, skills mount, skills volume
 
 **Skill triggers**:
@@ -117,6 +117,27 @@ RUN UV_HTTP_TIMEOUT=300 uv pip install --system --no-cache .
 Publish packages to PyPI with `uv build` + `uv publish` (OIDC trusted publisher — no stored API token).
 
 **Image tag format**: `sha-<7-char-hash>-<unix-epoch>` for builds from main; semver (`v1.2.3`) for releases. The epoch component allows FluxCD ImagePolicy to select the newest build by alphabetical ordering without requiring semver on every commit.
+
+**KPI span attributes (issue #122)**: every agent run and Dev Loop issue emits per-phase outcomes as OTel span attributes so model/prompt/harness decisions can be measured in omneval instead of argued from anecdotes.
+
+From the agent entrypoint (one `phase.<phase>` root span per Agent Execution Job, service name = the phase):
+
+| Attribute | Span | Meaning |
+|---|---|---|
+| `devloop.phase` / `devloop.project` / `devloop.issue_number` | `phase.<phase>` | identity of the run |
+| `devloop.result.status` | `phase.<phase>` | terminal payload status (`complete` / `failed` / `awaiting_human`) |
+| `devloop.execute.commits` | `phase.execute` | commits the agent produced |
+| `devloop.execute.tests_passed` | `phase.execute` | all suites green |
+| `devloop.execute.criteria_passes_used` | `phase.execute` | extra agent passes spent on the acceptance-criteria audit loop |
+| `devloop.execute.unmet_criteria_start` / `_end` | `phase.execute` | unmet-criteria count at the first and final audit |
+| `devloop.tests.<suite>.passed` | `tests` | per-suite pass/fail (suite label sanitized) |
+| `devloop.review.verdict` / `devloop.review.inline_comments` | `phase.review` | reviewer verdict and finding count |
+| `devloop.prompt.chars` | `agent.run` | rendered prompt size (context-starvation signal; per-call token usage lives on the LLM spans) |
+| `skills.loaded` / `skills.skipped` / `skills.selection_mode` | `skills.load` | skill resolution health (issue #35/#36) |
+
+From the workflow (one `devloop.workflow.kpi` span per issue carried to reviewer notification, service name `devloop-workflow`, emitted by the `emit_workflow_kpis` activity — best-effort, never fails the workflow): `devloop.workflow.ci_fix_iterations`, `.review_fix_passes`, `.answer_jobs`, `.execute_attempts`, `.review_verdict`, `.label_to_pr_seconds` (workflow start ≈ labeling, since the webhook is the sole entry point), `.pr_opened`, `.commits`, `.ci_exhausted`.
+
+**devloop bench (issue #122)**: `devloop-bench --project X --issues 67,68 --scratch-repo org/scratch` replays a golden set of closed issues against the current deployment and scores each resulting agent PR with an LLM judge (model via `AGENT_MODEL_JUDGE` → `AGENT_MODEL_REVIEW` → `AGENT_MODEL`) against the issue's acceptance criteria and the historical human-merged PR. `--no-replay` judges the human PR itself (judge calibration). See `src/devloop/bench.py`.
 
 ---
 

@@ -228,9 +228,17 @@ async def _get_installation_token() -> str:
 async def _resolve_token(cfg: ProjectConfig) -> str:
     """Resolve the GitHub credential to use for ``cfg``: a GitHub App
     installation token when the app is configured, otherwise the project's
-    scoped PAT (existing behavior — fully backward compatible)."""
+    scoped PAT (existing behavior — fully backward compatible).
+
+    When the registry entry leaves ``github_token_secret`` empty, fall back to
+    the worker's own ``GITHUB_TOKEN`` env var — the local-quickstart path
+    (issue #116), where there is no Kubernetes API to read a Secret from and
+    the operator exports ``GITHUB_TOKEN=$(gh auth token)`` instead.
+    """
     if _github_app_configured():
         return await _get_installation_token()
+    if not cfg.github_token_secret:
+        return os.environ.get("GITHUB_TOKEN", "")
     return cluster.read_secret_value(cfg.github_token_secret, "GITHUB_TOKEN")
 
 

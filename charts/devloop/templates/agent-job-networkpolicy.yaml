@@ -1,0 +1,67 @@
+{{- /*
+Egress lockdown for Agent Execution Job pods (issue #123).
+
+Agent jobs run third-party code with a push-capable GitHub token, an omneval
+ingest key, and (without this policy) unrestricted cluster-network egress.
+This policy selects every agent job pod the worker dispatches (they all carry
+the agents.homelab/project label; see k8s_jobs.render_job) and allows only
+DNS, HTTPS, the Kubernetes API, and the ports derived from the configured
+LLM / OTLP endpoints. See docs/security-model.md and the values.yaml comment
+on temporalWorker.agentJob.networkPolicy for the rationale and limits.
+*/ -}}
+{{- $np := .Values.temporalWorker.agentJob.networkPolicy }}
+{{- if $np.enabled }}
+{{- /* Derive the extra TCP port allowlist from the configured endpoints,
+       deduplicated via dict keys. 443 is always allowed by the HTTPS rule,
+       so drop it from the derived set. */}}
+{{- $ports := dict }}
+{{- with .Values.temporalWorker.agentJob.llm.baseUrl }}
+{{- $_ := set $ports (include "devloop.urlPort" .) true }}
+{{- end }}
+{{- range $role, $cfg := .Values.temporalWorker.agentJob.llm.roles }}
+{{- with $cfg.baseUrl }}
+{{- $_ := set $ports (include "devloop.urlPort" .) true }}
+{{- end }}
+{{- end }}
+{{- with $np.otlpEndpoint }}
+{{- $_ := set $ports (include "devloop.urlPort" .) true }}
+{{- end }}
+{{- $_ := unset $ports "443" }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-agent-job-egress
+  namespace: {{ .Values.agentsNamespace | default .Release.Namespace }}
+  labels:
+    {{- include "devloop.labels" . | nindent 4 }}
+    app.kubernetes.io/component: agent-job
+spec:
+  podSelector:
+    matchExpressions:
+      - key: agents.homelab/project
+        operator: Exists
+  policyTypes:
+    - Egress
+  egress:
+    # DNS — cluster resolvers and upstream
+    - ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    # HTTPS (GitHub, package registries, https LLM endpoints), the Kubernetes
+    # API (result-ConfigMap writes), and the ports derived from the configured
+    # LLM / OTLP endpoint values.
+    - ports:
+        - port: 443
+          protocol: TCP
+        - port: 6443
+          protocol: TCP
+        {{- range $port := keys $ports | sortAlpha }}
+        - port: {{ atoi $port }}
+          protocol: TCP
+        {{- end }}
+    {{- with $np.extraEgress }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+{{- end }}

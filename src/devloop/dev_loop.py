@@ -33,6 +33,7 @@ from .shared import (
     PlanIssueInput,
     PostCommentsInput,
     TaskSpec,
+    WorkflowKpiInput,
 )
 
 
@@ -168,6 +169,9 @@ class DevLoopWorkflow(_WorkflowCommon):
     async def run(self, inp: DevLoopInput) -> DevLoopResult:
         queued: list[int] = []
         verdicts: dict[int, str] = {}
+        # KPI baseline (issue #122): the webhook is the sole entry point, so
+        # workflow start ≈ the moment the agent-ready label landed.
+        started = workflow.now()
 
         for rnd in range(1, inp.max_iterations + 1):
             plan = await self._plan_phase(inp, rnd)
@@ -195,6 +199,7 @@ class DevLoopWorkflow(_WorkflowCommon):
             if not exec_result["commits"]:
                 # _execute_phase already posted the failure/exhaustion comment
                 # and parked the issue — move on to the next issue this round.
+                self._kpi_take()  # don't leak this issue's counters into the next
                 continue
 
             review = await self._review_phase(inp, issue, exec_result)
@@ -216,6 +221,24 @@ class DevLoopWorkflow(_WorkflowCommon):
             queued.append(_as_int(issue.get("id")))
             if verdict:
                 verdicts[_as_int(issue.get("id"))] = verdict
+
+            # Per-issue workflow KPIs (issue #122) — best-effort emission.
+            counters = self._kpi_take()
+            await self._emit_kpis(
+                WorkflowKpiInput(
+                    project_id=inp.project_id,
+                    issue_number=_as_int(issue.get("id")),
+                    ci_fix_iterations=counters.get("ci_fix_iterations", 0),
+                    review_fix_passes=fix_passes,
+                    answer_jobs=counters.get("answer_jobs", 0),
+                    execute_attempts=counters.get("execute_attempts", 0),
+                    review_verdict=verdict or "",
+                    label_to_pr_seconds=(workflow.now() - started).total_seconds(),
+                    pr_opened=bool(exec_result.get("pr_url")),
+                    commits=_as_int(exec_result.get("commits")),
+                    ci_exhausted=bool(exec_result.get("exhausted")),
+                )
+            )
 
         workflow.logger.info(
             "Reached max iterations (%d) — pausing Dev Loop for %s.",
@@ -296,6 +319,7 @@ class DevLoopWorkflow(_WorkflowCommon):
         max_iters = inp.execute_max_iterations
         result = None
         for attempt in range(1, max_iters + 1):
+            self._kpi_bump("execute_attempts")
             await self._comment(
                 inp.project_id,
                 issue_no,
@@ -429,6 +453,7 @@ class DevLoopWorkflow(_WorkflowCommon):
                 )
             else:
                 questions_asked += 1
+                self._kpi_bump("answer_jobs")
                 answer = await self._answer_via_agent(
                     inp, issue_no, question, result.branch
                 )

@@ -29,6 +29,7 @@ from .shared import (
     RequestReviewerInput,
     ReviewerRequestResult,
     TaskSpec,
+    WorkflowKpiInput,
 )
 
 _CLEANUP_RETRY = RetryPolicy(maximum_attempts=1)
@@ -47,6 +48,36 @@ class _WorkflowCommon:
     hold no state (Temporal workflow instances are re-hydrated from history,
     so state must live in the workflow's own ``__init__``/run-local scope).
     """
+
+    # ---- Workflow KPI counters (issue #122) ------------------------------- #
+    def _kpi_bump(self, key: str, n: int = 1) -> None:
+        """Increment a per-issue KPI counter (lazily initialised — the mixin
+        has no __init__). Counters are plain workflow state, so they replay
+        deterministically."""
+        counters = getattr(self, "_kpi_counters", None)
+        if counters is None:
+            counters = {}
+            self._kpi_counters = counters
+        counters[key] = counters.get(key, 0) + n
+
+    def _kpi_take(self) -> dict:
+        """Return and reset the accumulated counters (one issue's worth)."""
+        counters = getattr(self, "_kpi_counters", None) or {}
+        self._kpi_counters = {}
+        return counters
+
+    async def _emit_kpis(self, inp: WorkflowKpiInput) -> None:
+        """Fire the emit_workflow_kpis activity — strictly best-effort: a
+        telemetry hiccup must never fail or retry-storm the workflow."""
+        try:
+            await workflow.execute_activity(
+                "emit_workflow_kpis",
+                inp,
+                start_to_close_timeout=timedelta(minutes=1),
+                retry_policy=RetryPolicy(maximum_attempts=1),
+            )
+        except Exception:  # noqa: BLE001
+            workflow.logger.warning("emit_workflow_kpis failed (ignored)")
 
     # ---- ConfigMap cleanup (issue #99) ----------------------------------- #
     async def _cleanup(self, job_name: str) -> None:
@@ -163,6 +194,7 @@ class _WorkflowCommon:
 
             pending_polls = 0
             attempt += 1
+            self._kpi_bump("ci_fix_iterations")
             failures = [
                 {
                     "name": f.name,
