@@ -8,11 +8,7 @@ from pathlib import Path
 from devloop.projects import _REQUIRED_FIELDS
 
 _HELPERS_PATH = (
-    Path(__file__).parent.parent
-    / "charts"
-    / "devloop"
-    / "templates"
-    / "_helpers.tpl"
+    Path(__file__).parent.parent / "charts" / "devloop" / "templates" / "_helpers.tpl"
 )
 
 
@@ -23,7 +19,9 @@ def _chart_required_fields() -> list[str]:
         text,
         re.DOTALL,
     )
-    assert match, "devloop.projects.requiredFields define block not found in _helpers.tpl"
+    assert match, (
+        "devloop.projects.requiredFields define block not found in _helpers.tpl"
+    )
     return [line.strip() for line in match.group(1).splitlines() if line.strip()]
 
 
