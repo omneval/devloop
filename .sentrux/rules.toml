@@ -1,0 +1,69 @@
+# Sentryx rules for devloop project
+# Monitors code quality of the autonomous agent-driven Dev Loop framework
+
+[constraints]
+# Architectural constraints
+max_cycles = 0              # No circular dependencies allowed
+max_coupling = "B"          # Maximum coupling grade (A-F, B is good)
+max_cc = 40                 # Maximum cyclomatic complexity per function
+no_god_files = true         # Prevent files from becoming too large/complex
+
+# Define architectural layers in order of dependency
+# Lower order = more fundamental, should not depend on higher order layers
+
+[[layers]]
+name = "core"
+paths = ["src/devloop/shared.py", "src/devloop/_constants.py", "src/devloop/_workflow_common.py"]
+order = 0
+
+[[layers]]
+name = "activities"
+paths = ["src/devloop/github_ops.py", "src/devloop/k8s_jobs.py", "src/devloop/docker_dispatch.py", "src/devloop/summarize_activities.py"]
+order = 1
+
+[[layers]]
+name = "workflows"
+paths = ["src/devloop/dev_loop.py", "src/devloop/dev_loop_logic.py", "src/devloop/pr_comment.py", "src/devloop/summarization.py", "src/devloop/code_quality.py"]
+order = 2
+
+[[layers]]
+name = "infrastructure"
+paths = ["src/devloop/webhook.py", "src/devloop/worker.py", "src/devloop/projects.py", "src/devloop/schedules.py", "src/devloop/cluster.py", "src/devloop/kpi.py"]
+order = 3
+
+[[layers]]
+name = "tools"
+paths = ["src/devloop/bench.py"]
+order = 4
+
+[[layers]]
+name = "messaging"
+paths = ["src/devloop/messaging/*"]
+order = 5
+
+# Boundary rules - prevent inappropriate cross-layer dependencies
+
+[[boundaries]]
+from = "src/devloop/workflows/*"
+to = "src/devloop/messaging/*"
+reason = "Workflows should not directly depend on messaging implementation details"
+
+[[boundaries]]
+from = "src/devloop/activities/*"
+to = "src/devloop/workflows/*"
+reason = "Activities should not depend on workflows to maintain separation of concerns"
+
+[[boundaries]]
+from = "src/devloop/infrastructure/*"
+to = "src/devloop/workflows/*"
+reason = "Infrastructure modules should not depend on workflow implementations"
+
+[[boundaries]]
+from = "src/devloop/tools/*"
+to = "src/devloop/workflows/*"
+reason = "Tools like bench should depend on activities/core, not workflows directly"
+
+[[boundaries]]
+from = "src/devloop/messaging/*"
+to = "src/devloop/workflows/*"
+reason = "Messaging subsystem should be independent of workflow implementations"
