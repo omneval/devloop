@@ -21,8 +21,8 @@ An optional, scheduled Temporal workflow (`codeQuality.enabled: false` by defaul
 _Avoid_: quality agent, code scan workflow, sentrux workflow
 
 **Project Registry**:
-A YAML config file (owned by the consumer, typically `agents/projects.yaml` in their GitOps repo) enumerating all repos enrolled for Dev Loop management. Each entry declares: GitHub repo URL, default branch, `agent-ready` label name, omneval ingest secret name, GitHub token secret name, and optionally an agent image reference (omitted, the project runs on the published `devloop-agent-universal`). Adding a project is a change to the consumer's repo — no dynamic registration.
-_Avoid_: agent config, project database
+The list of repos enrolled for Dev Loop management, declared as the top-level `projects:` list in the consumer's Helm values file (`.Values.projects`). The chart renders this list into a `<release>-projects` ConfigMap and mounts it into the Temporal Orchestration Worker, which `projects.py` parses at startup. Each entry declares: `id`, GitHub repo URL, default branch, `agent_label`, GitHub token secret name, and optionally `omneval_ingest_secret`, `agent_image` (omitted, the project runs on the published `devloop-agent-universal`), `pr_reviewer`, and `agent_runner`. Field names are snake_case, matching `ProjectConfig` in `projects.py` — copy-pasteable from the rendered ConfigMap. Adding a project is a change to the consumer's values file — no dynamic registration. Supersedes the earlier two-step "author `projects.yaml`, `kubectl create configmap`, then point `temporalWorker.projectsConfigMap` at it" flow; the chart fails the template if `temporalWorker.projectsConfigMap.name` is still set.
+_Avoid_: agent config, project database, projects.yaml (no longer the user-facing entry point)
 
 **Agent Base Image**:
 The container image (`ghcr.io/omneval/devloop-agent-base`) used as the `FROM` base for all per-project agent images. Contains the shared toolchain: OpenHands SDK, `omneval-devloop` (for the shared Agent Job output ConfigMap protocol and its pinned Temporal + kubernetes clients), git, gh CLI, kubectl, flux CLI, argocd CLI. Per-project images extend it with only the language runtime and prompts they need.
@@ -117,6 +117,8 @@ RUN UV_HTTP_TIMEOUT=300 uv pip install --system --no-cache .
 Publish packages to PyPI with `uv build` + `uv publish` (OIDC trusted publisher — no stored API token).
 
 **Image tag format**: `sha-<7-char-hash>-<unix-epoch>` for builds from main; semver (`v1.2.3`) for releases. The epoch component allows FluxCD ImagePolicy to select the newest build by alphabetical ordering without requiring semver on every commit.
+
+**Project Registry required-fields sync**: The set of required fields for a [Project Registry](#project-registry) entry is defined twice — `_REQUIRED_FIELDS` in `src/devloop/projects.py` and the `required` checks in `charts/devloop/templates/projects-configmap.yaml`. A test must assert these two lists match so they can't silently drift.
 
 **KPI span attributes (issue #122)**: every agent run and Dev Loop issue emits per-phase outcomes as OTel span attributes so model/prompt/harness decisions can be measured in omneval instead of argued from anecdotes.
 

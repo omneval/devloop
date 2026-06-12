@@ -637,50 +637,37 @@ tests:
           content:
             name: SUMMARIZATION_WEBHOOK_URL
 
-  - it: omits the projects-config volume and mount when projectsConfigMap.name is not set
+  - it: always mounts the chart-managed projects ConfigMap (issue #142)
     template: templates/temporal-worker-deployment.yaml
     set:
       temporalHost: "temporal-frontend.agents.svc:7233"
-    asserts:
-      - notExists:
-          path: spec.template.spec.volumes
-      - notExists:
-          path: spec.template.spec.containers[0].volumeMounts
-
-  - it: mounts projects.yaml from a ConfigMap at projectsFile when projectsConfigMap.name is set (issue #101)
-    template: templates/temporal-worker-deployment.yaml
-    set:
-      temporalHost: "temporal-frontend.agents.svc:7233"
-      temporalWorker.projectsFile: "/etc/projects/projects.yaml"
-      temporalWorker.projectsConfigMap:
-        name: devloop-projects
-        key: projects.yaml
     asserts:
       - contains:
           path: spec.template.spec.volumes
           content:
             name: projects-config
             configMap:
-              name: devloop-projects
+              name: RELEASE-NAME-projects
       - contains:
           path: spec.template.spec.containers[0].volumeMounts
           content:
             name: projects-config
             mountPath: "/etc/projects/projects.yaml"
             subPath: projects.yaml
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: PROJECTS_FILE
+            value: "/etc/projects/projects.yaml"
 
-  - it: defaults the projectsConfigMap key to projects.yaml when only the name is set (issue #101)
+  - it: fails when the removed temporalWorker.projectsConfigMap.name is set (issue #142)
     template: templates/temporal-worker-deployment.yaml
     set:
       temporalHost: "temporal-frontend.agents.svc:7233"
       temporalWorker.projectsConfigMap.name: devloop-projects
     asserts:
-      - contains:
-          path: spec.template.spec.containers[0].volumeMounts
-          content:
-            name: projects-config
-            mountPath: "/etc/projects/projects.yaml"
-            subPath: projects.yaml
+      - failedTemplate:
+          errorMessage: "temporalWorker.projectsConfigMap is no longer supported. Move your project entries into the top-level `projects:` list in values.yaml — the chart now renders and mounts the registry ConfigMap itself."
 
   - it: renders SUMMARIZATION_CRON_SCHEDULE and SUMMARIZATION_WEBHOOK_URL from summarization values (issue #93)
     template: templates/temporal-worker-deployment.yaml

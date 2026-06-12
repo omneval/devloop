@@ -1,0 +1,71 @@
+suite: projects configmap
+templates:
+  - templates/projects-configmap.yaml
+tests:
+  - it: renders an empty registry by default
+    set:
+      temporalHost: "temporal-frontend.agents.svc:7233"
+    asserts:
+      - hasDocuments:
+          count: 1
+      - isKind:
+          of: ConfigMap
+      - equal:
+          path: metadata.name
+          value: RELEASE-NAME-projects
+      - equal:
+          path: data["projects.yaml"]
+          value: |
+            projects: []
+
+  - it: renders the projects list pass-through as projects.yaml
+    set:
+      temporalHost: "temporal-frontend.agents.svc:7233"
+      projects:
+        - id: omneval
+          github_url: https://github.com/omneval/omneval
+          default_branch: main
+          agent_label: agent-ready
+          github_token_secret: omneval-agent-github-token
+    asserts:
+      - equal:
+          path: data["projects.yaml"]
+          value: |
+            projects:
+            - agent_label: agent-ready
+              default_branch: main
+              github_token_secret: omneval-agent-github-token
+              github_url: https://github.com/omneval/omneval
+              id: omneval
+
+  - it: renders ConfigMap in agentsNamespace when set
+    set:
+      temporalHost: "temporal-frontend.agents.svc:7233"
+      agentsNamespace: "agent-jobs"
+    asserts:
+      - equal:
+          path: metadata.namespace
+          value: agent-jobs
+
+  - it: renders ConfigMap in release namespace when agentsNamespace is empty
+    set:
+      temporalHost: "temporal-frontend.agents.svc:7233"
+    release:
+      namespace: default-ns
+    asserts:
+      - equal:
+          path: metadata.namespace
+          value: default-ns
+
+  - it: fails when a project entry is missing a required field
+    set:
+      temporalHost: "temporal-frontend.agents.svc:7233"
+      projects:
+        - id: omneval
+          github_url: https://github.com/omneval/omneval
+          default_branch: main
+          agent_label: agent-ready
+          # github_token_secret intentionally omitted
+    asserts:
+      - failedTemplate:
+          errorMessage: 'projects[0] is missing required field "github_token_secret"'

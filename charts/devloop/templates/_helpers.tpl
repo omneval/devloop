@@ -9,6 +9,30 @@ Temporal subchart is not enabled (issue #117).
 {{- end -}}
 
 {{/*
+Required fields for each .Values.projects[] entry. One field name per line —
+must stay in sync with _REQUIRED_FIELDS in src/devloop/projects.py (enforced
+by tests/test_projects_chart_sync.py).
+*/}}
+{{- define "devloop.projects.requiredFields" -}}
+id
+github_url
+default_branch
+agent_label
+github_token_secret
+{{- end -}}
+
+{{/*
+Required value validator: fails if the now-removed
+temporalWorker.projectsConfigMap.name is still set, pointing operators at the
+top-level `projects:` block that replaced it.
+*/}}
+{{- define "devloop.validate.projectsConfigMap" -}}
+{{- if (((.Values.temporalWorker).projectsConfigMap).name) -}}
+  {{- fail "temporalWorker.projectsConfigMap is no longer supported. Move your project entries into the top-level `projects:` list in values.yaml — the chart now renders and mounts the registry ConfigMap itself." -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
 Effective Temporal frontend address. An explicit `temporalHost` always wins;
 otherwise, when the bundled Temporal subchart is enabled, default to its
 frontend Service. The subchart names that Service `<fullname>-frontend`, where

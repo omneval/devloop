@@ -191,7 +191,7 @@ kubectl create secret generic devloop-github-app-key \
 ```
 
 You'll wire the App ID, installation ID, and this Secret into the chart in
-Step 6d via the `githubApp.*` values:
+Step 6c via the `githubApp.*` values:
 
 ```yaml
 githubApp:
@@ -288,7 +288,7 @@ devloop requires a Temporal cluster. There are two ways to get one:
 
 The devloop chart can deploy Temporal for you. Skip this step entirely and
 add `--set temporal.enabled=true` to the `helm install devloop` command in
-Step 6d — the chart deploys the official `temporal` Helm chart as a subchart
+Step 6c — the chart deploys the official `temporal` Helm chart as a subchart
 (single server replica, single-node Cassandra persistence, no
 Elasticsearch/Prometheus/Grafana) and `temporalHost` automatically defaults
 to the subchart's frontend Service. Nothing else to configure.
@@ -386,9 +386,21 @@ docker tag ghcr.io/your-org/your-project-agent:latest \
 
 ## Step 6: Deploy the devloop Chart
 
-### 6a: Create the projects.yaml ConfigMap
+> **Upgrading from an older devloop release?** `temporalWorker.projectsConfigMap`
+> and `temporalWorker.projectsFile` have been removed — the chart now renders
+> and mounts the Project Registry ConfigMap itself from the top-level
+> `projects:` values block below. Move the contents of your existing
+> `projects.yaml` into `projects:` in your values file, then delete the old
+> `devloop-projects` ConfigMap and the `projectsConfigMap`/`projectsFile`
+> entries from your values. `helm template`/`helm upgrade` fails with a
+> pointer to this section if `projectsConfigMap.name` is still set.
 
-The Project Registry tells devloop which repositories to monitor. Create a `projects.yaml` file:
+### 6a: Add your project(s) to Helm values
+
+The Project Registry tells devloop which repositories to monitor. It's a
+top-level `projects:` list in the same `devloop-values.yaml` you'll deploy
+with in step 6c — the chart renders it into a ConfigMap and mounts it into
+the worker, so there's no separate file or `kubectl create configmap` step.
 
 **Minimal example** (required fields only — `agent_image` is optional and
 defaults to the published `devloop-agent-universal`, and
@@ -419,6 +431,9 @@ projects:
     omneval_ingest_secret: omneval-ingest-your-project
 ```
 
+The chart fails to template if a project entry is missing any of `id`,
+`github_url`, `default_branch`, `agent_label`, or `github_token_secret`.
+
 #### Create the per-project GitHub token
 
 `github_token_secret` names a Kubernetes Secret holding a token that Agent
@@ -445,8 +460,8 @@ expire too quickly to mount into jobs.
 
 ### 6b: Create Kubernetes Secrets
 
-Create the secrets referenced in `projects.yaml` and by the worker itself.
-(The GitHub App private-key Secret was already created in Step 3d.)
+Create the secrets referenced in your `projects:` entries and by the worker
+itself. (The GitHub App private-key Secret was already created in Step 3d.)
 
 The per-project GitHub token Secret is needed in **both** auth modes: Agent
 Execution Jobs mount it (key `GITHUB_TOKEN`) for `git clone`/`git push` — App
@@ -469,7 +484,7 @@ kubectl create secret generic github-webhook-secret \
 ```
 
 Reference the `github-webhook-secret` from the worker via
-`temporalWorker.githubWebhookSecret` in your Helm values (see 6d) so the
+`temporalWorker.githubWebhookSecret` in your Helm values (see 6c) so the
 webhook receiver enforces signature verification:
 
 ```yaml
@@ -479,23 +494,23 @@ temporalWorker:
     key: secret
 ```
 
-### 6c: Create the ConfigMap
+### 6c: Deploy with Helm
 
-```bash
-kubectl create configmap devloop-projects \
-  --from-file=projects.yaml=./projects.yaml \
-  -n agents
-```
-
-### 6d: Deploy with Helm
-
-Create a `devloop-values.yaml`:
+Create a `devloop-values.yaml` — including the `projects:` list from step 6a:
 
 ```yaml
 # Point at your external Temporal (Step 4 Option B). If you chose the bundled
 # subchart (Option A), replace this line with `temporal.enabled: true` and
 # temporalHost defaults to the subchart's frontend Service automatically.
 temporalHost: temporal-frontend.agents.svc.cluster.local:7233
+
+# Project Registry (step 6a)
+projects:
+  - id: your-project
+    github_url: https://github.com/your-org/your-project
+    default_branch: main
+    agent_label: agent-ready
+    github_token_secret: your-project-github-token
 
 # GitHub App auth (Step 3) — omit this block only on the PAT fallback path
 githubApp:
@@ -621,7 +636,7 @@ from label to closed issue:
    findings as PR comments; `needs_fixes` verdicts trigger automatic fix
    passes (up to `temporalWorker.reviewFixMaxIterations`).
 4. **Handover** — the PR is marked **ready for review**, and the project's
-   `pr_reviewer` (if set in `projects.yaml`) is requested as reviewer. On the
+   `pr_reviewer` (if set in its `projects:` entry) is requested as reviewer. On the
    PAT fallback path with a single maintainer, the reviewer is assigned and
    @-mentioned instead (GitHub forbids requesting a review from yourself).
 5. **You review and merge** — devloop never merges. Leave review comments or

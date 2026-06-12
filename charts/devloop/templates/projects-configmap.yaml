@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-projects
+  namespace: {{ .Values.agentsNamespace | default .Release.Namespace }}
+  labels:
+    {{- include "devloop.labels" . | nindent 4 }}
+    app.kubernetes.io/component: projects
+data:
+  projects.yaml: |
+    {{- range $i, $p := .Values.projects }}
+    {{- range $field := splitList "\n" (include "devloop.projects.requiredFields" $) }}
+    {{- if not (hasKey $p $field) }}
+    {{- fail (printf "projects[%d] is missing required field %q" $i $field) }}
+    {{- end -}}
+    {{- end -}}
+    {{- end -}}
+    {{- toYaml (dict "projects" .Values.projects) | nindent 4 }}

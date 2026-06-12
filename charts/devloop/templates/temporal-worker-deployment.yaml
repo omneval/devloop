@@ -1,4 +1,5 @@
 {{- include "devloop.validate.temporalHost" . }}
+{{- include "devloop.validate.projectsConfigMap" . }}
 {{- if .Values.temporalWorker.enabled }}
 apiVersion: apps/v1
 kind: Deployment
@@ -24,12 +25,10 @@ spec:
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      {{- with .Values.temporalWorker.projectsConfigMap.name }}
       volumes:
         - name: projects-config
           configMap:
-            name: {{ . }}
-      {{- end }}
+            name: {{ .Release.Name }}-projects
       containers:
         - name: temporal-worker
           image: "{{ .Values.temporalWorker.image.repository }}:{{ .Values.temporalWorker.image.tag }}"
@@ -53,7 +52,7 @@ spec:
             - name: WEBHOOK_PORT
               value: {{ .Values.temporalWorker.webhookPort | quote }}
             - name: PROJECTS_FILE
-              value: {{ .Values.temporalWorker.projectsFile | quote }}
+              value: "/etc/projects/projects.yaml"
             - name: MAX_QUESTIONS_PER_PHASE
               value: {{ .Values.temporalWorker.maxQuestionsPerPhase | default 3 | quote }}
             - name: CI_FIX_MAX_ITERATIONS
@@ -193,12 +192,10 @@ spec:
             {{- with .Values.temporalWorker.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
-          {{- with .Values.temporalWorker.projectsConfigMap.name }}
           volumeMounts:
             - name: projects-config
-              mountPath: {{ $.Values.temporalWorker.projectsFile | quote }}
-              subPath: {{ $.Values.temporalWorker.projectsConfigMap.key | default "projects.yaml" | quote }}
-          {{- end }}
+              mountPath: "/etc/projects/projects.yaml"
+              subPath: "projects.yaml"
           {{- include "devloop.healthProbes" . | nindent 10 }}
           {{- if .Values.temporalWorker.resources }}
           resources:

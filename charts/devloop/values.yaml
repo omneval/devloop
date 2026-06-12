@@ -92,6 +92,36 @@ temporal:
 agentsNamespace: ""
 
 # ---------------------------------------------------------------------------
+# Project Registry
+# ---------------------------------------------------------------------------
+# The list of repos enrolled for Dev Loop management. The chart renders this
+# list into a `<release>-projects` ConfigMap and mounts it into the Temporal
+# Orchestration Worker. Field names are snake_case, matching ProjectConfig in
+# src/devloop/projects.py — copy-pasteable from an existing projects.yaml.
+#
+# Required fields: id, github_url, default_branch, agent_label,
+# github_token_secret (the chart fails to template if any are missing).
+#
+# Optional fields:
+#   agent_image            - defaults to the published devloop-agent-universal
+#   omneval_ingest_secret   - only needed if you run an omneval/omneval ingest
+#   pr_reviewer             - GitHub login requested as reviewer on agent PRs
+#   agent_runner            - "openhands" (default) or "claude-agent-sdk"
+#
+# Example:
+#   projects:
+#     - id: your-project
+#       github_url: https://github.com/your-org/your-project
+#       default_branch: main
+#       agent_label: agent-ready
+#       github_token_secret: your-project-github-token
+#       agent_image: ghcr.io/your-org/your-project-agent:latest
+#       pr_reviewer: "your-github-reviewer-username"
+#       omneval_ingest_secret: omneval-ingest-your-project
+#       agent_runner: claude-agent-sdk
+projects: []
+
+# ---------------------------------------------------------------------------
 # Agent Skills
 # ---------------------------------------------------------------------------
 # Per-phase allowlist of skill names that Agent Execution Jobs may load.
@@ -267,16 +297,6 @@ temporalWorker:
   healthPort: 8080
   # Webhook receiver port
   webhookPort: 8088
-  # Path to projects registry file (mounted as ConfigMap or secret)
-  projectsFile: "/etc/projects/projects.yaml"
-  # ConfigMap supplying the projects.yaml the chart mounts at .projectsFile —
-  # the chart-native alternative to baking a registry into a custom image.
-  # When name is set, the chart mounts key (a single-file subPath) at
-  # .projectsFile; when unset, the operator is responsible for getting a file
-  # to that path themselves (e.g. a custom image, as before this was added).
-  projectsConfigMap:
-    name: ""
-    key: "projects.yaml"
   # Maximum number of mid-run AWAITING_HUMAN questions a single phase run may
   # spawn Phase.ANSWER agent jobs for before the workflow stops asking and
   # tells the parked job to proceed with its best guess.
