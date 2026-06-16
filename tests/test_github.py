@@ -10,8 +10,6 @@ from __future__ import annotations
 
 import dataclasses
 
-import pytest
-
 
 class TestInlineComment:
     """InlineComment dataclass lives in devloop.github."""

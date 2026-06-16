@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import dataclasses
 
-import pytest
-
 
 class TestCICheckFailure:
     """CICheckFailure dataclass lives in devloop.cichecks."""
@@ -74,7 +72,7 @@ class TestCIChecksResult:
         assert result.failures[0].name == "lint"
 
     def test_dataclass_serialization(self) -> None:
-        from devloop.cichecks import CICheckFailure, CIChecksResult
+        from devloop.cichecks import CIChecksResult
 
         result = CIChecksResult()
         d = dataclasses.asdict(result)

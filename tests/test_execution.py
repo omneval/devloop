@@ -6,11 +6,8 @@ AnswerInput, AwaitInput, PollPRChecksInput, and WorkflowKpiInput.
 
 from __future__ import annotations
 
-import dataclasses
 import json
 from dataclasses import asdict as dataclasses_asdict
-
-import pytest
 
 
 class TestTaskSpec:

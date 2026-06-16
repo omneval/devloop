@@ -6,8 +6,6 @@ from ``from devloop.shared import ...`` after the split into sub-modules.
 
 from __future__ import annotations
 
-import pytest
-
 
 class TestSharedConstants:
     """Constants defined directly in shared.py."""

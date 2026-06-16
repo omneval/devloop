@@ -24,15 +24,6 @@ from __future__ import annotations
 
 import os
 
-# ── Constants (defined here, not in sub-modules) ─────────────────────────
-
-ORCHESTRATION_QUEUE = os.getenv("ORCHESTRATION_QUEUE", "devloop-orchestration")
-JOB_DISPATCH_QUEUE = os.getenv("JOB_DISPATCH_QUEUE", "devloop-job-dispatch")
-KEY_RESULT = "result"
-KEY_HUMAN_ANSWER = "human_answer"
-
-# ── Re-export all types from sub-modules ─────────────────────────────────
-
 # execution
 from devloop.execution import (
     AnswerInput,
@@ -69,6 +60,13 @@ from devloop.cichecks import (
     CIChecksResult,
     PollCIChecksInput,
 )
+
+# ── Constants (defined here, not in sub-modules) ─────────────────────────
+
+ORCHESTRATION_QUEUE = os.getenv("ORCHESTRATION_QUEUE", "devloop-orchestration")
+JOB_DISPATCH_QUEUE = os.getenv("JOB_DISPATCH_QUEUE", "devloop-job-dispatch")
+KEY_RESULT = "result"
+KEY_HUMAN_ANSWER = "human_answer"
 
 __all__ = [
     # constants

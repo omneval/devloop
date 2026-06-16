@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 
 class TestPhase:
     """Phase enum lives in devloop.phases."""
