@@ -51,3 +51,15 @@ def test_entrypoint_still_imports_skills():
         "entrypoint.py no longer does `import skills` — if intentional, update or "
         "remove test_skills_module_is_copied_next_to_entrypoint accordingly"
     )
+
+
+def test_tmux_is_installed():
+    """tmux must be present in the agent-base image so devloop workers don't fall
+    back to the less-stable subprocess-based terminal.
+
+    See issue #156 for the original warning that prompted this requirement.
+    """
+    assert "tmux" in _DOCKERFILE, (
+        "Dockerfile does not install tmux — devloop workers will log "
+        "'tmux is not installed' and fall back to subprocess-based terminals"
+    )

@@ -14,6 +14,7 @@ ARG ARGOCD_VERSION=2.13.3
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     curl \
+    tmux \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
