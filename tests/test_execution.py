@@ -303,9 +303,7 @@ class TestPollPRChecksInput:
     def test_custom_timeout(self) -> None:
         from devloop.execution import PollPRChecksInput
 
-        inp = PollPRChecksInput(
-            project_id="repo", pr_number=42, timeout_seconds=60.0
-        )
+        inp = PollPRChecksInput(project_id="repo", pr_number=42, timeout_seconds=60.0)
         assert inp.timeout_seconds == 60.0
 
 
