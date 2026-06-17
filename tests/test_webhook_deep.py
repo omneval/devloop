@@ -63,7 +63,7 @@ def mock_by_repo():
 
 
 def _run(coro):
-    return asyncio.get_event_loop().run_until_complete(coro)
+    return asyncio.run(coro)
 
 
 def test_workflow_factory_create_devloop_input_is_coroutine():
