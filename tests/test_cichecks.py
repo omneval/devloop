@@ -36,7 +36,12 @@ class TestCICheckFailure:
 
         failure = CICheckFailure(name="CI", conclusion="failure")
         d = dataclasses.asdict(failure)
-        assert d == {"name": "CI", "conclusion": "failure", "details_url": "", "summary": ""}
+        assert d == {
+            "name": "CI",
+            "conclusion": "failure",
+            "details_url": "",
+            "summary": "",
+        }
 
 
 class TestCIChecksResult:

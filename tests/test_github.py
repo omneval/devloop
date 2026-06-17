@@ -40,9 +40,7 @@ class TestPostCommentsInput:
             project_id="repo",
             pr_number=42,
             summary="Overall feedback",
-            inline_comments=[
-                InlineComment(file="main.py", line=10, body="Fix this")
-            ],
+            inline_comments=[InlineComment(file="main.py", line=10, body="Fix this")],
         )
         assert inp.project_id == "repo"
         assert inp.pr_number == 42
@@ -72,9 +70,7 @@ class TestGithubNotificationInput:
     def test_importable_from_github_module(self) -> None:
         from devloop.github import GithubNotificationInput
 
-        inp = GithubNotificationInput(
-            issue_number=42, project_id="repo", body="Hello"
-        )
+        inp = GithubNotificationInput(issue_number=42, project_id="repo", body="Hello")
         assert inp.issue_number == 42
         assert inp.project_id == "repo"
         assert inp.body == "Hello"
@@ -86,9 +82,7 @@ class TestRequestReviewerInput:
     def test_importable_from_github_module(self) -> None:
         from devloop.github import RequestReviewerInput
 
-        inp = RequestReviewerInput(
-            project_id="repo", pr_number=42, reviewer="alice"
-        )
+        inp = RequestReviewerInput(project_id="repo", pr_number=42, reviewer="alice")
         assert inp.project_id == "repo"
         assert inp.pr_number == 42
         assert inp.reviewer == "alice"
@@ -114,9 +108,7 @@ class TestReviewerRequestResult:
     def test_failed_request_with_reason(self) -> None:
         from devloop.github import ReviewerRequestResult
 
-        result = ReviewerRequestResult(
-            requested=False, reason="no reviewer configured"
-        )
+        result = ReviewerRequestResult(requested=False, reason="no reviewer configured")
         assert result.requested is False
         assert result.reason == "no reviewer configured"
 
