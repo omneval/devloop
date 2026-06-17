@@ -27,10 +27,8 @@ import re
 
 from fastapi import FastAPI, Request, Response
 from temporalio.client import Client
-from temporalio.common import WorkflowIDConflictPolicy
 
 from .projects import ProjectConfig, parse_github_repo
-from .shared import ORCHESTRATION_QUEUE
 
 log = logging.getLogger(__name__)
 
@@ -61,8 +59,18 @@ def _verify_github_signature(body: bytes, signature: str) -> bool:
 
 
 def create_app(client: Client, projects: list[ProjectConfig]) -> FastAPI:
+    """Build the webhook FastAPI application.
+
+    All event-handling logic lives in deep modules (``webhook_deep``).
+    This function is thin: it wires routes, deserialises requests, and
+    delegates to ``WebhookRouter.route()``.
+    """
+    from .webhook_deep import WebhookRouter, WorkflowFactory
+
     app = FastAPI(title="orchestration-worker-webhooks")
     by_repo = {parse_github_repo(p.github_url): p for p in projects}
+    factory = WorkflowFactory(client)
+    router = WebhookRouter()
 
     @app.get("/healthz")
     async def healthz():
@@ -86,138 +94,17 @@ def create_app(client: Client, projects: list[ProjectConfig]) -> FastAPI:
         payload = json.loads(body)
         event = request.headers.get("X-GitHub-Event", "")
 
+        # Only "issues" events with action "labeled" route to IssueLabeledHandler.
         if event == "issues" and payload.get("action") == "labeled":
-            return await _handle_issue_labeled(payload, by_repo)
+            return await router.route(event, payload, by_repo, factory)
 
         if event == "pull_request_review":
-            return await _handle_pull_request_review(payload, by_repo)
+            return await router.route(event, payload, by_repo, factory)
 
         if event == "issue_comment":
-            return await _handle_issue_comment(payload, by_repo)
+            return await router.route(event, payload, by_repo, factory)
 
         return {"ignored": f"event={event} action={payload.get('action')}"}
-
-    async def _handle_issue_labeled(payload: dict, by_repo: dict) -> dict:
-        label = (payload.get("label") or {}).get("name", "")
-        repo = (payload.get("repository") or {}).get("full_name", "")
-        project = by_repo.get(repo)
-        if project is None or label != project.agent_label:
-            return {"ignored": f"repo={repo} label={label}"}
-
-        issue_number = (payload.get("issue") or {}).get("number")
-        wf_id = f"devloop-{project.id}"
-        await client.start_workflow(
-            "DevLoopWorkflow",
-            _dev_loop_input(project.id, project.agent_label, issue_number),
-            id=wf_id,
-            task_queue=ORCHESTRATION_QUEUE,
-            id_conflict_policy=WorkflowIDConflictPolicy.USE_EXISTING,
-        )
-        log.info(
-            "triggered Dev Loop %s for %s (issue #%s)", wf_id, project.id, issue_number
-        )
-        return {"workflow_id": wf_id, "project": project.id, "issue": issue_number}
-
-    async def _handle_pull_request_review(payload: dict, by_repo: dict) -> dict:
-        repo = (payload.get("repository") or {}).get("full_name", "")
-        project = by_repo.get(repo)
-        if project is None:
-            return {"ignored": f"repo={repo}"}
-
-        review = payload.get("review") or {}
-        author = (review.get("user") or {}).get("login", "")
-        if not author or author == AGENT_GITHUB_LOGIN:
-            return {"ignored": f"author={author or '(none)'} (bot or unknown)"}
-
-        pr = payload.get("pull_request") or {}
-        head_ref = (pr.get("head") or {}).get("ref", "")
-        m = _AGENT_BRANCH.match(head_ref)
-        if not m:
-            return {"ignored": f"head={head_ref} (not an agent PR)"}
-
-        pr_number = pr.get("number")
-        return await _start_pr_comment_workflow(
-            project=project,
-            pr_number=pr_number,
-            issue_number=pr_number,
-            branch=head_ref,
-            comment_body=review.get("body") or "",
-            source="review",
-            author=author,
-        )
-
-    async def _handle_issue_comment(payload: dict, by_repo: dict) -> dict:
-        repo = (payload.get("repository") or {}).get("full_name", "")
-        project = by_repo.get(repo)
-        if project is None:
-            return {"ignored": f"repo={repo}"}
-
-        issue = payload.get("issue") or {}
-        if not issue.get("pull_request"):
-            return {"ignored": "not a PR comment"}
-
-        comment = payload.get("comment") or {}
-        author = (comment.get("user") or {}).get("login", "")
-        if not author or author == AGENT_GITHUB_LOGIN:
-            return {"ignored": f"author={author or '(none)'} (bot or unknown)"}
-
-        body = comment.get("body") or ""
-        if f"@{AGENT_GITHUB_LOGIN}" not in body:
-            return {"ignored": "no agent mention"}
-
-        pr_number = issue.get("number")
-        return await _start_pr_comment_workflow(
-            project=project,
-            pr_number=pr_number,
-            issue_number=pr_number,
-            branch="",
-            comment_body=body,
-            source="comment",
-            author=author,
-        )
-
-    async def _start_pr_comment_workflow(
-        *,
-        project: ProjectConfig,
-        pr_number,
-        issue_number,
-        branch: str,
-        comment_body: str,
-        source: str,
-        author: str,
-    ) -> dict:
-        repo_slug = parse_github_repo(project.github_url)
-        owner, _, name = repo_slug.partition("/")
-        wf_id = f"pr-comment-{owner}-{name}-{pr_number}"
-        await client.start_workflow(
-            "PRCommentWorkflow",
-            _pr_comment_input(
-                project.id,
-                pr_number=pr_number,
-                issue_number=issue_number,
-                branch=branch,
-                comment_body=comment_body,
-                source=source,
-                author=author,
-            ),
-            id=wf_id,
-            task_queue=ORCHESTRATION_QUEUE,
-            id_conflict_policy=WorkflowIDConflictPolicy.TERMINATE_EXISTING,
-        )
-        log.info(
-            "triggered PRCommentWorkflow %s for %s (PR #%s, source=%s, author=%s)",
-            wf_id,
-            project.id,
-            pr_number,
-            source,
-            author,
-        )
-        return {
-            "workflow_id": wf_id,
-            "project": project.id,
-            "pr": pr_number,
-            "source": source,
-        }
 
     return app
 
