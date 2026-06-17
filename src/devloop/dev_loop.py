@@ -10,28 +10,45 @@ through to reviewer notification with no human-approval gates.
 One issue at a time: the homelab DGX model serves a single request at a time,
 so parallel agent Jobs would just block on inference. Each phase is a K8s
 Agent Job driven by a bundled prompt (plan/implement/review).
+
+Architecture note (issue #149 / #153): the orchestration loop has been
+extracted to ``devloop.phases.PhasePipeline`` and the per-phase logic
+lives in standalone deep modules (``PlanPhase``, ``ExecutePhase``,
+``ReviewPhase``, ``ReviewFixPass``, ``Notifier``).  This workflow is a
+thin adapter — it creates phase instances, injects its own Temporal
+activity methods as callbacks, and delegates the loop to the pipeline.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import timedelta
+from typing import Any, Optional
 
 from temporalio import workflow
 
 from . import dev_loop_logic as logic
 from ._constants import _ACTIVITY_TIMEOUT, _RETRY
 from ._workflow_common import _WorkflowCommon
+from .phases.execute import ExecutePhase, ExecutePhaseCallbacks as _ExecuteCallbacks
+from .phases.notifier import Notifier, NotifierCallbacks as _NotifierCallbacks
+from .phases.pipeline import PhasePipeline
+from .phases.plan import PlanPhase, PlanPhaseCallbacks as _PlanCallbacks
+from .phases.review import ReviewPhase, ReviewPhaseCallbacks as _ReviewCallbacks
+from .phases.review_fix_pass import (
+    ReviewFixPass,
+    ReviewFixPassCallbacks as _FixCallbacks,
+)
 from .shared import (
     AgentJobResult,
     AnswerInput,
     AwaitInput,
     InlineComment,
-    JobStatus,
     OpenAgentPRsInput,
     Phase,
     PlanIssueInput,
     PostCommentsInput,
+    ReviewerRequestResult,
     TaskSpec,
     WorkflowKpiInput,
 )
@@ -127,8 +144,194 @@ def _as_int(value) -> int:
 
 @workflow.defn
 class DevLoopWorkflow(_WorkflowCommon):
+    """Thin adapter: wires phase instances into PhasePipeline.
+
+    All orchestration lives in ``PhasePipeline.run()`` — this class only
+    creates phases, binds its own ``_WorkflowCommon`` methods as callbacks,
+    and calls the pipeline.  Per-issue KPIs are emitted via a ``post_round``
+    callback that the pipeline invokes after each successful round.
+    """
+
     def __init__(self) -> None:
-        pass
+        # Lazy-init: KPI counters are workflow state and must survive replay.
+        self._plan_phase_instance: PlanPhase | None = None
+        self._execute_phase_instance: ExecutePhase | None = None
+        self._review_phase_instance: ReviewPhase | None = None
+        self._review_fix_pass_instance: ReviewFixPass | None = None
+        self._notifier_instance: Notifier | None = None
+
+    # ---- lazy phase constructors ---------------------------------------- #
+    def _plan(self) -> PlanPhase:
+        if self._plan_phase_instance is None:
+            self._plan_phase_instance = PlanPhase()
+        return self._plan_phase_instance
+
+    def _execute(self) -> ExecutePhase:
+        if self._execute_phase_instance is None:
+            self._execute_phase_instance = ExecutePhase()
+        return self._execute_phase_instance
+
+    def _review(self) -> ReviewPhase:
+        if self._review_phase_instance is None:
+            self._review_phase_instance = ReviewPhase()
+        return self._review_phase_instance
+
+    def _fix(self) -> ReviewFixPass:
+        if self._review_fix_pass_instance is None:
+            self._review_fix_pass_instance = ReviewFixPass()
+        return self._review_fix_pass_instance
+
+    def _notify(self) -> Notifier:
+        if self._notifier_instance is None:
+            self._notifier_instance = Notifier()
+        return self._notifier_instance
+
+    # ---- run ------------------------------------------------------------ #
+    @workflow.run
+    async def run(self, inp: DevLoopInput) -> DevLoopResult:
+        started = workflow.now()
+
+        pipeline = PhasePipeline()
+        return await pipeline.run(
+            inp,
+            # Plan phase
+            plan_phase=self._plan_phase_adapter,
+            # Execute phase
+            execute_phase=self._execute_phase_adapter,
+            # Review phase
+            review_phase=self._review_phase_adapter,
+            # Fix pass
+            fix_pass=self._fix_pass_adapter,
+            # Notifier
+            notifier=self._notify_adapter,
+            # Post-round KPI emission callback
+            post_round=lambda issue, exec_result, fix_passes, verdict: (
+                self._emit_kpis_round(
+                    inp, issue, exec_result, fix_passes, verdict, started
+                )
+            ),
+        )
+
+    # ---- PhasePipeline adapter methods ---------------------------------- #
+    async def _plan_phase_adapter(self, inp: DevLoopInput, rnd: int) -> dict | None:
+        """Adapter that binds the plan_phase callbacks."""
+        callbacks = _PlanCallbacks.default()
+        callbacks.plan_issue = self._plan_issue_activity
+        callbacks.dispatch_plan = self._dispatch_plan_activity
+        callbacks.drop_issues_in_review = lambda _inp, issues: (
+            self._drop_issues_in_review(inp, issues)
+        )
+        return await self._plan().run(inp, rnd, callbacks)
+
+    async def _execute_phase_adapter(self, inp: DevLoopInput, issue: dict) -> dict:
+        """Adapter that binds the execute_phase callbacks."""
+        callbacks = _ExecuteCallbacks.default()
+        callbacks.dispatch_execute = lambda project_id, spec, issue_number, poll: (
+            self._dispatch_execute_activity(inp, _as_int(issue.get("id")), spec, poll)
+        )
+        callbacks.answer_question = lambda project_id, issue_no, result: (
+            self._answer_question_activity(
+                inp, _as_int(issue.get("id")), result.question, result
+            )
+        )
+        callbacks.post_comment = lambda project_id, issue_number, body: (
+            self._comment_activity(project_id, issue_number, body)
+        )
+        callbacks.kpi_bump = lambda key, val: self._kpi_bump_activity(key, val)
+        return await self._execute().run(inp, issue, callbacks)
+
+    async def _review_phase_adapter(
+        self, inp: DevLoopInput, issue: dict, exec_result: dict
+    ) -> dict | None:
+        """Adapter that binds the review_phase callbacks."""
+        callbacks = _ReviewCallbacks.default()
+        callbacks.dispatch_review = lambda project_id, spec, issue_number, poll: (
+            self._dispatch_review_activity(inp, issue_number, spec, poll)
+        )
+        callbacks.post_review_findings = lambda project_id, pr_url, review, result: (
+            self._post_review_findings_activity(project_id, pr_url, review, result)
+        )
+        callbacks.post_comment = lambda project_id, issue_number, body: (
+            self._comment_activity(project_id, issue_number, body)
+        )
+        return await self._review().run(inp, issue, exec_result, callbacks)
+
+    async def _fix_pass_adapter(
+        self, inp: DevLoopInput, issue: dict, exec_result: dict, review: dict
+    ) -> bool:
+        """Adapter that binds the fix_pass callbacks."""
+        callbacks = _FixCallbacks.default()
+        callbacks.dispatch_fix = lambda project_id, spec, issue_number, poll: (
+            self._dispatch_fix_activity(inp, project_id, spec, issue_number, poll)
+        )
+        callbacks.post_comment = lambda project_id, issue_number, body: (
+            self._comment_activity(project_id, issue_number, body)
+        )
+        callbacks.kpi_bump = lambda key, val: self._kpi_bump_activity(key, val)
+        return await self._fix().run(inp, issue, exec_result, review, callbacks)
+
+    async def _notify_adapter(
+        self, inp: DevLoopInput, issue: dict, exec_result: dict
+    ) -> None:
+        """Adapter that binds the notifier callbacks."""
+        callbacks = _NotifierCallbacks.default()
+        callbacks.request_reviewer = lambda project_id, pr_number: (
+            self._request_reviewer_activity(project_id, pr_number)
+        )
+        callbacks.post_comment = lambda project_id, issue_number, body: (
+            self._comment_activity(project_id, issue_number, body)
+        )
+        await self._notify().run(inp, issue, exec_result, callbacks)
+
+    # ---- KPI emission after each round ---------------------------------- #
+    async def _emit_kpis_round(
+        self,
+        inp: DevLoopInput,
+        issue: dict,
+        exec_result: dict,
+        fix_passes: int,
+        verdict: str,
+        started: Any,
+    ) -> None:
+        """Emit per-issue KPIs after a successful round."""
+        counters = self._kpi_take()
+        await self._emit_kpis(
+            WorkflowKpiInput(
+                project_id=inp.project_id,
+                issue_number=_as_int(issue.get("id")),
+                ci_fix_iterations=counters.get("ci_fix_iterations", 0),
+                review_fix_passes=fix_passes,
+                answer_jobs=counters.get("answer_jobs", 0),
+                execute_attempts=counters.get("execute_attempts", 0),
+                review_verdict=verdict or "",
+                label_to_pr_seconds=(workflow.now() - started).total_seconds(),
+                pr_opened=bool(exec_result.get("pr_url")),
+                commits=_as_int(exec_result.get("commits")),
+                ci_exhausted=bool(exec_result.get("exhausted")),
+            )
+        )
+
+    # ---- Activity-level adapters (called by phase callbacks) ------------- #
+    async def _plan_issue_activity(self, inp: PlanIssueInput) -> dict:
+        """Real ``plan_issue`` activity call — adapter for PlanPhase."""
+        return await workflow.execute_activity(
+            "plan_issue",
+            inp,
+            result_type=dict,
+            start_to_close_timeout=timedelta(minutes=2),
+            retry_policy=_RETRY,
+        )
+
+    async def _dispatch_plan_activity(
+        self,
+        project_id: str,
+        spec: TaskSpec,
+        poll_interval_seconds: float,
+    ) -> AgentJobResult:
+        """Real ``dispatch_agent_job`` for plan — adapter for PlanPhase."""
+        return await self._dispatch(
+            project_id, spec, poll_interval_seconds=poll_interval_seconds
+        )
 
     async def _drop_issues_in_review(
         self, inp: DevLoopInput, issues: list[dict]
@@ -164,229 +367,151 @@ class DevLoopWorkflow(_WorkflowCommon):
                 )
         return kept
 
-    # ---- run ------------------------------------------------------------ #
-    @workflow.run
-    async def run(self, inp: DevLoopInput) -> DevLoopResult:
-        queued: list[int] = []
-        verdicts: dict[int, str] = {}
-        # KPI baseline (issue #122): the webhook is the sole entry point, so
-        # workflow start ≈ the moment the agent-ready label landed.
-        started = workflow.now()
-
-        for rnd in range(1, inp.max_iterations + 1):
-            plan = await self._plan_phase(inp, rnd)
-            if plan is None:
-                return DevLoopResult(
-                    "failed_plan",
-                    queued_for_review=queued,
-                    detail="plan rejected",
-                    review_verdicts=verdicts,
-                )
-            issues = plan.get("issues") or []
-            if not issues:
-                workflow.logger.info(
-                    "No unblocked agent-ready issues remain — Dev Loop complete for %s",
-                    inp.project_id,
-                )
-                return DevLoopResult(
-                    "completed",
-                    queued_for_review=queued,
-                    review_verdicts=verdicts,
-                )
-
-            issue = issues[0]  # sequential: work one issue per round
-            exec_result = await self._execute_phase(inp, issue)
-            if not exec_result["commits"]:
-                # _execute_phase already posted the failure/exhaustion comment
-                # and parked the issue — move on to the next issue this round.
-                self._kpi_take()  # don't leak this issue's counters into the next
-                continue
-
-            review = await self._review_phase(inp, issue, exec_result)
-            verdict = (review or {}).get("verdict")
-            # needs_fixes → dispatch a fix pass with the findings, re-review,
-            # repeat up to review_fix_max_iterations before handing to a human.
-            fix_passes = 0
-            while (
-                verdict == "needs_fixes" and fix_passes < inp.review_fix_max_iterations
-            ):
-                fix_passes += 1
-                if not await self._review_fix_pass(
-                    inp, issue, exec_result, review or {}
-                ):
-                    break
-                review = await self._review_phase(inp, issue, exec_result)
-                verdict = (review or {}).get("verdict")
-            await self._notify_reviewer(inp, issue, exec_result)
-            queued.append(_as_int(issue.get("id")))
-            if verdict:
-                verdicts[_as_int(issue.get("id"))] = verdict
-
-            # Per-issue workflow KPIs (issue #122) — best-effort emission.
-            counters = self._kpi_take()
-            await self._emit_kpis(
-                WorkflowKpiInput(
-                    project_id=inp.project_id,
-                    issue_number=_as_int(issue.get("id")),
-                    ci_fix_iterations=counters.get("ci_fix_iterations", 0),
-                    review_fix_passes=fix_passes,
-                    answer_jobs=counters.get("answer_jobs", 0),
-                    execute_attempts=counters.get("execute_attempts", 0),
-                    review_verdict=verdict or "",
-                    label_to_pr_seconds=(workflow.now() - started).total_seconds(),
-                    pr_opened=bool(exec_result.get("pr_url")),
-                    commits=_as_int(exec_result.get("commits")),
-                    ci_exhausted=bool(exec_result.get("exhausted")),
-                )
-            )
-
-        workflow.logger.info(
-            "Reached max iterations (%d) — pausing Dev Loop for %s.",
-            inp.max_iterations,
+    async def _dispatch_execute_activity(
+        self,
+        inp: DevLoopInput,
+        issue_no: int,
+        spec: TaskSpec,
+        poll_interval_seconds: float,
+    ) -> AgentJobResult:
+        """Real dispatch activity — adapter for ExecutePhase."""
+        return await self._dispatch(
             inp.project_id,
+            spec,
+            issue_number=issue_no,
+            poll_interval_seconds=poll_interval_seconds,
         )
-        return DevLoopResult(
-            "completed", queued_for_review=queued, review_verdicts=verdicts
-        )
 
-    # ---- Plan phase (#20, #74) ----------------------------------------- #
-    async def _plan_phase(self, inp: DevLoopInput, rnd: int) -> dict | None:
-        """Return the plan dict for this round.
+    async def _answer_question_activity(
+        self, inp: DevLoopInput, issue_no: int, question: str, result: AgentJobResult
+    ) -> AgentJobResult:
+        """Resolve mid-run ``AWAITING_HUMAN`` pauses via the answer agent.
 
-        When ``inp.triggering_issue > 0`` (webhook-triggered runs), the Plan
-        phase is a lightweight ``plan_issue`` activity: one GitHub API call to
-        confirm the issue is open and still labeled, then a string-format for
-        the branch slug. This avoids the full Agent Execution Job that used to
-        be required (issue #120).
+        Each question dispatches a fresh ``Phase.ANSWER`` Agent Execution Job
+        that investigates the question; its answer is patched back into the
+        paused job's ConfigMap and the original job resumes.
 
-        When ``triggering_issue == 0`` (e.g. CodeQualityWorkflow's improve
-        phase) the agent-driven planner is used — those flows genuinely need
-        backlog reasoning.
-
-        ``_drop_issues_in_review`` filters out issues that already have an
-        open agent PR so the workflow doesn't re-surface them.
+        Once ``max_questions_per_phase`` questions have been dispatched,
+        the workflow stops asking and tells the parked job to proceed with its
+        best guess (no further answer jobs spawned).
         """
-        if inp.triggering_issue > 0:
-            # Lightweight path: single-issue plan via activity (issue #120).
-            plan = await workflow.execute_activity(
-                "plan_issue",
-                PlanIssueInput(
-                    project_id=inp.project_id,
-                    issue_number=inp.triggering_issue,
-                ),
-                result_type=dict,
-                start_to_close_timeout=timedelta(minutes=2),
-                retry_policy=_RETRY,
+        # This method is called in a loop by the ExecutePhase callbacks.
+        # Each call resolves one AWAITING_HUMAN pause.
+        questions_asked = getattr(self, "_answer_questions_count", 0)
+        if questions_asked >= inp.max_questions_per_phase:
+            answer = "proceed with your best guess"
+            await self._comment(
+                inp.project_id,
+                issue_no,
+                "⚠️ Question limit reached — agent proceeding with best "
+                f"guess. Question was: {question}",
             )
         else:
-            # Backlog reasoning path: dispatch Plan Agent Execution Job.
-            spec = TaskSpec(
-                phase="plan",
-                project_id=inp.project_id,
-                issue_number=inp.triggering_issue,
-                extra={"agent_label": inp.agent_label},
+            questions_asked += 1
+            self._answer_questions_count = questions_asked  # type: ignore[attr-defined]
+            self._kpi_bump("answer_jobs")
+            answer = await self._answer_via_agent(
+                inp, issue_no, question, result.branch
             )
-            result = await self._dispatch(
-                inp.project_id, spec, poll_interval_seconds=inp.poll_interval_seconds
-            )
-            plan = result.plan or {"issues": []}
 
-        issues = plan.get("issues") or []
-        issues = await self._drop_issues_in_review(inp, issues)
-        return {**plan, "issues": issues}
-
-    # ---- Execute phase (#21, #75) --------------------------------------- #
-    async def _execute_phase(self, inp: DevLoopInput, issue: dict) -> dict:
-        """Dispatch the Execute Agent Execution Job, retrying on zero commits.
-
-        If the dispatch produces zero commits, the workflow retries up to
-        ``execute_max_iterations`` times — each attempt preceded by a "⏳
-        queued" comment. Once an attempt produces commits (or fails outright),
-        the retry loop stops and the result is processed normally (including
-        the CI fix loop). If every attempt produces zero commits, the issue is
-        parked with a "❌ Execute exhausted ..." comment and the round moves on
-        to the next issue (no CI fix loop, no reviewer notification).
-        """
-        issue_no = _as_int(issue.get("id"))
-        spec = TaskSpec(
-            phase="execute",
-            project_id=inp.project_id,
-            issue_number=issue_no,
-            title=issue.get("title", ""),
-            branch=issue.get("branch", ""),
+        await workflow.execute_activity(
+            "answer_agent_job",
+            AnswerInput(result.job_name, answer),
+            start_to_close_timeout=timedelta(minutes=2),
+            retry_policy=_RETRY,
         )
-
-        max_iters = inp.execute_max_iterations
-        result = None
-        for attempt in range(1, max_iters + 1):
-            self._kpi_bump("execute_attempts")
-            await self._comment(
-                inp.project_id,
-                issue_no,
-                "⏳ queued — agent is working on this issue",
-            )
-            result = await self._dispatch(
-                inp.project_id,
-                spec,
-                issue_number=issue_no,
+        result = await workflow.execute_activity(
+            "await_agent_job",
+            AwaitInput(
+                result.job_name,
                 poll_interval_seconds=inp.poll_interval_seconds,
-            )
-            result = await self._answer_questions(inp, issue_no, result)
-
-            if result.status != JobStatus.COMPLETE.value or result.commits:
-                break
-            # Zero commits and status == COMPLETE — retry (loop continues).
-
-        if result.status != JobStatus.COMPLETE.value:
-            await self._comment(
-                inp.project_id,
-                issue_no,
-                f"❌ Parked — execute phase failed: {result.error or 'unknown error'}",
-            )
-            return {
-                "issue_id": issue_no,
-                "branch": "",
-                "pr_url": "",
-                "commits": 0,
-                "exhausted": False,
-            }
-
-        if not result.commits:
-            await self._comment(
-                inp.project_id,
-                issue_no,
-                f"❌ Execute exhausted {max_iters} attempts with no commits"
-                " — skipping this round",
-            )
-            return {
-                "issue_id": issue_no,
-                "branch": "",
-                "pr_url": "",
-                "commits": 0,
-                "exhausted": False,
-            }
-
-        await self._comment(
-            inp.project_id,
-            issue_no,
-            f"✅ Implemented — PR: {result.pr_url or result.branch}",
+            ),
+            result_type=AgentJobResult,
+            start_to_close_timeout=_ACTIVITY_TIMEOUT,
+            retry_policy=_RETRY,
         )
-        exec_result = {
-            "issue_id": issue_no,
-            "branch": result.branch,
-            "pr_url": result.pr_url,
-            "commits": result.commits,
-            "exhausted": False,
-        }
-        exhausted = await self._ci_fix_loop(
+        await self._cleanup(result.job_name)
+        return result
+
+    async def _comment_activity(
+        self, project_id: str, issue_number: int, body: str
+    ) -> None:
+        """Real ``post_github_comment`` activity — adapter for comment calls."""
+        return await self._comment(project_id, issue_number, body)
+
+    async def _kpi_bump_activity(self, key: str, val: int) -> None:
+        """Real KPI bump — adapter for KPI calls."""
+        return self._kpi_bump(key, val)
+
+    async def _dispatch_review_activity(
+        self,
+        inp: DevLoopInput,
+        issue_no: int,
+        spec: TaskSpec,
+        poll_interval_seconds: float,
+    ) -> AgentJobResult:
+        """Real ``dispatch_agent_job`` for review — adapter for ReviewPhase."""
+        return await self._dispatch(
             inp.project_id,
-            issue_no,
-            exec_result,
-            ci_fix_max_iterations=inp.ci_fix_max_iterations,
-            poll_interval_seconds=inp.poll_interval_seconds,
+            spec,
+            issue_number=issue_no,
+            poll_interval_seconds=poll_interval_seconds,
         )
-        exec_result["exhausted"] = exhausted
-        return exec_result
+
+    async def _post_review_findings_activity(
+        self, project_id: str, pr_url: str, review: dict, result: AgentJobResult
+    ) -> None:
+        """Post the reviewer's findings to the PR (adapter for ReviewPhase).
+
+        Raises ``RuntimeError`` when findings exist but the PR URL cannot be
+        resolved (unparseable or missing), so the failure surfaces rather than
+        silently dropping review comments.
+        """
+        summary = review.get("summary", "")
+        inline = [
+            InlineComment(
+                file=c.get("file", ""),
+                line=_as_int(c.get("line")),
+                body=c.get("body", ""),
+            )
+            for c in (review.get("inline_comments") or [])
+        ]
+        if not summary and not inline:
+            return
+        pr_number = logic.pr_number_from_url(pr_url)
+        if not pr_number:
+            raise RuntimeError(
+                f"cannot post review findings: pr_url '{pr_url}' "
+                f"for project {project_id} is unparseable or missing"
+            )
+        await workflow.execute_activity(
+            "post_pr_comments",
+            PostCommentsInput(project_id, pr_number, summary, inline),
+            start_to_close_timeout=timedelta(minutes=2),
+            retry_policy=_RETRY,
+        )
+
+    async def _dispatch_fix_activity(
+        self,
+        inp: DevLoopInput,
+        project_id: str,
+        spec: TaskSpec,
+        issue_no: int,
+        poll_interval_seconds: float,
+    ) -> AgentJobResult:
+        """Real ``dispatch_agent_job`` for fix pass — adapter for ReviewFixPass."""
+        return await self._dispatch(
+            project_id,
+            spec,
+            issue_number=issue_no,
+            poll_interval_seconds=poll_interval_seconds,
+        )
+
+    async def _request_reviewer_activity(
+        self, project_id: str, pr_number: Optional[int]
+    ) -> ReviewerRequestResult:
+        """Real ``request_github_reviewer`` activity — adapter for Notifier."""
+        return await self._request_reviewer(project_id, pr_number or 0)
 
     async def _answer_via_agent(
         self, inp: DevLoopInput, issue_no: int, question: str, branch: str
@@ -423,240 +548,3 @@ class DevLoopWorkflow(_WorkflowCommon):
             f"🤔 Agent asked: {question} → Auto-answered by agent: {answer}",
         )
         return answer
-
-    async def _answer_questions(
-        self, inp: DevLoopInput, issue_no: int, result: AgentJobResult
-    ) -> AgentJobResult:
-        """Resolve mid-run ``AWAITING_HUMAN`` pauses without a human.
-
-        Each question dispatches a fresh ``Phase.ANSWER`` Agent Execution Job
-        (counted against ``maxConcurrentJobs`` via ``JOB_DISPATCH_QUEUE``) that
-        investigates the question with access to the working branch; its
-        answer is patched back into the paused job's ConfigMap via
-        ``answer_agent_job`` and the original job resumes via
-        ``await_agent_job``.
-
-        Once the phase run has spawned ``max_questions_per_phase`` answer jobs,
-        the workflow stops asking and tells the parked job to proceed with its
-        best guess directly (no further answer jobs spawned).
-        """
-        questions_asked = 0
-        while result.status == JobStatus.AWAITING_HUMAN.value:
-            question = result.question
-            if questions_asked >= inp.max_questions_per_phase:
-                answer = "proceed with your best guess"
-                await self._comment(
-                    inp.project_id,
-                    issue_no,
-                    "⚠️ Question limit reached — agent proceeding with best "
-                    f"guess. Question was: {question}",
-                )
-            else:
-                questions_asked += 1
-                self._kpi_bump("answer_jobs")
-                answer = await self._answer_via_agent(
-                    inp, issue_no, question, result.branch
-                )
-
-            await workflow.execute_activity(
-                "answer_agent_job",
-                AnswerInput(result.job_name, answer),
-                start_to_close_timeout=timedelta(minutes=2),
-                retry_policy=_RETRY,
-            )
-            result = await workflow.execute_activity(
-                "await_agent_job",
-                AwaitInput(
-                    result.job_name,
-                    poll_interval_seconds=inp.poll_interval_seconds,
-                ),
-                result_type=AgentJobResult,
-                start_to_close_timeout=_ACTIVITY_TIMEOUT,
-                retry_policy=_RETRY,
-            )
-        await self._cleanup(result.job_name)
-        return result
-
-    # ---- Review fix pass ------------------------------------------------ #
-    async def _review_fix_pass(
-        self, inp: DevLoopInput, issue: dict, exec_result: dict, review: dict
-    ) -> bool:
-        """Dispatch one Phase.PR_COMMENT job addressing the reviewer's findings.
-
-        The reviewer's summary (which enumerates unmet acceptance criteria and
-        bugs) is handed to the fix agent exactly like a human PR comment would
-        be — the proven re-engagement path (omneval#70: the agent resolved
-        every finding of a human review in one such pass). Returns True when
-        the fix pass produced commits (a re-review is worthwhile), False when
-        it failed or changed nothing.
-        """
-        issue_no = _as_int(issue.get("id"))
-        pr_number = logic.pr_number_from_url(exec_result.get("pr_url", ""))
-        findings = review.get("summary", "")
-        inline = review.get("inline_comments") or []
-        if inline:
-            findings += "\n\nInline comments:\n" + "\n".join(
-                f"- {c.get('file', '')}:{c.get('line', 0)} — {c.get('body', '')}"
-                for c in inline
-            )
-        if not findings.strip():
-            return False
-        await self._comment(
-            inp.project_id,
-            issue_no,
-            "⏳ queued — agent is addressing automated review findings",
-        )
-        spec = TaskSpec(
-            phase=Phase.PR_COMMENT.value,
-            project_id=inp.project_id,
-            issue_number=issue_no,
-            branch=exec_result.get("branch", ""),
-            extra={
-                "comment_body": findings,
-                "source": "review",
-                "author": "the automated reviewer",
-                "pr_number": pr_number,
-            },
-        )
-        result = await self._dispatch(
-            inp.project_id,
-            spec,
-            issue_number=issue_no,
-            poll_interval_seconds=inp.poll_interval_seconds,
-        )
-        if result.status != JobStatus.COMPLETE.value or not result.commits:
-            return False
-        await self._comment(
-            inp.project_id,
-            issue_no,
-            f"🔧 Fix pass pushed {result.commits} commit(s) addressing review findings.",
-        )
-        exhausted = await self._ci_fix_loop(
-            inp.project_id,
-            issue_no,
-            exec_result,
-            ci_fix_max_iterations=inp.ci_fix_max_iterations,
-            poll_interval_seconds=inp.poll_interval_seconds,
-        )
-        exec_result["exhausted"] = exhausted
-        return True
-
-    # ---- Review phase (#22, #55) --------------------------------------- #
-    async def _review_phase(
-        self, inp: DevLoopInput, issue: dict, exec_result: dict
-    ) -> dict | None:
-        """Review the PR and return the review payload (summary, verdict
-        lgtm/needs_fixes/needs_human, inline_comments), or None when the
-        review job produced nothing parseable."""
-        issue_no = _as_int(issue.get("id"))
-        spec = TaskSpec(
-            phase="review",
-            project_id=inp.project_id,
-            issue_number=issue_no,
-            branch=exec_result["branch"],
-        )
-        await self._comment(
-            inp.project_id,
-            issue_no,
-            "⏳ queued — agent is reviewing this issue",
-        )
-        result = await self._dispatch(
-            inp.project_id,
-            spec,
-            issue_number=issue_no,
-            poll_interval_seconds=inp.poll_interval_seconds,
-        )
-        review = result.review or {}
-        verdict = review.get("verdict") if review else None
-        if verdict:
-            await self._comment(
-                inp.project_id,
-                issue_no,
-                f"🔎 Reviewed #{issue_no} — verdict: {verdict}.",
-            )
-        else:
-            await self._comment(
-                inp.project_id,
-                issue_no,
-                f"🔎 Reviewed #{issue_no} — no changes needed.",
-            )
-        await self._post_review_findings(inp, exec_result, result)
-        return review or None
-
-    async def _post_review_findings(
-        self, inp: DevLoopInput, exec_result: dict, result: AgentJobResult
-    ) -> None:
-        """Post the reviewer's findings to the PR.
-
-        Raises ``RuntimeError`` when findings exist but the PR URL cannot be
-        resolved (unparseable or missing), so the failure surfaces rather than
-        silently dropping review comments.
-        """
-        review = result.review or {}
-        summary = review.get("summary", "")
-        inline = [
-            InlineComment(
-                file=c.get("file", ""),
-                line=_as_int(c.get("line")),
-                body=c.get("body", ""),
-            )
-            for c in (review.get("inline_comments") or [])
-        ]
-        if not summary and not inline:
-            return
-        pr_url = exec_result.get("pr_url", "")
-        pr_number = logic.pr_number_from_url(pr_url)
-        if not pr_number:
-            raise RuntimeError(
-                f"cannot post review findings: pr_url '{pr_url}' "
-                f"for project {inp.project_id} is unparseable or missing"
-            )
-        await workflow.execute_activity(
-            "post_pr_comments",
-            PostCommentsInput(inp.project_id, pr_number, summary, inline),
-            start_to_close_timeout=timedelta(minutes=2),
-            retry_policy=_RETRY,
-        )
-
-    # ---- Reviewer notification (#74) ------------------------------------ #
-    async def _notify_reviewer(
-        self, inp: DevLoopInput, issue: dict, exec_result: dict
-    ) -> None:
-        """Request a GitHub PR reviewer and post a notification comment.
-
-        Reads ``pr_reviewer`` from the project's ``ProjectConfig`` (via the
-        ``request_github_reviewer`` activity). The notification only claims a
-        reviewer was tagged when the request actually succeeded — when it was
-        skipped (no reviewer configured, no PR to request on) or failed (a
-        GitHub API error), the comment says so honestly instead (issue #88);
-        a confidently-wrong "tagged" claim would mislead the human who's
-        supposed to act on it.
-        """
-        issue_no = _as_int(issue.get("id"))
-        pr_url = exec_result.get("pr_url", "")
-        pr_number = logic.pr_number_from_url(pr_url)
-
-        # Resolve the configured reviewer from the project registry.
-        # We use the shared _request_reviewer helper (mixin) so the I/O stays
-        # in activities, not in the workflow sandbox — the activity resolves
-        # the actual reviewer login from the project registry and reports
-        # back whether the request actually succeeded.
-        reviewer_result = await self._request_reviewer(inp.project_id, pr_number)
-        if reviewer_result.requested:
-            reviewer_note = "Reviewer has been tagged."
-        elif reviewer_result.reason:
-            reviewer_note = f"No reviewer was requested ({reviewer_result.reason})."
-        else:
-            reviewer_note = "No reviewer was requested."
-
-        note = (
-            " ⚠️ CI is still failing after exhausting the CI fix attempts —"
-            " please take a look."
-            if exec_result.get("exhausted")
-            else ""
-        )
-        await self._comment(
-            inp.project_id,
-            issue_no,
-            f"👀 Ready for review — PR: {pr_url}. {reviewer_note}{note}",
-        )
