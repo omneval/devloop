@@ -63,3 +63,17 @@ def test_tmux_is_installed():
         "Dockerfile does not install tmux — devloop workers will log "
         "'tmux is not installed' and fall back to subprocess-based terminals"
     )
+
+
+def test_libgtk3_is_installed():
+    """libgtk-3 must be present in the agent-base image so sentrux can find
+    its shared library (libgtk-3.so.0) at runtime.
+
+    See issue #176 for the error that prompted this requirement:
+    "sentrux: error while loading shared libraries: libgtk-3.so.0: cannot open".
+    """
+    assert "libgtk-3-0" in _DOCKERFILE, (
+        "Dockerfile does not install libgtk-3-0 — sentrux fails at runtime "
+        "with 'error while loading shared libraries: libgtk-3.so.0: cannot open' "
+        "(issue #176)"
+    )
