@@ -205,7 +205,7 @@ class ReviewPhase:
             "post_pr_comments",
             PostCommentsInput(project_id, pr_number, summary, inline),
             start_to_close_timeout=timedelta(minutes=2),
-            retry_policy=_RETRY,
+            retry_policy=RetryPolicy(maximum_attempts=1),
         )
 
     async def _comment(
