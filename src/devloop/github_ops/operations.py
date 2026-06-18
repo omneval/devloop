@@ -20,6 +20,19 @@ from typing import Any
 from temporalio import activity
 
 from .. import cluster
+from ..cichecks import CICheckFailure, CIChecksResult, PollCIChecksInput
+from ..execution import OpenAgentPRsInput
+from ..github import (
+    CreateGithubIssueInput,
+    GetPRBranchInput,
+    GetPRDiffInput,
+    GithubNotificationInput,
+    PlanIssueInput,
+    PostCommentsInput,
+    RequestReviewerInput,
+    ReviewerRequestResult,
+    UpdateGithubIssueInput,
+)
 from ..projects import ProjectConfig, parse_github_repo
 
 # Import get_project via a lazy accessor so that monkeypatches to
@@ -170,12 +183,9 @@ async def _async_resolve(cfg: ProjectConfig, token: str | None = None) -> str:  
 
 
 @activity.defn
-async def post_pr_comments(inp: object) -> None:  # noqa: ANN201
+async def post_pr_comments(inp: PostCommentsInput) -> None:
     """Post the reviewer's findings to a PR: a summary comment plus any
     line-anchored inline review comments."""
-    from ..github import PostCommentsInput
-
-    inp: PostCommentsInput = inp  # type: ignore[no-redef]
     if not inp.summary and not inp.inline_comments:
         raise ValueError(
             "post_pr_comments requires a non-empty summary or inline comments"
@@ -234,9 +244,8 @@ async def post_pr_comments(inp: object) -> None:  # noqa: ANN201
 
 
 @activity.defn
-async def file_issues(inp: object) -> list[int]:  # noqa: ANN201
+async def file_issues(inp: FileIssuesInput) -> list[int]:
     """File new agent-ready issues."""
-    inp: FileIssuesInput = inp  # type: ignore[no-redef]
     cfg = _github_ops.get_project(inp.project_id)
     repo = parse_github_repo(cfg.github_url)
 
@@ -258,11 +267,8 @@ async def file_issues(inp: object) -> list[int]:  # noqa: ANN201
 
 
 @activity.defn
-async def post_github_comment(inp: object) -> None:  # noqa: ANN201
+async def post_github_comment(inp: GithubNotificationInput) -> None:
     """Post a comment on a GitHub Issue using the project's scoped token."""
-    from ..github import GithubNotificationInput
-
-    inp: GithubNotificationInput = inp  # type: ignore[no-redef]
 
     cfg = _github_ops.get_project(inp.project_id)
     repo = parse_github_repo(cfg.github_url)
@@ -286,11 +292,8 @@ async def post_github_comment(inp: object) -> None:  # noqa: ANN201
 
 
 @activity.defn
-async def request_github_reviewer(inp: object) -> object:  # noqa: ANN201
+async def request_github_reviewer(inp: RequestReviewerInput) -> ReviewerRequestResult:
     """Request the project's configured ``pr_reviewer`` as a reviewer on a PR."""
-    from ..github import RequestReviewerInput, ReviewerRequestResult
-
-    inp: RequestReviewerInput = inp  # type: ignore[no-redef]
 
     cfg = _github_ops.get_project(inp.project_id)
     reviewer = inp.reviewer or cfg.pr_reviewer
@@ -333,14 +336,10 @@ async def request_github_reviewer(inp: object) -> object:  # noqa: ANN201
 
 
 @activity.defn
-async def get_pr_diff(inp: object) -> str:  # noqa: ANN201
+async def get_pr_diff(inp: GetPRDiffInput) -> str:
     """Fetch the unified diff for a PR via the GitHub REST API."""
-    if inp.pr_number <= 0:  # type: ignore[union-attr]
+    if inp.pr_number <= 0:
         return ""
-
-    from ..github import GetPRDiffInput
-
-    inp: GetPRDiffInput = inp  # type: ignore[no-redef]
 
     cfg = _github_ops.get_project(inp.project_id)
     repo = parse_github_repo(cfg.github_url)
@@ -358,11 +357,8 @@ async def get_pr_diff(inp: object) -> str:  # noqa: ANN201
 
 
 @activity.defn
-async def get_pr_branch(inp: object) -> str:  # noqa: ANN201
+async def get_pr_branch(inp: GetPRBranchInput) -> str:
     """Resolve a PR's head branch name from its number via the GitHub REST API."""
-    from ..github import GetPRBranchInput
-
-    inp: GetPRBranchInput = inp  # type: ignore[no-redef]
 
     cfg = _github_ops.get_project(inp.project_id)
     repo = parse_github_repo(cfg.github_url)
@@ -378,11 +374,8 @@ async def get_pr_branch(inp: object) -> str:  # noqa: ANN201
 
 
 @activity.defn
-async def poll_ci_checks(inp: object) -> object:  # noqa: ANN201
+async def poll_ci_checks(inp: PollCIChecksInput) -> CIChecksResult:
     """Poll the GitHub Checks API for the PR's head commit and report results."""
-    from ..cichecks import CICheckFailure, CIChecksResult, PollCIChecksInput
-
-    inp: PollCIChecksInput = inp  # type: ignore[no-redef]
 
     if inp.pr_number <= 0:
         return CIChecksResult(all_passed=False, pending=False, failures=[])
@@ -450,11 +443,8 @@ async def poll_ci_checks(inp: object) -> object:  # noqa: ANN201
 
 
 @activity.defn
-async def open_agent_pr_issue_numbers(inp: object) -> list[int]:  # noqa: ANN201
+async def open_agent_pr_issue_numbers(inp: OpenAgentPRsInput) -> list[int]:
     """Return issue numbers that already have an open agent PR."""
-    from ..execution import OpenAgentPRsInput
-
-    inp: OpenAgentPRsInput = inp  # type: ignore[no-redef]
 
     cfg = _github_ops.get_project(inp.project_id)
     repo = parse_github_repo(cfg.github_url)
@@ -479,11 +469,8 @@ async def open_agent_pr_issue_numbers(inp: object) -> list[int]:  # noqa: ANN201
 
 
 @activity.defn
-async def plan_issue(inp: object) -> dict:  # noqa: ANN201
+async def plan_issue(inp: PlanIssueInput) -> dict:
     """Lightweight replacement for the Plan Agent Execution Job."""
-    from ..github import PlanIssueInput
-
-    inp: PlanIssueInput = inp  # type: ignore[no-redef]
 
     cfg = _github_ops.get_project(inp.project_id)
     repo = parse_github_repo(cfg.github_url)
@@ -528,11 +515,8 @@ async def plan_issue(inp: object) -> dict:  # noqa: ANN201
 
 
 @activity.defn
-async def create_github_issue(inp: object) -> int:  # noqa: ANN201
+async def create_github_issue(inp: CreateGithubIssueInput) -> int:
     """Create a new GitHub Issue and return its issue number."""
-    from ..github import CreateGithubIssueInput
-
-    inp: CreateGithubIssueInput = inp  # type: ignore[no-redef]
 
     cfg = _github_ops.get_project(inp.project_id)
     repo = parse_github_repo(cfg.github_url)
@@ -553,11 +537,8 @@ async def create_github_issue(inp: object) -> int:  # noqa: ANN201
 
 
 @activity.defn
-async def update_github_issue(inp: object) -> None:  # noqa: ANN201
+async def update_github_issue(inp: UpdateGithubIssueInput) -> None:
     """Patch an existing GitHub Issue's body and/or state."""
-    from ..github import UpdateGithubIssueInput
-
-    inp: UpdateGithubIssueInput = inp  # type: ignore[no-redef]
 
     cfg = _github_ops.get_project(inp.project_id)
     repo = parse_github_repo(cfg.github_url)
