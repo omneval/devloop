@@ -15,4 +15,8 @@ data:
     {{- end -}}
     {{- end -}}
     {{- end -}}
+    {{- /*
+      All project fields flow through to the ConfigMap via this toYaml pass-through,
+      including optional fields like open_pr_as_draft (issue #175).
+    */ -}}
     {{- toYaml (dict "projects" .Values.projects) | nindent 4 }}
