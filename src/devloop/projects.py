@@ -51,6 +51,9 @@ class ProjectConfig:
     # to the deployment-wide AGENT_RUNNER env (Helm
     # temporalWorker.agentJob.runner), then to the openhands default.
     agent_runner: str = ""
+    # Whether to open the PR as a draft (True) or as ready for review (False).
+    # Defaults to False so the devloop workflow opens ready PRs by default.
+    open_pr_as_draft: bool = False
 
 
 def load_projects(path: str | Path) -> list[ProjectConfig]:
@@ -79,6 +82,7 @@ def load_projects(path: str | Path) -> list[ProjectConfig]:
                 github_token_secret=entry["github_token_secret"],
                 pr_reviewer=entry.get("pr_reviewer", ""),
                 agent_runner=entry.get("agent_runner", ""),
+                open_pr_as_draft=entry.get("open_pr_as_draft", False),
             )
         )
     logger.info(

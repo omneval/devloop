@@ -69,3 +69,47 @@ tests:
     asserts:
       - failedTemplate:
           errorMessage: 'projects[0] is missing required field "github_token_secret"'
+
+  - it: renders open_pr_as_draft when set to true
+    set:
+      temporalHost: "temporal-frontend.agents.svc:7233"
+      projects:
+        - id: draft-proj
+          github_url: https://github.com/example/draft
+          default_branch: main
+          agent_label: agent-ready
+          github_token_secret: draft-token
+          open_pr_as_draft: true
+    asserts:
+      - equal:
+          path: data["projects.yaml"]
+          value: |
+            projects:
+            - agent_label: agent-ready
+              default_branch: main
+              github_token_secret: draft-token
+              github_url: https://github.com/example/draft
+              id: draft-proj
+              open_pr_as_draft: true
+
+  - it: renders open_pr_as_draft when set to false
+    set:
+      temporalHost: "temporal-frontend.agents.svc:7233"
+      projects:
+        - id: ready-proj
+          github_url: https://github.com/example/ready
+          default_branch: main
+          agent_label: agent-ready
+          github_token_secret: ready-token
+          open_pr_as_draft: false
+    asserts:
+      - equal:
+          path: data["projects.yaml"]
+          value: |
+            projects:
+            - agent_label: agent-ready
+              default_branch: main
+              github_token_secret: ready-token
+              github_url: https://github.com/example/ready
+              id: ready-proj
+              open_pr_as_draft: false

@@ -18,6 +18,7 @@ from temporalio.common import RetryPolicy
 
 from .._constants import _ACTIVITY_TIMEOUT, _GITHUB_COMMENT_TIMEOUT, _RETRY
 from ..phases.cycle import CICycle
+from ..projects import get_project
 from ..shared import (
     AgentJobResult,
     DispatchInput,
@@ -90,12 +91,22 @@ class ExecutePhase:
         cb = callbacks or ExecutePhaseCallbacks.default()
         issue_no = _as_int(issue.get("id"))
 
+        try:
+            project_cfg = get_project(inp.project_id)
+        except KeyError:
+            project_cfg = None
+
+        extra: dict = {}
+        if project_cfg is not None:
+            extra["open_pr_as_draft"] = project_cfg.open_pr_as_draft
+
         spec = TaskSpec(
             phase="execute",
             project_id=inp.project_id,
             issue_number=issue_no,
             title=issue.get("title", ""),
             branch=issue.get("branch", ""),
+            extra=extra,
         )
 
         max_iters = inp.execute_max_iterations

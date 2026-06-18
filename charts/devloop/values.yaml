@@ -107,6 +107,7 @@ agentsNamespace: ""
 #   omneval_ingest_secret   - only needed if you run an omneval/omneval ingest
 #   pr_reviewer             - GitHub login requested as reviewer on agent PRs
 #   agent_runner            - "openhands" (default) or "claude-agent-sdk"
+#   open_pr_as_draft        - open PRs as drafts; defaults to false
 #
 # Example:
 #   projects:

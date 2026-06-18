@@ -732,37 +732,47 @@ def push_branch(workdir: str, branch: str, force: bool = False) -> None:
     _run(cmd, cwd=workdir)
 
 
-def open_draft_pr(workdir: str, branch: str, base: str, title: str, body: str) -> str:
-    """Open a draft PR for the pushed branch (best-effort).
+def open_draft_pr(
+    workdir: str,
+    branch: str,
+    base: str,
+    title: str,
+    body: str,
+    draft: bool = False,
+) -> str:
+    """Open a PR for the pushed branch (best-effort).
 
     A failure here must NOT abort an otherwise-successful implementation: the
     branch is already pushed, and the merge phase operates on the branch
     directly (git fetch + merge), not the PR. The PR is purely informational.
     Common failure: the GitHub token lacks ``pull_requests: write`` (gh exits
     non-zero / 403), or a PR for the branch already exists. Returns the PR URL,
-    or "" when creation failed (logged, not raised)."""
-    result = subprocess.run(
-        [
-            "gh",
-            "pr",
-            "create",
-            "--draft",
-            "--head",
-            branch,
-            "--base",
-            base,
-            "--title",
-            title,
-            "--body",
-            body,
-        ],
-        cwd=workdir,
-        text=True,
-        capture_output=True,
-    )
+    or "" when creation failed (logged, not raised).
+
+    *draft* controls whether ``--draft`` is passed to ``gh pr create`` (issue
+    #175).  Defaults to ``False`` — PRs are ready for review by default.
+    """
+    cmd: list[str] = [
+        "gh",
+        "pr",
+        "create",
+    ]
+    if draft:
+        cmd.append("--draft")
+    cmd += [
+        "--head",
+        branch,
+        "--base",
+        base,
+        "--title",
+        title,
+        "--body",
+        body,
+    ]
+    result = subprocess.run(cmd, cwd=workdir, text=True, capture_output=True)
     if result.returncode != 0:
         log.warning(
-            "draft PR not created (continuing without one): %s",
+            "PR not created (continuing without one): %s",
             (result.stderr or result.stdout or "").strip(),
         )
         return ""
@@ -1640,12 +1650,14 @@ def handle_execute(spec: TaskSpec, tracer) -> dict:
     if test_snippet:
         summary_parts.append(f"\n--- test output ---\n{test_snippet}")
 
+    open_as_draft = spec.extra.get("open_pr_as_draft", False)
     pr_url = open_draft_pr(
         workdir,
         branch,
         base,
         title=f"agent: #{spec.issue_number} {spec.title}",
         body=f"Implements #{spec.issue_number}.\n\n{outcome.summary}\n\nCloses #{spec.issue_number}",
+        draft=open_as_draft,
     )
     return AgentJobResult(
         status="complete",

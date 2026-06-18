@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from devloop.phases.execute import ExecutePhase, ExecutePhaseCallbacks
+from devloop.projects import install_registry
 from devloop.shared import JobStatus
 
 
@@ -159,3 +160,114 @@ class TestExecutePhase:
 
         assert result["commits"] == 0
         assert result["pr_url"] == ""
+
+    @pytest.mark.asyncio
+    async def test_executes_with_open_pr_as_draft_in_extra(
+        self, tmp_path: "pytest.Path"
+    ) -> None:
+        """ExecutePhase adds open_pr_as_draft=True to TaskSpec.extra when project config says so."""
+        projects_yaml = tmp_path / "projects.yaml"
+        projects_yaml.write_text(
+            "projects:\n"
+            "- id: draft-proj\n"
+            "  github_url: https://github.com/example/repo\n"
+            "  default_branch: main\n"
+            "  agent_label: agent-ready\n"
+            "  github_token_secret: draft-token\n"
+            "  open_pr_as_draft: true\n"
+        )
+        install_registry(projects_yaml)
+
+        phase = ExecutePhase()
+
+        callbacks = ExecutePhaseCallbacks(
+            dispatch_execute=AsyncMock(
+                return_value=MagicMock(
+                    status=JobStatus.COMPLETE.value,
+                    commits=3,
+                    branch="feat/1",
+                    pr_url="https://github.com/p/r/1",
+                )
+            ),
+            post_comment=AsyncMock(),
+            kpi_bump=AsyncMock(),
+        )
+        inp = MagicMock(
+            project_id="draft-proj",
+            execute_max_iterations=1,
+            poll_interval_seconds=5.0,
+            ci_fix_max_iterations=3,
+        )
+
+        _ = await phase.run(
+            inp=inp,
+            issue={"id": "42"},
+            callbacks=callbacks,
+        )
+
+        # The dispatch_execute callback should have been called with a TaskSpec
+        # that includes open_pr_as_draft=True in its extra dict.
+        call_args = callbacks.dispatch_execute.call_args
+        assert call_args is not None, "dispatch_execute was never called"
+        _, task_spec, _, _ = call_args[
+            0
+        ]  # project_id, spec, issue_number, poll_interval
+        assert isinstance(task_spec.extra, dict)
+        assert task_spec.extra.get("open_pr_as_draft") is True
+
+        # Clean up registry
+        (tmp_path / "empty.yaml").write_text("projects: []\n")
+        install_registry(tmp_path / "empty.yaml")
+
+    @pytest.mark.asyncio
+    async def test_executes_with_open_pr_as_draft_default_false(
+        self, tmp_path: "pytest.Path"
+    ) -> None:
+        """ExecutePhase defaults open_pr_as_draft to False when not specified."""
+        projects_yaml = tmp_path / "projects.yaml"
+        projects_yaml.write_text(
+            "projects:\n"
+            "- id: no-draft-proj\n"
+            "  github_url: https://github.com/example/repo\n"
+            "  default_branch: main\n"
+            "  agent_label: agent-ready\n"
+            "  github_token_secret: token\n"
+        )
+        install_registry(projects_yaml)
+
+        phase = ExecutePhase()
+
+        callbacks = ExecutePhaseCallbacks(
+            dispatch_execute=AsyncMock(
+                return_value=MagicMock(
+                    status=JobStatus.COMPLETE.value,
+                    commits=1,
+                    branch="feat/1",
+                    pr_url="https://github.com/p/r/1",
+                )
+            ),
+            post_comment=AsyncMock(),
+            kpi_bump=AsyncMock(),
+        )
+        inp = MagicMock(
+            project_id="no-draft-proj",
+            execute_max_iterations=1,
+            poll_interval_seconds=5.0,
+            ci_fix_max_iterations=3,
+        )
+
+        _ = await phase.run(
+            inp=inp,
+            issue={"id": "99"},
+            callbacks=callbacks,
+        )
+
+        call_args = callbacks.dispatch_execute.call_args
+        assert call_args is not None
+        _, task_spec, _, _ = call_args[0]
+        assert isinstance(task_spec.extra, dict)
+        assert task_spec.extra.get("open_pr_as_draft") is False
+
+        # Clean up registry
+        (tmp_path / "empty.yaml").write_text("projects: []\n")
+        install_registry(tmp_path / "empty.yaml")

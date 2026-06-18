@@ -1468,3 +1468,164 @@ class TestRepoPromptOverrides:
         msg = entrypoint.build_agent_message(self._spec(), str(tmp_path))
         assert msg != "review override"
         assert "{{" not in msg
+
+
+# --------------------------------------------------------------------------- #
+# open_draft_pr: configurable draft vs ready PR (issue #175)
+# --------------------------------------------------------------------------- #
+class TestOpenDraftPrConfigurable:
+    def test_open_draft_pr_includes_draft_flag_when_true(self, monkeypatch):
+        """open_draft_pr(draft=True) includes --draft in the gh command."""
+        captured = []
+
+        def fake_run(args, cwd=None, text=True, capture_output=True):
+            captured.append(args)
+            return subprocess.CompletedProcess(
+                args, 0, stdout="https://github.com/owner/repo/pull/1\n", stderr=""
+            )
+
+        monkeypatch.setattr(entrypoint.subprocess, "run", fake_run)
+        entrypoint.open_draft_pr(
+            "/tmp/repo", "feat/1", "main", "agent: #1", "desc", draft=True
+        )
+
+        assert len(captured) == 1
+        assert "--draft" in captured[0]
+
+    def test_open_draft_pr_excludes_draft_flag_by_default(self, monkeypatch):
+        """open_draft_pr without draft arg omits --draft (default: ready PR)."""
+        captured = []
+
+        def fake_run(args, cwd=None, text=True, capture_output=True):
+            captured.append(args)
+            return subprocess.CompletedProcess(
+                args, 0, stdout="https://github.com/owner/repo/pull/1\n", stderr=""
+            )
+
+        monkeypatch.setattr(entrypoint.subprocess, "run", fake_run)
+        entrypoint.open_draft_pr("/tmp/repo", "feat/1", "main", "agent: #1", "desc")
+
+        assert len(captured) == 1
+        assert "--draft" not in captured[0]
+
+    def test_open_draft_pr_excludes_draft_flag_when_ready(self, monkeypatch):
+        """open_draft_pr(draft=False) omits --draft from the gh command."""
+        captured = []
+
+        def fake_run(args, cwd=None, text=True, capture_output=True):
+            captured.append(args)
+            return subprocess.CompletedProcess(
+                args, 0, stdout="https://github.com/owner/repo/pull/2\n", stderr=""
+            )
+
+        monkeypatch.setattr(entrypoint.subprocess, "run", fake_run)
+        entrypoint.open_draft_pr(
+            "/tmp/repo", "feat/2", "main", "agent: #2", "desc", draft=False
+        )
+
+        assert len(captured) == 1
+        assert "--draft" not in captured[0]
+
+    def test_open_draft_pr_handles_failure(self, monkeypatch):
+        """open_draft_pr returns empty string on gh failure."""
+        captured = []
+
+        def fake_run(args, cwd=None, text=True, capture_output=True):
+            captured.append(args)
+            return subprocess.CompletedProcess(
+                args, 1, stdout="", stderr="error: bad auth"
+            )
+
+        monkeypatch.setattr(entrypoint.subprocess, "run", fake_run)
+        result = entrypoint.open_draft_pr(
+            "/tmp/repo", "feat/3", "main", "agent: #3", "desc", draft=False
+        )
+        assert result == ""
+
+    def test_handle_execute_passes_draft_true(self, origin, tmp_path, monkeypatch):
+        """handle_execute passes draft=True when open_pr_as_draft is true."""
+        workdir = tmp_path / "repo"
+        out_file = tmp_path / "out.json"
+        calls = []
+
+        def fake_run_agent(spec, wd, tracer):
+            Path(wd, "feature.txt").write_text("implemented\n")
+            return entrypoint.AgentOutcome(summary="did the thing", files_changed=True)
+
+        def capture_open_draft_pr(*args, **kwargs):
+            calls.append(kwargs.get("draft", False))
+            return "https://github.com/omneval/omneval/pull/5"
+
+        monkeypatch.setattr(entrypoint, "run_agent", fake_run_agent)
+        monkeypatch.setattr(entrypoint, "open_draft_pr", capture_open_draft_pr)
+
+        monkeypatch.setenv(
+            "TASK_SPEC",
+            json.dumps(
+                {
+                    "phase": "execute",
+                    "project_id": "omneval",
+                    "issue_number": 5,
+                    "title": "Add feature",
+                    "body": "do it",
+                    "instructions": "go",
+                    "extra": {"open_pr_as_draft": True},
+                }
+            ),
+        )
+        monkeypatch.setenv("GITHUB_URL", str(origin))
+        monkeypatch.setenv("DEFAULT_BRANCH", "main")
+        monkeypatch.setenv("WORKDIR", str(workdir))
+        monkeypatch.setenv("OUTPUT_CONFIGMAP", "agent-omneval-execute-5-a1")
+        monkeypatch.setenv("OUTPUT_FILE", str(out_file))
+        monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+
+        assert entrypoint.main() == 0
+
+        payload = json.loads(out_file.read_text())
+        assert payload["status"] == "complete"
+        assert calls == [True]
+
+    def test_handle_execute_passes_draft_false(self, origin, tmp_path, monkeypatch):
+        """handle_execute passes draft=False when open_pr_as_draft is false."""
+        workdir = tmp_path / "repo"
+        out_file = tmp_path / "out.json"
+        calls = []
+
+        def fake_run_agent(spec, wd, tracer):
+            Path(wd, "feature.txt").write_text("implemented\n")
+            return entrypoint.AgentOutcome(summary="did the thing", files_changed=True)
+
+        def capture_open_draft_pr(*args, **kwargs):
+            calls.append(kwargs.get("draft", False))
+            return "https://github.com/omneval/omneval/pull/6"
+
+        monkeypatch.setattr(entrypoint, "run_agent", fake_run_agent)
+        monkeypatch.setattr(entrypoint, "open_draft_pr", capture_open_draft_pr)
+
+        monkeypatch.setenv(
+            "TASK_SPEC",
+            json.dumps(
+                {
+                    "phase": "execute",
+                    "project_id": "omneval",
+                    "issue_number": 6,
+                    "title": "Add feature",
+                    "body": "do it",
+                    "instructions": "go",
+                    "extra": {"open_pr_as_draft": False},
+                }
+            ),
+        )
+        monkeypatch.setenv("GITHUB_URL", str(origin))
+        monkeypatch.setenv("DEFAULT_BRANCH", "main")
+        monkeypatch.setenv("WORKDIR", str(workdir))
+        monkeypatch.setenv("OUTPUT_CONFIGMAP", "agent-omneval-execute-6-a1")
+        monkeypatch.setenv("OUTPUT_FILE", str(out_file))
+        monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+
+        assert entrypoint.main() == 0
+
+        payload = json.loads(out_file.read_text())
+        assert payload["status"] == "complete"
+        assert calls == [False]

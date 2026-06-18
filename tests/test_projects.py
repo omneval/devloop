@@ -129,3 +129,36 @@ def test_agent_runner_is_optional_and_parsed(tmp_path):
     yaml_with_runner = _VALID_YAML + "    agent_runner: claude-agent-sdk\n"
     configs = load_projects(_write(tmp_path, yaml_with_runner))
     assert configs[0].agent_runner == "claude-agent-sdk"
+
+
+def test_open_pr_as_draft_defaults_to_false(tmp_path):
+    """When open_pr_as_draft is omitted the project loads with False — the
+    devloop workflow opens non-draft PRs (ready for review) by default."""
+    configs = load_projects(_write(tmp_path, _VALID_YAML))
+    assert configs[0].open_pr_as_draft is False
+
+
+def test_open_pr_as_draft_parses_true(tmp_path):
+    """open_pr_as_draft: true loads as a bool True."""
+    import yaml
+
+    data = yaml.safe_load(_VALID_YAML)
+    data["projects"][0]["open_pr_as_draft"] = True
+    path = tmp_path / "projects.yaml"
+    path.write_text(yaml.dump(data))
+
+    configs = load_projects(path)
+    assert configs[0].open_pr_as_draft is True
+
+
+def test_open_pr_as_draft_parses_false(tmp_path):
+    """open_pr_as_draft: false loads as a bool False."""
+    import yaml
+
+    data = yaml.safe_load(_VALID_YAML)
+    data["projects"][0]["open_pr_as_draft"] = False
+    path = tmp_path / "projects.yaml"
+    path.write_text(yaml.dump(data))
+
+    configs = load_projects(path)
+    assert configs[0].open_pr_as_draft is False
