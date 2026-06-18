@@ -384,7 +384,7 @@ async def test_workflow_emits_kpis_per_completed_issue(reset_mocks):
 
 @pytest.mark.asyncio
 async def test_workflow_kpis_count_ci_fix_iterations(reset_mocks):
-    """CI fix attempts spent inside _ci_fix_loop surface in the KPI payload."""
+    """CI fix attempts spent inside the CI fix cycle surface in the KPI payload."""
     reset_mocks.plan_issue_result = _one_issue(1)
     reset_mocks.ci_poll_results = [
         CIChecksResult(
@@ -925,7 +925,7 @@ async def test_ci_fix_loop_exits_early_when_ci_passes_on_second_iteration(reset_
     assert result.status == "completed"
     # CI went green on the second poll — only one fix attempt was dispatched
     assert M.dispatched_phases.count("ci_fix") == 1
-    assert len(M.ci_polls) == 2  # both from _ci_fix_loop
+    assert len(M.ci_polls) == 2  # both from the CI fix cycle
     # queued comment precedes the dispatch
     queued = [
         n for n in M.notifications if "queued" in n.lower() and "ci fix" in n.lower()
@@ -1000,7 +1000,7 @@ async def test_ci_fix_loop_not_exhausted_when_final_attempt_fixes_ci(reset_mocks
     assert result.status == "completed"
     # both allotted attempts were dispatched, then a final re-poll found CI green
     assert M.dispatched_phases.count("ci_fix") == 2
-    assert len(M.ci_polls) == 3  # all from _ci_fix_loop
+    assert len(M.ci_polls) == 3  # all from the CI fix cycle
     assert not any("still failing" in n.lower() for n in M.notifications)
 
 
@@ -1050,7 +1050,7 @@ async def test_ci_fix_loop_waits_on_pending_checks_without_dispatching_fix(reset
     assert result.status == "completed"
     # no fix attempt was dispatched — CI was merely slow, never genuinely red
     assert M.dispatched_phases.count("ci_fix") == 0
-    assert len(M.ci_polls) == 3  # all from _ci_fix_loop
+    assert len(M.ci_polls) == 3  # all from the CI fix cycle
     assert not any("ci fix attempt" in n.lower() for n in M.notifications)
     assert not any("queued — ci fix" in n.lower() for n in M.notifications)
     assert not any("still failing" in n.lower() for n in M.notifications)

@@ -30,7 +30,7 @@ from ..shared import (
 )
 
 # Bounded backoff for "CI still pending" re-polls within a single ci_fix
-# attempt slot — caps how long _ci_fix_loop waits on a CI run that never
+# attempt slot — caps how long CICycle waits on a CI run that never
 # resolves before it gives up rather than looping forever (issue #90).
 _CI_PENDING_POLL_LIMIT = 12
 

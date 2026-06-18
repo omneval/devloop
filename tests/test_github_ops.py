@@ -405,9 +405,9 @@ async def test_request_github_reviewer_degrades_gracefully_on_403(monkeypatch):
 @pytest.mark.asyncio
 async def test_poll_ci_checks_degrades_gracefully_on_404(monkeypatch):
     """A 404 fetching the PR (e.g. it was closed mid-poll) is logged and
-    reported as 'pending' — not 'failing' — so _ci_fix_loop waits and
-    re-polls instead of mistaking a transient hiccup for a genuine CI
-    failure and burning a fix attempt on it."""
+    reported as 'pending' — not 'failing' — so CICycle waits and re-polls
+    instead of mistaking a transient hiccup for a genuine CI failure and
+    burning a fix attempt on it."""
     monkeypatch.setattr(
         github_ops,
         "_client",

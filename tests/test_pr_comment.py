@@ -224,8 +224,8 @@ async def test_pr_comment_workflow_full_flow(reset_mocks):
 
 @pytest.mark.asyncio
 async def test_pr_comment_workflow_runs_ci_fix_loop_on_red_ci(reset_mocks):
-    """When CI is red after the pr_comment dispatch, the CI fix loop kicks in
-    (reusing _WorkflowCommon._ci_fix_loop) before the reviewer is notified."""
+    """When CI is red after the pr_comment dispatch, the CI fix cycle kicks in
+    before the reviewer is notified."""
     reset_mocks.ci_poll_results = [
         CIChecksResult(
             all_passed=False,

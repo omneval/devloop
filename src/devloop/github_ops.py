@@ -571,17 +571,17 @@ async def poll_ci_checks(inp: PollCIChecksInput) -> CIChecksResult:
     """Poll the GitHub Checks API for the PR's head commit (``gh pr checks``
     equivalent) and report whether every check run has passed.
 
-    Used by ``Phase.CI_FIX`` (DevLoopWorkflow._ci_fix_loop) to decide whether to
-    keep retrying and to hand the fix Agent Execution Job the precise set of
-    failing checks via ``TaskSpec.extra["ci_check_failures"]``.
+    Used by ``Phase.CI_FIX`` (CICycle) to decide whether to keep retrying and
+    to hand the fix Agent Execution Job the precise set of failing checks via
+    ``TaskSpec.extra["ci_check_failures"]``.
 
     A check run "passes" when its ``status`` is ``completed`` and its
     ``conclusion`` is one of success/neutral/skipped. Anything still in
     progress or queued is reported via ``CIChecksResult.pending`` rather than
-    folded into ``failures`` — so ``_ci_fix_loop`` can tell "still
-    running, wait and re-poll" apart from "genuinely red, dispatch a fix"
-    (issue #90) and doesn't burn one of its limited fix attempts on checks
-    that simply haven't finished yet.
+    folded into ``failures`` — so ``CICycle`` can tell "still running, wait
+    and re-poll" apart from "genuinely red, dispatch a fix" (issue #90) and
+    doesn't burn one of its limited fix attempts on checks that simply haven't
+    finished yet.
 
     A failed poll (expired token, rate limit, PR not found, GitHub 5xx,
     connection error) is logged and reported as "pending" — never as

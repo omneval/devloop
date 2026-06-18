@@ -1,11 +1,11 @@
 """Shared workflow helpers (issue #78).
 
 ``DevLoopWorkflow`` and ``PRCommentWorkflow`` both need to post GitHub Issue/PR
-comments, dispatch Agent Execution Jobs, run the Phase.CI_FIX retry loop, and
-request a GitHub PR reviewer. Rather than duplicate that logic, it lives here
-as a mixin (``_WorkflowCommon``) both workflow classes inherit from — methods
-are plain ``async def`` calls into ``workflow.execute_activity`` so they stay
-sandbox-safe and behave identically regardless of which workflow calls them.
+comments, dispatch Agent Execution Jobs, and request a GitHub PR reviewer.
+Rather than duplicate that logic, it lives here as a mixin (``_WorkflowCommon``)
+both workflow classes inherit from — methods are plain ``async def`` calls into
+``workflow.execute_activity`` so they stay sandbox-safe and behave identically
+regardless of which workflow calls them.
 """
 
 from __future__ import annotations
@@ -15,17 +15,13 @@ from datetime import timedelta
 from temporalio import workflow
 from temporalio.common import RetryPolicy
 
-from . import dev_loop_logic as logic
 from ._constants import _ACTIVITY_TIMEOUT, _GITHUB_COMMENT_TIMEOUT, _RETRY
 from .shared import (
     AgentJobResult,
-    CIChecksResult,
     DispatchInput,
     GithubNotificationInput,
     JOB_DISPATCH_QUEUE,
     JobStatus,
-    Phase,
-    PollCIChecksInput,
     RequestReviewerInput,
     ReviewerRequestResult,
     TaskSpec,
@@ -33,11 +29,6 @@ from .shared import (
 )
 
 _CLEANUP_RETRY = RetryPolicy(maximum_attempts=1)
-
-# Bounded backoff for "CI still pending" re-polls within a single ci_fix
-# attempt slot — caps how long _ci_fix_loop waits on a CI run that never
-# resolves before it gives up rather than looping forever (issue #90).
-_CI_PENDING_POLL_LIMIT = 12
 
 
 class _WorkflowCommon:
@@ -136,117 +127,6 @@ class _WorkflowCommon:
         if result.status != JobStatus.AWAITING_HUMAN.value:
             await self._cleanup(result.job_name)
         return result
-
-    # ---- Phase.CI_FIX loop (#76) ------------------------------------------ #
-    async def _ci_fix_loop(
-        self,
-        project_id: str,
-        issue_no: int,
-        exec_result: dict,
-        ci_fix_max_iterations: int,
-        poll_interval_seconds: float = 5.0,
-    ) -> bool:
-        """Retry CI fixes up to ``ci_fix_max_iterations`` times or until green.
-
-        Each poll either finds CI green (loop exits early, ``exhausted=False``),
-        genuinely failing (dispatches a ``Phase.CI_FIX`` Agent Execution Job —
-        preceded by a "⏳ queued" comment — with the current failing check
-        details in ``TaskSpec.extra["ci_check_failures"]``, then posts a result
-        comment and consumes one of the ``ci_fix_max_iterations`` attempts), or
-        merely *pending* — checks still queued/running with no real failures
-        yet (issue #90). A pending result waits and re-polls with a bounded
-        backoff instead of consuming an attempt — CI being slow isn't CI being
-        red, and dispatching a "fix" for a check that simply hasn't finished
-        yet would burn a limited attempt and risk a spurious commit.
-
-        Returns ``True`` when every fix attempt is spent without CI going
-        green (``exhausted``), so the caller can carry a "CI still failing"
-        note to the human reviewer.
-        """
-        pr_number = logic.pr_number_from_url(exec_result.get("pr_url", ""))
-        if pr_number <= 0:
-            return False
-
-        max_iters = ci_fix_max_iterations
-        attempt = 0
-        pending_polls = 0
-        while attempt < max_iters:
-            checks = await workflow.execute_activity(
-                "poll_ci_checks",
-                PollCIChecksInput(project_id=project_id, pr_number=pr_number),
-                result_type=CIChecksResult,
-                start_to_close_timeout=timedelta(minutes=5),
-                retry_policy=_RETRY,
-            )
-            if checks.all_passed:
-                return False
-
-            if checks.pending and not checks.failures:
-                if pending_polls >= _CI_PENDING_POLL_LIMIT:
-                    # CI never resolved within the bounded backoff — report
-                    # exhaustion without having spent a fix attempt on it.
-                    return True
-                pending_polls += 1
-                await workflow.sleep(
-                    timedelta(seconds=poll_interval_seconds * pending_polls)
-                )
-                continue
-
-            pending_polls = 0
-            attempt += 1
-            self._kpi_bump("ci_fix_iterations")
-            failures = [
-                {
-                    "name": f.name,
-                    "conclusion": f.conclusion,
-                    "details_url": f.details_url,
-                    "summary": f.summary,
-                }
-                for f in (checks.failures or [])
-            ]
-            spec = TaskSpec(
-                phase=Phase.CI_FIX.value,
-                project_id=project_id,
-                issue_number=issue_no,
-                branch=exec_result.get("branch", ""),
-                extra={"ci_check_failures": failures},
-            )
-            await self._comment(
-                project_id,
-                pr_number,
-                f"⏳ queued — CI fix attempt {attempt}/{max_iters}",
-            )
-            result = await self._dispatch(
-                project_id,
-                spec,
-                issue_number=issue_no,
-                poll_interval_seconds=poll_interval_seconds,
-            )
-            if result.status == JobStatus.COMPLETE.value:
-                await self._comment(
-                    project_id,
-                    pr_number,
-                    f"🔧 CI fix attempt {attempt}/{max_iters} — "
-                    f"pushed {result.commits} commit(s)",
-                )
-            else:
-                await self._comment(
-                    project_id,
-                    pr_number,
-                    f"❌ CI fix attempt {attempt}/{max_iters} failed",
-                )
-
-        # The final attempt may have fixed CI — re-check before declaring
-        # exhaustion, otherwise a successful last attempt is misreported as
-        # "still failing" to the human reviewer.
-        final_checks = await workflow.execute_activity(
-            "poll_ci_checks",
-            PollCIChecksInput(project_id=project_id, pr_number=pr_number),
-            result_type=CIChecksResult,
-            start_to_close_timeout=timedelta(minutes=5),
-            retry_policy=_RETRY,
-        )
-        return not final_checks.all_passed
 
     # ---- Reviewer request (#74) ------------------------------------------- #
     async def _request_reviewer(

@@ -6,7 +6,7 @@ PR. The workflow re-engages the agent on the existing branch:
 
     "⏳ queued" ─▶ Phase.PR_COMMENT job (PR number + comment/review body;
                    the agent fetches the diff itself via ``gh pr diff``)
-                 ─▶ CI Fix Loop (reuse of ``_WorkflowCommon._ci_fix_loop``)
+                 ─▶ CI Fix Cycle (delegate to standalone ``CICycle``)
                  ─▶ request reviewer + post result comment
 
 A concurrent run for the same PR (workflow ID
@@ -24,6 +24,7 @@ from temporalio import workflow
 from . import dev_loop_logic as logic
 from ._constants import _GITHUB_COMMENT_TIMEOUT, _RETRY
 from ._workflow_common import _WorkflowCommon
+from .phases.cycle import CICycle
 from .shared import (
     GetPRBranchInput,
     JobStatus,
@@ -200,10 +201,10 @@ class PRCommentWorkflow(_WorkflowCommon):
                 detail=result.error or "phase failed",
             )
 
-        # Resolve a usable pr_url for the CI fix loop's `pr_number_from_url`
+        # Resolve a usable pr_url for the CI fix cycle's `pr_number_from_url`
         # parsing — prefer the agent's reported URL; if it's empty or doesn't
         # carry a `/pull/<N>` suffix, synthesize one from the already-known PR
-        # number so `_ci_fix_loop` can still poll CI checks for this PR.
+        # number so CICycle can still poll CI checks for this PR.
         pr_url = result.pr_url
         if not logic.pr_number_from_url(pr_url) and inp.pr_number:
             pr_url = f"/pull/{inp.pr_number}"
@@ -216,13 +217,14 @@ class PRCommentWorkflow(_WorkflowCommon):
             "exhausted": False,
         }
 
-        exhausted = await self._ci_fix_loop(
-            inp.project_id,
-            issue_no,
-            exec_result,
+        cycle_result = await CICycle().run(
+            project_id=inp.project_id,
+            issue_no=issue_no,
+            exec_result=exec_result,
             ci_fix_max_iterations=inp.ci_fix_max_iterations,
             poll_interval_seconds=inp.poll_interval_seconds,
         )
+        exhausted = cycle_result.exhausted
 
         await self._request_reviewer(inp.project_id, inp.pr_number)
 
