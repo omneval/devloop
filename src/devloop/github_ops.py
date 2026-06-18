@@ -363,19 +363,39 @@ async def post_pr_comments(inp: PostCommentsInput) -> None:
             f"/repos/{repo}/issues/{inp.pr_number}/comments",
             json={"body": f"### Agent review\n\n{inp.summary}"},
         ).raise_for_status()
-        # Inline review comments (best-effort; needs the head commit SHA)
-        if inp.inline_comments:
-            pr = c.get(f"/repos/{repo}/pulls/{inp.pr_number}")
-            pr.raise_for_status()
-            commit_id = pr.json()["head"]["sha"]
-            comments = [
-                {"path": ic.file, "line": ic.line, "side": "RIGHT", "body": ic.body}
-                for ic in inp.inline_comments
-            ]
-            c.post(
-                f"/repos/{repo}/pulls/{inp.pr_number}/reviews",
-                json={"commit_id": commit_id, "event": "COMMENT", "comments": comments},
-            ).raise_for_status()
+    # Inline review comments (best-effort; needs the head commit SHA).
+    # Wrapping in try/except so a 422 (or any transient GitHub hiccup)
+    # never sinks the whole DevLoopWorkflow round — the summary comment
+    # already landed above (issue #162).
+    if inp.inline_comments:
+        try:
+            with await _client(cfg) as c:
+                pr = c.get(f"/repos/{repo}/pulls/{inp.pr_number}")
+                pr.raise_for_status()
+                commit_id = pr.json()["head"]["sha"]
+                comments = [
+                    {
+                        "path": ic.file,
+                        "line": ic.line,
+                        "side": "RIGHT",
+                        "body": ic.body,
+                    }
+                    for ic in inp.inline_comments
+                ]
+                c.post(
+                    f"/repos/{repo}/pulls/{inp.pr_number}/reviews",
+                    json={
+                        "commit_id": commit_id,
+                        "event": "COMMENT",
+                        "comments": comments,
+                    },
+                ).raise_for_status()
+        except Exception:
+            log.exception(
+                "failed to post inline review comments to %s#%d",
+                repo,
+                inp.pr_number,
+            )
     log.info(
         "posted %d inline comment(s) to %s#%d",
         len(inp.inline_comments),

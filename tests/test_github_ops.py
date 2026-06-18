@@ -362,6 +362,37 @@ class ErrorClient:
         return self._error_response("POST", url)
 
 
+class MixedClient:
+    """Fake client that returns a mix of success and error responses
+    depending on the URL — used to test best-effort error handling."""
+
+    def __init__(self, error_urls: set[str] | None = None, pr_sha: str = "deadbeef"):
+        self._error_urls = error_urls or set()
+        self._pr_sha = pr_sha
+        self.posts: list[tuple[str, dict]] = []
+        self.gets: list[tuple[str, dict | None]] = []
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def get(self, url, params=None):
+        self.gets.append((url, params))
+        if url in self._error_urls:
+            request = httpx.Request("GET", f"https://api.github.com{url}")
+            return httpx.Response(404, request=request, text="Not Found")
+        return FakeResp({"head": {"sha": self._pr_sha}})
+
+    def post(self, url, json=None):
+        self.posts.append((url, json))
+        if url in self._error_urls:
+            request = httpx.Request("POST", f"https://api.github.com{url}")
+            return httpx.Response(422, request=request, text="Unprocessable Entity")
+        return FakeResp({"number": 901})
+
+
 @pytest.mark.asyncio
 async def test_post_github_comment_degrades_gracefully_on_404(monkeypatch):
     """A 404 (issue not found / bot not a collaborator) is logged and
@@ -422,3 +453,25 @@ async def test_poll_ci_checks_degrades_gracefully_on_404(monkeypatch):
     assert result.all_passed is False
     assert result.pending is True
     assert result.failures == []
+
+
+@pytest.mark.asyncio
+async def test_post_pr_comments_reviews_422_is_best_effort(monkeypatch):
+    """When the GitHub reviews endpoint returns 422, the summary comment
+    still goes through and the function does NOT raise — inline review
+    comments are best-effort (issue #162)."""
+    pr_review_url = "/repos/omneval/omneval/pulls/7/reviews"
+    client = MixedClient(error_urls={pr_review_url})
+    monkeypatch.setattr(
+        github_ops,
+        "_client",
+        _async_client_factory(lambda: client),
+    )
+    # Must not raise — 422 on reviews is best-effort
+    await ActivityEnvironment().run(
+        post_pr_comments,
+        PostCommentsInput("omneval", 7, "summary", [InlineComment("a.py", 3, "note")]),
+    )
+    # Summary comment is still posted
+    summary_posted = any("/issues/7/comments" in url for url, _ in client.posts)
+    assert summary_posted, "summary comment must still be posted"
