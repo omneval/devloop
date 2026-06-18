@@ -205,7 +205,7 @@ def test_entrypoint_stub_produces_valid_output_payload(origin, tmp_path, monkeyp
     AgentJobResult.from_payload.
 
     Git/clone/push/pr helpers run for real against the local bare repo; only
-    open_draft_pr is stubbed (no gh auth needed).  The payload must have a
+    create_pr is stubbed (no gh auth needed).  The payload must have a
     terminal status and all fields AgentJobResult.from_payload consumes.
     """
     entrypoint = _load_entrypoint()
@@ -213,7 +213,7 @@ def test_entrypoint_stub_produces_valid_output_payload(origin, tmp_path, monkeyp
     workdir = tmp_path / "repo"
     out_file = tmp_path / "out.json"
 
-    monkeypatch.setattr(entrypoint, "open_draft_pr", lambda *a, **k: "pr://stub")
+    monkeypatch.setattr(entrypoint, "create_pr", lambda *a, **k: "pr://stub")
     monkeypatch.setenv("AGENT_STUB", "1")
     monkeypatch.setenv(
         "TASK_SPEC",
@@ -263,7 +263,7 @@ def test_result_from_payload_returns_terminal_result(origin, tmp_path, monkeypat
     workdir = tmp_path / "repo"
     out_file = tmp_path / "out.json"
 
-    monkeypatch.setattr(entrypoint, "open_draft_pr", lambda *a, **k: "pr://stub")
+    monkeypatch.setattr(entrypoint, "create_pr", lambda *a, **k: "pr://stub")
     monkeypatch.setenv("AGENT_STUB", "1")
     monkeypatch.setenv(
         "TASK_SPEC",

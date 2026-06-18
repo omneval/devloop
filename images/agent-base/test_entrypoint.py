@@ -1,7 +1,7 @@
 """Integration test for the Agent Execution Job entrypoint (issue #19).
 
 No cluster: a local bare repo stands in for the GitHub remote, ``run_agent`` is
-mocked to make a file change, ``open_draft_pr`` is stubbed (no gh auth), and the
+mocked to make a file change, ``create_pr`` is stubbed (no gh auth), and the
 output sink writes to a local file (OUTPUT_FILE) instead of a ConfigMap.
 """
 
@@ -50,7 +50,7 @@ def test_execute_pushes_branch_and_writes_output(origin, tmp_path, monkeypatch):
     monkeypatch.setattr(entrypoint, "run_agent", fake_run_agent)
     monkeypatch.setattr(
         entrypoint,
-        "open_draft_pr",
+        "create_pr",
         lambda *a, **k: "https://github.com/omneval/omneval/pull/5",
     )
 
@@ -489,7 +489,7 @@ def test_stub_mode_round_trip(origin, tmp_path, monkeypatch):
     """AGENT_STUB=1 proves the dispatch→ConfigMap round-trip (issue #18)."""
     workdir = tmp_path / "repo"
     out_file = tmp_path / "out.json"
-    monkeypatch.setattr(entrypoint, "open_draft_pr", lambda *a, **k: "pr://stub")
+    monkeypatch.setattr(entrypoint, "create_pr", lambda *a, **k: "pr://stub")
     monkeypatch.setenv("AGENT_STUB", "1")
     monkeypatch.setenv(
         "TASK_SPEC",
@@ -1250,7 +1250,7 @@ class TestCriteriaAuditLoop:
         monkeypatch.setattr(
             entrypoint, "audit_acceptance_criteria", lambda *a: audits.pop(0)
         )
-        monkeypatch.setattr(entrypoint, "open_draft_pr", lambda *a, **k: "")
+        monkeypatch.setattr(entrypoint, "create_pr", lambda *a, **k: "")
         self._task_spec_env(
             monkeypatch, origin, workdir, out_file, "## Criteria\n- UI tab"
         )
@@ -1283,7 +1283,7 @@ class TestCriteriaAuditLoop:
             "audit_acceptance_criteria",
             lambda *a: entrypoint.CriteriaAudit(unmet_criteria=["pagination"]),
         )
-        monkeypatch.setattr(entrypoint, "open_draft_pr", lambda *a, **k: "")
+        monkeypatch.setattr(entrypoint, "create_pr", lambda *a, **k: "")
         monkeypatch.setenv("AGENT_CRITERIA_MAX_PASSES", "1")
         self._task_spec_env(
             monkeypatch, origin, workdir, out_file, "## Criteria\n- pagination"
@@ -1309,7 +1309,7 @@ class TestCriteriaAuditLoop:
 
         monkeypatch.setattr(entrypoint, "run_agent", fake_run_agent)
         monkeypatch.setattr(entrypoint, "audit_acceptance_criteria", lambda *a: None)
-        monkeypatch.setattr(entrypoint, "open_draft_pr", lambda *a, **k: "")
+        monkeypatch.setattr(entrypoint, "create_pr", lambda *a, **k: "")
         self._task_spec_env(monkeypatch, origin, workdir, out_file, "## Criteria")
 
         assert entrypoint.main() == 0
@@ -1334,7 +1334,7 @@ class TestCriteriaAuditLoop:
             "audit_acceptance_criteria",
             lambda *a: audit_calls.append(1),
         )
-        monkeypatch.setattr(entrypoint, "open_draft_pr", lambda *a, **k: "")
+        monkeypatch.setattr(entrypoint, "create_pr", lambda *a, **k: "")
         self._task_spec_env(monkeypatch, origin, workdir, out_file, "")
 
         assert entrypoint.main() == 0
@@ -1471,11 +1471,11 @@ class TestRepoPromptOverrides:
 
 
 # --------------------------------------------------------------------------- #
-# open_draft_pr: configurable draft vs ready PR (issue #175)
+# create_pr: configurable draft vs ready PR (issue #175)
 # --------------------------------------------------------------------------- #
 class TestOpenDraftPrConfigurable:
-    def test_open_draft_pr_includes_draft_flag_when_true(self, monkeypatch):
-        """open_draft_pr(draft=True) includes --draft in the gh command."""
+    def test_create_pr_includes_draft_flag_when_true(self, monkeypatch):
+        """create_pr(draft=True) includes --draft in the gh command."""
         captured = []
 
         def fake_run(args, cwd=None, text=True, capture_output=True):
@@ -1485,15 +1485,15 @@ class TestOpenDraftPrConfigurable:
             )
 
         monkeypatch.setattr(entrypoint.subprocess, "run", fake_run)
-        entrypoint.open_draft_pr(
+        entrypoint.create_pr(
             "/tmp/repo", "feat/1", "main", "agent: #1", "desc", draft=True
         )
 
         assert len(captured) == 1
         assert "--draft" in captured[0]
 
-    def test_open_draft_pr_excludes_draft_flag_by_default(self, monkeypatch):
-        """open_draft_pr without draft arg omits --draft (default: ready PR)."""
+    def test_create_pr_excludes_draft_flag_by_default(self, monkeypatch):
+        """create_pr without draft arg omits --draft (default: ready PR)."""
         captured = []
 
         def fake_run(args, cwd=None, text=True, capture_output=True):
@@ -1503,13 +1503,13 @@ class TestOpenDraftPrConfigurable:
             )
 
         monkeypatch.setattr(entrypoint.subprocess, "run", fake_run)
-        entrypoint.open_draft_pr("/tmp/repo", "feat/1", "main", "agent: #1", "desc")
+        entrypoint.create_pr("/tmp/repo", "feat/1", "main", "agent: #1", "desc")
 
         assert len(captured) == 1
         assert "--draft" not in captured[0]
 
-    def test_open_draft_pr_excludes_draft_flag_when_ready(self, monkeypatch):
-        """open_draft_pr(draft=False) omits --draft from the gh command."""
+    def test_create_pr_excludes_draft_flag_when_ready(self, monkeypatch):
+        """create_pr(draft=False) omits --draft from the gh command."""
         captured = []
 
         def fake_run(args, cwd=None, text=True, capture_output=True):
@@ -1519,15 +1519,15 @@ class TestOpenDraftPrConfigurable:
             )
 
         monkeypatch.setattr(entrypoint.subprocess, "run", fake_run)
-        entrypoint.open_draft_pr(
+        entrypoint.create_pr(
             "/tmp/repo", "feat/2", "main", "agent: #2", "desc", draft=False
         )
 
         assert len(captured) == 1
         assert "--draft" not in captured[0]
 
-    def test_open_draft_pr_handles_failure(self, monkeypatch):
-        """open_draft_pr returns empty string on gh failure."""
+    def test_create_pr_handles_failure(self, monkeypatch):
+        """create_pr returns empty string on gh failure."""
         captured = []
 
         def fake_run(args, cwd=None, text=True, capture_output=True):
@@ -1537,7 +1537,7 @@ class TestOpenDraftPrConfigurable:
             )
 
         monkeypatch.setattr(entrypoint.subprocess, "run", fake_run)
-        result = entrypoint.open_draft_pr(
+        result = entrypoint.create_pr(
             "/tmp/repo", "feat/3", "main", "agent: #3", "desc", draft=False
         )
         assert result == ""
@@ -1552,12 +1552,12 @@ class TestOpenDraftPrConfigurable:
             Path(wd, "feature.txt").write_text("implemented\n")
             return entrypoint.AgentOutcome(summary="did the thing", files_changed=True)
 
-        def capture_open_draft_pr(*args, **kwargs):
+        def capture_create_pr(*args, **kwargs):
             calls.append(kwargs.get("draft", False))
             return "https://github.com/omneval/omneval/pull/5"
 
         monkeypatch.setattr(entrypoint, "run_agent", fake_run_agent)
-        monkeypatch.setattr(entrypoint, "open_draft_pr", capture_open_draft_pr)
+        monkeypatch.setattr(entrypoint, "create_pr", capture_create_pr)
 
         monkeypatch.setenv(
             "TASK_SPEC",
@@ -1596,12 +1596,12 @@ class TestOpenDraftPrConfigurable:
             Path(wd, "feature.txt").write_text("implemented\n")
             return entrypoint.AgentOutcome(summary="did the thing", files_changed=True)
 
-        def capture_open_draft_pr(*args, **kwargs):
+        def capture_create_pr(*args, **kwargs):
             calls.append(kwargs.get("draft", False))
             return "https://github.com/omneval/omneval/pull/6"
 
         monkeypatch.setattr(entrypoint, "run_agent", fake_run_agent)
-        monkeypatch.setattr(entrypoint, "open_draft_pr", capture_open_draft_pr)
+        monkeypatch.setattr(entrypoint, "create_pr", capture_create_pr)
 
         monkeypatch.setenv(
             "TASK_SPEC",

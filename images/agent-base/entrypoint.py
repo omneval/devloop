@@ -732,7 +732,7 @@ def push_branch(workdir: str, branch: str, force: bool = False) -> None:
     _run(cmd, cwd=workdir)
 
 
-def open_draft_pr(
+def create_pr(
     workdir: str,
     branch: str,
     base: str,
@@ -1651,7 +1651,7 @@ def handle_execute(spec: TaskSpec, tracer) -> dict:
         summary_parts.append(f"\n--- test output ---\n{test_snippet}")
 
     open_as_draft = spec.extra.get("open_pr_as_draft", False)
-    pr_url = open_draft_pr(
+    pr_url = create_pr(
         workdir,
         branch,
         base,

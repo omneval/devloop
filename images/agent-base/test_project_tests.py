@@ -332,7 +332,7 @@ def test_handle_execute_tests_passed_true_when_green(origin, tmp_path, monkeypat
         lambda spec, wd, tracer: AgentOutcome(summary="done", files_changed=True),
     )
     monkeypatch.setattr(
-        entrypoint, "open_draft_pr", lambda *a, **k: "https://github.com/x/y/pull/1"
+        entrypoint, "create_pr", lambda *a, **k: "https://github.com/x/y/pull/1"
     )
     monkeypatch.setattr(
         entrypoint, "run_project_tests", lambda wd, **kw: (True, "1 passed")
@@ -359,7 +359,7 @@ def test_handle_execute_tests_passed_false_when_red(origin, tmp_path, monkeypatc
         lambda spec, wd, tracer: AgentOutcome(summary="done", files_changed=True),
     )
     monkeypatch.setattr(
-        entrypoint, "open_draft_pr", lambda *a, **k: "https://github.com/x/y/pull/1"
+        entrypoint, "create_pr", lambda *a, **k: "https://github.com/x/y/pull/1"
     )
     monkeypatch.setattr(
         entrypoint,
@@ -390,7 +390,7 @@ def test_handle_execute_includes_test_output_in_summary_on_failure(
         lambda spec, wd, tracer: AgentOutcome(summary="done", files_changed=True),
     )
     monkeypatch.setattr(
-        entrypoint, "open_draft_pr", lambda *a, **k: "https://github.com/x/y/pull/1"
+        entrypoint, "create_pr", lambda *a, **k: "https://github.com/x/y/pull/1"
     )
     monkeypatch.setattr(
         entrypoint,
@@ -425,7 +425,7 @@ def test_handle_execute_still_opens_pr_even_on_red(origin, tmp_path, monkeypatch
     )
     monkeypatch.setattr(
         entrypoint,
-        "open_draft_pr",
+        "create_pr",
         lambda *a, **k: pr_opened.append(True) or "https://github.com/x/y/pull/1",
     )
     monkeypatch.setattr(
