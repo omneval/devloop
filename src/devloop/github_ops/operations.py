@@ -345,7 +345,7 @@ async def get_pr_diff(inp: GetPRDiffInput) -> str:
     repo = parse_github_repo(cfg.github_url)
 
     try:
-        async with _github_ops._client(
+        with await _github_ops._client(
             cfg, extra_headers={"Accept": "application/vnd.github.v3.diff"}
         ) as c:
             resp = c.get(f"/repos/{repo}/pulls/{inp.pr_number}")

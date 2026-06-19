@@ -18,7 +18,7 @@ order = 0
 
 [[layers]]
 name = "activities"
-paths = ["src/devloop/github_ops.py", "src/devloop/k8s_jobs.py", "src/devloop/docker_dispatch.py", "src/devloop/summarize_activities.py"]
+paths = ["src/devloop/github_ops/__init__.py", "src/devloop/github_ops/auth.py", "src/devloop/github_ops/operations.py", "src/devloop/k8s_jobs.py", "src/devloop/docker_dispatch.py", "src/devloop/summarize_activities.py"]
 order = 1
 
 [[layers]]

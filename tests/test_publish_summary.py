@@ -14,10 +14,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, create_autospec
 
 import pytest
 
+from devloop import github_ops
 from devloop.summarization import SummarizeInput
 
 
@@ -126,6 +127,21 @@ def _make_fake_client(issue_responses=None, label_responses=None):
     return FakeClient(), recorded
 
 
+def _async_client_returning(client):
+    """Build a fake replacement for the real ``github_ops._client(cfg, ...)``.
+
+    Uses ``create_autospec`` against the *real* function so the mock's
+    signature and async-ness are pinned to the production contract — if
+    ``_client`` ever changes shape (extra required arg, sync-to-async, etc.)
+    this mock breaks loudly instead of silently passing like a hand-written
+    stand-in would (this is exactly how the v0.0.25/v0.0.26 regression where
+    callers stopped matching ``_client``'s real signature slipped through).
+    """
+    mock = create_autospec(github_ops._client)
+    mock.return_value = client
+    return mock
+
+
 def _fake_project():
     fake_cfg = MagicMock()
     fake_cfg.github_url = "https://github.com/omneval/omneval"
@@ -143,7 +159,9 @@ def test_publish_summary_creates_github_issue(monkeypatch):
     monkeypatch.delenv("SUMMARIZATION_WEBHOOK_URL", raising=False)
 
     fake_client, recorded = _make_fake_client()
-    monkeypatch.setattr("devloop.summarize_activities._client", lambda cfg: fake_client)
+    monkeypatch.setattr(
+        "devloop.summarize_activities._client", _async_client_returning(fake_client)
+    )
 
     inp = PublishSummaryInput(
         project_id="omneval",
@@ -178,7 +196,9 @@ def test_publish_summary_creates_label_if_missing(monkeypatch):
     monkeypatch.delenv("SUMMARIZATION_WEBHOOK_URL", raising=False)
 
     fake_client, recorded = _make_fake_client()
-    monkeypatch.setattr("devloop.summarize_activities._client", lambda cfg: fake_client)
+    monkeypatch.setattr(
+        "devloop.summarize_activities._client", _async_client_returning(fake_client)
+    )
 
     inp = PublishSummaryInput(project_id="omneval", summary="digest", date="2026-06-06")
     asyncio.run(publish_summary(inp))
@@ -233,7 +253,7 @@ def test_publish_summary_skips_label_create_if_exists(monkeypatch):
             )
 
     monkeypatch.setattr(
-        "devloop.summarize_activities._client", lambda cfg: FakeClient()
+        "devloop.summarize_activities._client", _async_client_returning(FakeClient())
     )
 
     inp = PublishSummaryInput(project_id="omneval", summary="digest", date="2026-06-06")
@@ -262,7 +282,9 @@ def test_publish_summary_posts_to_webhook_when_env_set(monkeypatch):
     monkeypatch.setenv("SUMMARIZATION_WEBHOOK_URL", "https://hooks.example.com/devloop")
 
     fake_client, recorded = _make_fake_client()
-    monkeypatch.setattr("devloop.summarize_activities._client", lambda cfg: fake_client)
+    monkeypatch.setattr(
+        "devloop.summarize_activities._client", _async_client_returning(fake_client)
+    )
 
     webhook_calls = []
 
@@ -299,7 +321,9 @@ def test_publish_summary_no_webhook_when_env_empty(monkeypatch):
     monkeypatch.setenv("SUMMARIZATION_WEBHOOK_URL", "")
 
     fake_client, recorded = _make_fake_client()
-    monkeypatch.setattr("devloop.summarize_activities._client", lambda cfg: fake_client)
+    monkeypatch.setattr(
+        "devloop.summarize_activities._client", _async_client_returning(fake_client)
+    )
 
     webhook_calls = []
 
@@ -324,7 +348,9 @@ def test_publish_summary_webhook_failure_logged_not_raised(monkeypatch, caplog):
     monkeypatch.setenv("SUMMARIZATION_WEBHOOK_URL", "https://dead.example.com/hook")
 
     fake_client, recorded = _make_fake_client()
-    monkeypatch.setattr("devloop.summarize_activities._client", lambda cfg: fake_client)
+    monkeypatch.setattr(
+        "devloop.summarize_activities._client", _async_client_returning(fake_client)
+    )
 
     def fake_post(url, json=None, timeout=None):
         raise ConnectionError("refused")

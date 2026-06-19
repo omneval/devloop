@@ -10,6 +10,11 @@ preserved for internal consumers (e.g. ``summarize_activities``).
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import httpx
+
 # ── Auth re-exports (for backward compatibility with existing tests) ─────
 
 from .auth import (
@@ -56,7 +61,7 @@ from .operations import (
 # from the package so existing imports and monkeypatch targets work unchanged.
 
 from ..github import PlanIssueInput
-from ..projects import get_project
+from ..projects import ProjectConfig, get_project
 
 
 def _make_issue_branch(issue_number: int, title: str) -> str:
@@ -125,7 +130,7 @@ __all__ = [
 # We keep this shim so existing imports work.
 
 
-async def _resolve_token(cfg: object, token: str | None = None) -> str:
+async def _resolve_token(cfg: ProjectConfig, token: str | None = None) -> str:
     """Resolve the GitHub credential to use for ``cfg``.
 
     When ``token`` is provided, use it directly — no auth or cluster calls
@@ -142,18 +147,20 @@ async def _resolve_token(cfg: object, token: str | None = None) -> str:
 
     if auth.github_app_configured():
         return await auth.get_installation_token()
-    if not cfg.github_token_secret:  # type: ignore[attr-defined]
+    if not cfg.github_token_secret:
         # Local quickstart (issue #116): fall back to the worker's own
         # GITHUB_TOKEN env var instead of reaching for the Kubernetes API.
         return os.environ.get("GITHUB_TOKEN", "")
     from .. import cluster
 
-    return cluster.read_secret_value(cfg.github_token_secret, "GITHUB_TOKEN")  # type: ignore[arg-type]
+    return cluster.read_secret_value(cfg.github_token_secret, "GITHUB_TOKEN")
 
 
 async def _client(
-    cfg: object, extra_headers: dict[str, str] | None = None, token: str | None = None
-):  # noqa: ANN201
+    cfg: ProjectConfig,
+    extra_headers: dict[str, str] | None = None,
+    token: str | None = None,
+) -> httpx.Client:
     """Build an authenticated httpx.Client for ``cfg``.
 
     Backward-compat shim: existing code uses ``with await _client(cfg) as c:``.

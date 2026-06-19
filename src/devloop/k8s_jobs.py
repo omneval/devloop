@@ -458,9 +458,8 @@ async def dispatch_agent_job(d: DispatchInput) -> AgentJobResult:
     # get distinct Jobs/ConfigMaps. Stable across retries (same workflow run).
     discriminator = ""
     if not d.issue_number:
-        discriminator = hashlib.sha1(activity.info().workflow_id.encode()).hexdigest()[
-            :8
-        ]
+        workflow_id = activity.info().workflow_id or ""
+        discriminator = hashlib.sha1(workflow_id.encode()).hexdigest()[:8]
     job_name = job_name_for(d, attempt, discriminator)
     manifest = render_job(d, job_name)
 

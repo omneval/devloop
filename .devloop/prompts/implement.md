@@ -60,6 +60,7 @@ Before committing, run the checks for every layer you touched and confirm they a
 # Python changes:
 uv sync --all-groups
 uv run ruff check src/ tests/
+uv run ty check src/
 uv run pytest
 
 # Helm chart changes:

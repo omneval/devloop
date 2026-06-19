@@ -32,6 +32,9 @@ jobs:
       - name: Lint
         run: uv run ruff check src/ tests/
 
+      - name: Type check
+        run: uv run ty check src/
+
   test:
     name: Test SDK
     runs-on: ubuntu-latest

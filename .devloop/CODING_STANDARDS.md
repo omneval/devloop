@@ -47,6 +47,24 @@ repo root — read it before naming anything.
   boundaries you don't own.
 - Every public function that handles external input must have at least one test.
 
+When mocking your own code in tests, autospec it — never hand-write a stand-in.
+
+If a test needs to replace an internal function, method, or class (via monkeypatch.setattr, unittest.mock.patch, etc.), derive the replacement from the real target with unittest.mock.create_autospec() — don't author a bespoke lambda, def fake_x(...), or ad-hoc class to stand in for it.
+
+Why: a hand-written stand-in encodes whatever signature and sync/async-ness you assumed at the time you wrote the test — not the real one. When the real function's signature later changes (a new required arg, sync becomes async), the hand-written mock keeps "working" against the stale shape and the test keeps passing while production silently breaks. This exact failure mode shipped two broken releases: _client() became async def _client(cfg), but both the call sites and their test mocks (lambda cfg: fake_client) kept assuming the old sync, no-arg shape, so nothing caught the drift until it hit production.
+
+How to apply:
+
+```python
+from unittest.mock import create_autospec
+mock = create_autospec(real_module.real_function)
+mock.return_value = fake_thing # or mock.side_effect = ...
+monkeypatch.setattr("real_module.real_function", mock)
+```
+- create_autospec detects async def automatically and produces an AsyncMock — calling it with the wrong arity, or treating it as sync (forgetting await), fails the test immediately instead of silently passing.
+- For a method on a class: create_autospec(RealClass, instance=True) or MagicMock(spec=RealClass).
+- This rule is for mocking your own code. Mocking something genuinely external with no good importable spec (a raw HTTP response body, a third-party type without spec support) can still be a hand-written fake — the risk is specifically replacing an internal contract you control and could otherwise assert against directly.
+
 ## Helm chart (`charts/devloop`)
 
 - Unit-test template changes with `helm unittest charts/devloop` (the

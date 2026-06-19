@@ -133,6 +133,25 @@ class ExecutePhase:
             if result.status != JobStatus.COMPLETE.value or result.commits:
                 break
 
+        if result is None:
+            # execute_max_iterations was misconfigured to < 1, so the loop
+            # above never ran — treat it the same as a failed attempt rather
+            # than crashing on a None dereference below.
+            await self._comment(
+                inp.project_id,
+                issue_no,
+                "❌ Parked — execute phase failed: execute_max_iterations "
+                "must be >= 1",
+                cb,
+            )
+            return {
+                "issue_id": issue_no,
+                "branch": "",
+                "pr_url": "",
+                "commits": 0,
+                "exhausted": False,
+            }
+
         if result.status != JobStatus.COMPLETE.value:
             await self._comment(
                 inp.project_id,

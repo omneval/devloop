@@ -17,6 +17,10 @@ import logging
 import os
 import time
 from datetime import datetime, timezone
+from typing import TYPE_CHECKING, TypedDict
+
+if TYPE_CHECKING:
+    import httpx
 
 log = logging.getLogger(__name__)
 
@@ -26,8 +30,14 @@ GITHUB_API = os.getenv("GITHUB_API", "https://api.github.com")
 
 _TOKEN_REFRESH_SKEW_SECONDS = 5 * 60
 
+
+class _TokenCache(TypedDict):
+    token: str | None
+    expires_at: datetime | None
+
+
 # Process-wide cache for the current installation access token: (token, expiry).
-_installation_token_cache: dict[str, object] = {"token": None, "expires_at": None}
+_installation_token_cache: _TokenCache = {"token": None, "expires_at": None}
 
 # Serializes the check-mint-store sequence in ``get_installation_token``.
 _installation_token_lock = asyncio.Lock()
@@ -104,7 +114,7 @@ async def get_installation_token() -> str:
         return token
 
 
-def auth_client() -> object:
+def auth_client() -> httpx.Client:
     """Build an unauthenticated httpx client for pre-auth HTTP calls.
 
     Factored out so callers (e.g. mint logic) can substitute a fake transport
@@ -120,8 +130,8 @@ def auth_client() -> object:
 
 def _reset_installation_token_cache() -> None:
     """Test seam: clear the process-wide installation-token cache."""
-    _installation_token_cache["token"] = None  # type: ignore[assignment]
-    _installation_token_cache["expires_at"] = None  # type: ignore[assignment]
+    _installation_token_cache["token"] = None
+    _installation_token_cache["expires_at"] = None
 
 
 # ── Private helpers (below this line are implementation details) ──────────
@@ -133,9 +143,9 @@ def _cached_token_if_fresh() -> str | None:
     cached_token = _installation_token_cache["token"]
     cached_expiry = _installation_token_cache["expires_at"]
     if cached_token and cached_expiry is not None:
-        remaining = (cached_expiry - datetime.now(timezone.utc)).total_seconds()  # type: ignore[operator]
+        remaining = (cached_expiry - datetime.now(timezone.utc)).total_seconds()
         if remaining > _TOKEN_REFRESH_SKEW_SECONDS:
-            return cached_token  # type: ignore[return-value]
+            return cached_token
     return None
 
 

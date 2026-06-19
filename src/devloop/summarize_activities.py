@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+from typing import Any, cast
 
 from pydantic import BaseModel
 from temporalio import activity
@@ -83,13 +84,13 @@ def set_last_sha(project_id: str, sha: str) -> None:
 # --------------------------------------------------------------------------- #
 # GitHub + LLM
 # --------------------------------------------------------------------------- #
-def _fetch_changes(
-    repo: str, base: str, head: str, closed: list[int]
+async def _fetch_changes(
+    cfg, repo: str, base: str, head: str, closed: list[int]
 ) -> tuple[list[str], list[dict], str]:
     commits: list[str] = []
     issues: list[dict] = []
     resolved_head = head
-    with _client() as c:
+    with await _client(cfg) as c:
         if not resolved_head:
             r = c.get(f"/repos/{repo}/commits", params={"per_page": 1})
             r.raise_for_status()
@@ -161,8 +162,8 @@ async def summarize_changes(inp: SummarizeInput) -> SummarizeResult:
     repo = parse_github_repo(cfg.github_url)
     last_sha = get_last_sha(inp.project_id)
 
-    commits, issues, head = _fetch_changes(
-        repo, last_sha, inp.head_sha, inp.closed_issues
+    commits, issues, head = await _fetch_changes(
+        cfg, repo, last_sha, inp.head_sha, inp.closed_issues
     )
 
     if not should_summarize(last_sha, head, inp.closed_issues):
@@ -174,7 +175,7 @@ async def summarize_changes(inp: SummarizeInput) -> SummarizeResult:
 
 
 @activity.defn
-async def publish_summary(inp: PublishSummaryInput) -> None:
+async def publish_summary(inp: PublishSummaryInput | dict[str, Any]) -> None:
     """Publish a weekly digest as a GitHub Issue on the enrolled repo.
 
     1. Ensures the ``devloop-summary`` label exists (creates it if absent).
@@ -186,14 +187,14 @@ async def publish_summary(inp: PublishSummaryInput) -> None:
     """
     # Accept both dataclass and plain dict (the workflow passes a dict via args=[]).
     if isinstance(inp, dict):
-        inp = PublishSummaryInput(**inp)
+        inp = PublishSummaryInput(**cast("dict[str, Any]", inp))
 
     cfg = get_project(inp.project_id)
     repo = parse_github_repo(cfg.github_url)
 
     title = f"[devloop] {inp.project_id} — {inp.date} digest"
 
-    with _client(cfg) as c:
+    with await _client(cfg) as c:
         _ensure_label(c, repo)
         resp = c.post(
             f"/repos/{repo}/issues",
