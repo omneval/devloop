@@ -15,18 +15,13 @@ from datetime import timedelta
 from typing import Any, Callable, Coroutine, Optional
 
 from temporalio import workflow
+from temporalio.common import RetryPolicy
 
-<<<<<<< HEAD
-from ..dev_loop_logic import pr_number_from_url
-=======
->>>>>>> origin/main
+from ..cichecks import CIChecksResult, PollCIChecksInput
+from ..execution import AgentJobResult, DispatchInput, TaskSpec
+from ..github import GithubNotificationInput
 from ..phases.phase_ops import PhaseOps
-from ..shared import (
-    CIChecksResult,
-    JOB_DISPATCH_QUEUE,
-    Phase,
-    TaskSpec,
-)
+from ..shared import JOB_DISPATCH_QUEUE, Phase
 
 # Bounded backoff for "CI still pending" re-polls within a single ci_fix
 # attempt slot — caps how long CICycle waits on a CI run that never
@@ -113,14 +108,9 @@ class CICycle:
             ``exhausted=True`` when every fix attempt is spent without CI
             going green.
         """
-<<<<<<< HEAD
         cb = callbacks or PhaseOps.default()
-        pr_number = pr_number_from_url(exec_result.get("pr_url", ""))
-=======
-        cb = callbacks or _Callbacks.default()
         ops = PhaseOps()
         pr_number = ops.pr_number_from_url(exec_result.get("pr_url", ""))
->>>>>>> origin/main
         if pr_number <= 0:
             return CICycleResult(exhausted=False, commits=0)
 
@@ -212,7 +202,6 @@ class CICycle:
             exhausted=not final_checks.all_passed,
             commits=total_commits,
         )
-<<<<<<< HEAD
 
     async def _poll(
         self,
@@ -298,5 +287,3 @@ class CICycle:
             )
         except Exception:  # noqa: BLE001
             workflow.logger.warning("cleanup_configmap failed for %s", job_name)
-=======
->>>>>>> origin/main

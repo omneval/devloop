@@ -1,7 +1,6 @@
-<<<<<<< HEAD
 """Unified PhaseOps callback protocol for all phase modules.
 
-Promotes the informal `_WorkflowCommon` mixin into a formal ``PhaseOps`` seam
+Promotes the informal ``_WorkflowCommon`` mixin into a formal ``PhaseOps`` seam
 that every phase module references for its I/O operations.  Rather than each
 phase defining its own callback dataclass, all phases share one protocol that
 covers every operation — ``comment``, ``cleanup``, ``dispatch``, ``kpi_bump``,
@@ -13,31 +12,31 @@ they need and leave the rest as ``None``.
 
 The ``DevLoopWorkflow`` and ``PRCommentWorkflow`` implement this protocol by
 delegating to their ``_WorkflowCommon`` methods wrapped in ``async def`` callables.
-=======
-"""PhaseOps — shared helper methods for Dev Loop phase modules.
-
-Consolidates helper methods that were duplicated across ExecutePhase,
-ReviewPhase, ReviewFixPass, CICycle, and Notifier so they live in a
-single deep module with a small interface::
-
-    ops = PhaseOps()
-    ops.as_int(value)
-    await ops.comment(project_id, issue_number, body)
-    await ops.cleanup(job_name)
-
-Every method accepts an injectable callback so tests can inject mocks.
-When the callback is ``None``, the default Temporal activity path is used.
->>>>>>> origin/main
 """
 
 from __future__ import annotations
 
-<<<<<<< HEAD
+import re
+from datetime import timedelta
 from typing import Any, Callable, Coroutine, Optional
 
-from ..cichecks import CIChecksResult
-from ..execution import AgentJobResult, TaskSpec, WorkflowKpiInput
-from ..github import PlanIssueInput, ReviewerRequestResult
+from temporalio import workflow
+from temporalio.common import RetryPolicy
+
+from ..cichecks import CIChecksResult, PollCIChecksInput
+from ..execution import (
+    AgentJobResult,
+    DispatchInput,
+    TaskSpec,
+    WorkflowKpiInput,
+)
+from ..github import (
+    GithubNotificationInput,
+    PlanIssueInput,
+    RequestReviewerInput,
+    ReviewerRequestResult,
+)
+from .._constants import JOB_DISPATCH_QUEUE
 
 
 # ── Core I/O operations (shared by every phase) ────────────────────────── #
@@ -222,35 +221,9 @@ class PhaseOps:
         Temporal activity path.
         """
         return cls()
-=======
-import re
-from datetime import timedelta
-from typing import Any, Callable, Coroutine, Optional
-
-from temporalio import workflow
-from temporalio.common import RetryPolicy
-
-from .._constants import _DISPATCH_TIMEOUT, _GITHUB_COMMENT_TIMEOUT, _RETRY
-from ..shared import (
-    AgentJobResult,
-    CIChecksResult,
-    DispatchInput,
-    GithubNotificationInput,
-    PollCIChecksInput,
-    RequestReviewerInput,
-    ReviewerRequestResult,
-)
-
-
-class PhaseOps:
-    """Stateless collection of shared helpers for phase modules.
-
-    Instantiate (``PhaseOps()``) and call methods directly — no state
-    is kept between calls.
-    """
 
     # ------------------------------------------------------------------
-    # _as_int
+    # as_int
     # ------------------------------------------------------------------
 
     def as_int(self, value: Any) -> int:
@@ -275,18 +248,18 @@ class PhaseOps:
         return 0
 
     # ------------------------------------------------------------------
-    # _comment
+    # comment — default Temporal activity path (fallback when field is None)
     # ------------------------------------------------------------------
 
-    async def comment(
+    async def comment(  # noqa: F811
         self,
         project_id: str,
         issue_number: int,
         body: str,
         *,
-        callback: Optional[Callable[[str, int, str], Coroutine[Any, Any, None]]] = None,
-        timeout: Optional[timedelta] = None,
-        retry_policy: Optional[RetryPolicy] = None,
+        callback: Optional[
+            Callable[[str, int, str], Coroutine[Any, Any, None]]
+        ] = None,
     ) -> None:
         """Post a GitHub Issue / PR comment.
 
@@ -303,15 +276,15 @@ class PhaseOps:
                 project_id=project_id,
                 body=body,
             ),
-            start_to_close_timeout=timeout or _GITHUB_COMMENT_TIMEOUT,
-            retry_policy=retry_policy or _RETRY,
+            start_to_close_timeout=timedelta(seconds=30),
+            retry_policy=RetryPolicy(maximum_attempts=3),
         )
 
     # ------------------------------------------------------------------
-    # _cleanup
+    # cleanup — default Temporal activity path (fallback when field is None)
     # ------------------------------------------------------------------
 
-    async def cleanup(
+    async def cleanup(  # noqa: F811
         self,
         job_name: str,
         *,
@@ -351,7 +324,7 @@ class PhaseOps:
             Callable[[str, Any, int, float], Coroutine[Any, Any, AgentJobResult]]
         ] = None,
         activity_name: str = "dispatch_agent_job",
-        task_queue: Optional[str] = None,
+        task_queue: Optional[str] = JOB_DISPATCH_QUEUE,
     ) -> AgentJobResult:
         """Generic dispatch: check callback first, fall back to Temporal activity.
 
@@ -385,56 +358,9 @@ class PhaseOps:
                 poll_interval_seconds=poll_interval_seconds,
             ),
             result_type=AgentJobResult,
-            start_to_close_timeout=_DISPATCH_TIMEOUT,
-            retry_policy=_RETRY,
+            start_to_close_timeout=timedelta(minutes=5),
+            retry_policy=RetryPolicy(maximum_attempts=3),
             task_queue=task_queue,
-        )
-
-    # ------------------------------------------------------------------
-    # dispatch_activity (generic)
-    # ------------------------------------------------------------------
-
-    async def dispatch_activity(
-        self,
-        activity_name: str,
-        inp: Any,
-        *,
-        callback: Optional[Callable[[Any], Coroutine[Any, Any, Any]]] = None,
-        timeout: Optional[timedelta] = None,
-        result_type: Optional[type] = None,
-        retry_policy: Optional[RetryPolicy] = None,
-        task_queue: Optional[str] = None,
-        **kwargs: Any,
-    ) -> Any:
-        """Generic activity dispatch: call *callback* directly or invoke Temporal.
-
-        Parameters
-        ----------
-        activity_name : str
-            Name of the Temporal activity to invoke.
-        inp : Any
-            The input payload for the activity.
-        callback : callable, optional
-            When provided it is called directly with *inp*.
-        timeout : timedelta, optional
-            start_to_close_timeout (default 60 s).
-        result_type : type, optional
-            Passed to ``workflow.execute_activity``.
-        retry_policy : RetryPolicy, optional
-            Passed to ``workflow.execute_activity``.
-        task_queue : str, optional
-            Passed to ``workflow.execute_activity``.
-        """
-        if callback is not None:
-            return await callback(inp)
-        return await workflow.execute_activity(
-            activity_name,
-            inp,
-            start_to_close_timeout=timeout or timedelta(seconds=60),
-            result_type=result_type,
-            retry_policy=retry_policy or _RETRY,
-            task_queue=task_queue,
-            **kwargs,
         )
 
     # ------------------------------------------------------------------
@@ -466,10 +392,10 @@ class PhaseOps:
         )
 
     # ------------------------------------------------------------------
-    # request_reviewer
+    # request_reviewer — default Temporal activity path (fallback when field is None)
     # ------------------------------------------------------------------
 
-    async def request_reviewer(
+    async def request_reviewer(  # noqa: F811
         self,
         project_id: str,
         pr_number: int,
@@ -496,4 +422,3 @@ class PhaseOps:
             start_to_close_timeout=timedelta(seconds=30),
             retry_policy=RetryPolicy(maximum_attempts=1),
         )
->>>>>>> origin/main

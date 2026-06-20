@@ -17,12 +17,7 @@ from __future__ import annotations
 
 from typing import Any, Callable, Coroutine, Optional
 
-<<<<<<< HEAD
 from devloop.github import ReviewerRequestResult
-=======
-from ..phases.phase_ops import PhaseOps
-
->>>>>>> origin/main
 
 from .phase_ops import PhaseOps
 
@@ -59,14 +54,9 @@ class Notifier:
         callbacks : PhaseOps, optional
             Injected callbacks for testing.
         """
-<<<<<<< HEAD
         cb = callbacks or PhaseOps.default()
-        issue_no = _as_int(issue.get("id"))
-=======
-        cb = callbacks or _Callbacks.default()
         ops = PhaseOps()
         issue_no = ops.as_int(issue.get("id"))
->>>>>>> origin/main
         pr_url = exec_result.get("pr_url", "")
         pr_number = ops.pr_number_from_url(pr_url)
 
@@ -95,7 +85,6 @@ class Notifier:
             callback=cb.post_comment,
         )
 
-<<<<<<< HEAD
     async def _request_reviewer(
         self, project_id: str, pr_number: Optional[int], cb: PhaseOps
     ) -> Any:
@@ -129,9 +118,6 @@ def _as_int(value: Any) -> int:
         return int(value)
     except (TypeError, ValueError):
         return 0
-
-=======
->>>>>>> origin/main
 
 class NotifierCallbacks(PhaseOps):
     """Backward-compatible shim that delegates to a ``PhaseOps`` instance.

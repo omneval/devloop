@@ -17,17 +17,13 @@ from __future__ import annotations
 from dataclasses import asdict
 from typing import Any, Optional
 
-from ..phases.phase_ops import PhaseOps
-from ..shared import TaskSpec
-
-
-# Re-use types from the unified protocol
 from .phase_ops import (
     PhaseOps,
     _DispatchFixCallback,
     _KpiBumpCallback,
     _PostCommentCallback,
 )
+from ..shared import TaskSpec
 
 
 class ReviewFixPass:
@@ -64,14 +60,9 @@ class ReviewFixPass:
         bool
             True when the fix pass produced commits, False otherwise.
         """
-<<<<<<< HEAD
         cb = callbacks or PhaseOps.default()
-        issue_no = _as_int(issue.get("id"))
-=======
-        cb = callbacks or _Callbacks.default()
         ops = PhaseOps()
         issue_no = ops.as_int(issue.get("id"))
->>>>>>> origin/main
         pr_url = exec_result.get("pr_url", "")
         pr_number = ops.pr_number_from_url(pr_url)
         findings = review.get("summary", "")
@@ -119,7 +110,6 @@ class ReviewFixPass:
         )
         return True
 
-<<<<<<< HEAD
     async def _dispatch_fix(
         self,
         project_id: str,
@@ -159,9 +149,6 @@ class ReviewFixPass:
         if cb and cb.kpi_bump is not None:
             await cb.kpi_bump(name, value)
 
-=======
->>>>>>> origin/main
-
 def _has_commits(result: Any) -> bool:
     """Check if a dispatch result has non-zero commits.
 
@@ -186,7 +173,6 @@ def _commits_count(result: Any) -> int:
     return getattr(result, "commits", 0)
 
 
-<<<<<<< HEAD
 def _as_int(value: Any) -> int:
     try:
         return int(value)
@@ -228,10 +214,6 @@ class ReviewFixPassCallbacks(PhaseOps):
     @property
     def phaseops(self) -> PhaseOps:
         return self
-
-
-=======
->>>>>>> origin/main
 # Re-export for convenience.
 PhaseOpsCallbacks = PhaseOps  # noqa: F401
 ReviewFixPassCallbacks = ReviewFixPassCallbacks  # noqa: F401

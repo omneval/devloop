@@ -13,3 +13,5 @@ _DISPATCH_TIMEOUT = timedelta(seconds=60)
 _ACTIVITY_TIMEOUT = timedelta(
     seconds=int(os.getenv("AGENT_JOB_ACTIVE_DEADLINE", "7200")) + 90
 )
+
+JOB_DISPATCH_QUEUE = os.getenv("JOB_DISPATCH_QUEUE", "devloop-job-dispatch")
