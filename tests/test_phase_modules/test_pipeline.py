@@ -75,6 +75,81 @@ class TestPhasePipelineEmpty:
         assert len(state.plan_calls) == 1
 
 
+class TestPhasePipelineNextIssue:
+    """Pipeline #184: when plan exhausts the current issue, a queued issue
+    (from ``next_issue``) is picked up instead of ending the run."""
+
+    async def test_queued_issue_continues_run(self) -> None:
+        """Plan empties for issue #1, ``next_issue`` hands back #2, and the
+        pipeline plans/executes/notifies #2 in the same run."""
+        state = _MockPhases()
+        plans = {
+            1: {"issues": [{"id": 1, "title": "first"}]},
+            2: {"issues": [{"id": 2, "title": "second"}]},
+        }
+        call_log: list[int] = []
+
+        async def plan_phase(inp, rnd):
+            state.plan_calls.append((inp, rnd))
+            call_log.append(inp.triggering_issue)
+            # First call for an issue returns it; the second call for that
+            # same issue (the "no more rounds" check) returns empty.
+            if call_log.count(inp.triggering_issue) > 1:
+                return {"issues": []}
+            return plans[inp.triggering_issue]
+
+        async def execute_phase(inp, issue):
+            state.execute_calls.append((inp, issue))
+            return {"commits": 1, "branch": "main", "pr_url": f"https://pr/{issue['id']}"}
+
+        async def review_phase(inp, issue, exec_result):
+            state.review_calls.append((inp, issue, exec_result))
+            return {"verdict": "lgtm", "summary": ""}
+
+        async def notifier(inp, issue, exec_result):
+            state.notify_calls.append((inp, issue, exec_result))
+
+        queue = [2]
+
+        def next_issue():
+            return queue.pop(0) if queue else 0
+
+        pipeline = PhasePipeline()
+        inp = DevLoopInput(project_id="test", triggering_issue=1, max_iterations=5)
+        result = await pipeline.run(
+            inp,
+            plan_phase=plan_phase,
+            execute_phase=execute_phase,
+            review_phase=review_phase,
+            fix_pass=lambda i, e, r, v: False,
+            notifier=notifier,
+            next_issue=next_issue,
+        )
+
+        assert result.status == "completed"
+        assert result.queued_for_review == [1, 2]
+        assert len(state.execute_calls) == 2
+        assert queue == []  # drained
+
+    async def test_empty_queue_completes_normally(self) -> None:
+        """When ``next_issue`` has nothing queued, the run completes as before."""
+
+        async def plan_phase(inp, rnd):
+            return {"issues": []}
+
+        result = await PhasePipeline().run(
+            DevLoopInput(project_id="test", triggering_issue=1, max_iterations=3),
+            plan_phase=plan_phase,
+            execute_phase=lambda i, e: {"commits": 0},
+            review_phase=lambda i, e, r: {"verdict": "lgtm"},
+            fix_pass=lambda i, e, r, v: False,
+            notifier=lambda i, e, r: None,
+            next_issue=lambda: 0,
+        )
+        assert result.status == "completed"
+        assert result.queued_for_review == []
+
+
 class TestPhasePipelinePlanFail:
     """Pipeline returns failed_plan when plan returns None."""
 

@@ -159,6 +159,22 @@ class DevLoopWorkflow(_WorkflowCommon):
         self._review_phase_instance: ReviewPhase | None = None
         self._review_fix_pass_instance: ReviewFixPass | None = None
         self._notifier_instance: Notifier | None = None
+        # Issues labelled while this run is already busy with another one
+        # (issue #184) — queued here instead of being dropped, and drained
+        # by the pipeline once the current triggering_issue has no more
+        # rounds to plan.
+        self._queued_issues: list[int] = []
+
+    @workflow.signal
+    def enqueue_issue(self, issue_number: int) -> None:
+        """Queue an issue labelled ``agent_label`` while this workflow is
+        already running another one (see ``webhook_deep.create_devloop_input``,
+        issue #184)."""
+        if issue_number and issue_number not in self._queued_issues:
+            self._queued_issues.append(issue_number)
+
+    def _dequeue_issue(self) -> int:
+        return self._queued_issues.pop(0) if self._queued_issues else 0
 
     # ---- lazy phase constructors ---------------------------------------- #
     def _plan(self) -> PlanPhase:
@@ -210,6 +226,7 @@ class DevLoopWorkflow(_WorkflowCommon):
                     inp, issue, exec_result, fix_passes, verdict, started
                 )
             ),
+            next_issue=self._dequeue_issue,
         )
 
     # ---- PhasePipeline adapter methods ---------------------------------- #

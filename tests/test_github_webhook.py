@@ -34,12 +34,24 @@ _AGENT_LOGIN = "devloop-bot"
 
 
 class _FakeClient:
-    """Minimal Temporal client stub — records calls to start_workflow."""
+    """Minimal Temporal client stub — records calls to start_workflow.
+
+    Tracks which workflow ids are "running" so a second ``start_workflow``
+    for the same id raises ``WorkflowAlreadyStartedError`` (issue #184),
+    matching real Temporal behaviour for the default reuse policy.
+    """
 
     def __init__(self):
         self.started: list[dict] = []
+        self.signals: list[tuple] = []
+        self._running_ids: set[str] = set()
 
     async def start_workflow(self, workflow_name, arg, /, *, id, task_queue, **kwargs):
+        from temporalio.exceptions import WorkflowAlreadyStartedError
+
+        if id in self._running_ids:
+            raise WorkflowAlreadyStartedError(id, workflow_name)
+        self._running_ids.add(id)
         self.started.append(
             {
                 "workflow": workflow_name,
@@ -51,6 +63,15 @@ class _FakeClient:
             }
         )
         return id
+
+    def get_workflow_handle(self, wf_id):
+        fake_client = self
+
+        class _FakeHandle:
+            async def signal(self, name, arg):
+                fake_client.signals.append((wf_id, name, arg))
+
+        return _FakeHandle()
 
 
 def _make_project():
@@ -73,13 +94,15 @@ def _sign(body: bytes, secret: str) -> str:
     return f"sha256={mac.hexdigest()}"
 
 
-def _labeled_payload(label: str = _AGENT_LABEL, repo: str = _GITHUB_REPO) -> bytes:
+def _labeled_payload(
+    label: str = _AGENT_LABEL, repo: str = _GITHUB_REPO, issue_number: int = 42
+) -> bytes:
     """Return raw JSON bytes for a GitHub ``issues`` labeled event."""
     payload = {
         "action": "labeled",
         "label": {"name": label},
         "repository": {"full_name": repo},
-        "issue": {"number": 42, "title": "Test issue"},
+        "issue": {"number": issue_number, "title": "Test issue"},
     }
     return json.dumps(payload).encode()
 
@@ -135,12 +158,42 @@ def test_valid_signature_starts_devloop_workflow(client_and_spy):
     wf = fake.started[0]
     assert wf["workflow"] == "DevLoopWorkflow"
     assert wf["project_id"] == _PROJECT_ID
-    # Stable per-project ID + USE_EXISTING so N issues collapse to one Dev Loop
-    # run (no duplicate workflows / duplicate notification threads).
-    from temporalio.common import WorkflowIDConflictPolicy
-
+    # Stable per-project ID so repeat labelling of the same project collapses
+    # onto one Dev Loop run (no duplicate workflows / notification threads).
     assert wf["id"] == f"devloop-{_PROJECT_ID}"
-    assert wf["id_conflict_policy"] == WorkflowIDConflictPolicy.USE_EXISTING
+
+
+def test_second_label_while_first_run_in_flight_is_queued_not_dropped(client_and_spy):
+    """Regression test for issue #184: labelling a second issue while the
+    first issue's Dev Loop run is still in flight must not be silently
+    dropped. ``WorkflowFactory.create_devloop_input`` should detect the
+    already-running workflow and signal the new issue onto it instead of
+    swallowing the event."""
+    tc, fake = client_and_spy
+
+    def _post(issue_number: int):
+        body = _labeled_payload(issue_number=issue_number)
+        sig = _sign(body, _SECRET)
+        return tc.post(
+            "/webhook/github",
+            content=body,
+            headers={
+                "X-GitHub-Event": "issues",
+                "X-Hub-Signature-256": sig,
+                "Content-Type": "application/json",
+            },
+        )
+
+    resp1 = _post(42)
+    resp2 = _post(43)
+
+    assert resp1.status_code == 200
+    assert resp2.status_code == 200
+    # Only the first event actually starts a workflow ...
+    assert len(fake.started) == 1
+    assert fake.started[0]["triggering_issue"] == 42
+    # ... the second is signalled onto the already-running one, not dropped.
+    assert fake.signals == [(f"devloop-{_PROJECT_ID}", "enqueue_issue", 43)]
 
 
 def test_labeled_event_passes_triggering_issue_to_workflow(client_and_spy):

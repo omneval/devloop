@@ -79,6 +79,7 @@ _ExecutePhaseFn = Callable[["DevLoopInput", dict], Awaitable[dict]]
 _ReviewPhaseFn = Callable[["DevLoopInput", dict, dict], Awaitable[dict | None]]
 _FixPassFn = Callable[["DevLoopInput", dict, dict, dict], Awaitable[bool]]
 _NotifyFn = Callable[["DevLoopInput", dict, dict], Awaitable[None]]
+_NextIssueFn = Callable[[], Any]  # () -> int, 0/None when nothing queued
 
 
 # Type for post-round callbacks. The pipeline invokes these after each
@@ -110,6 +111,7 @@ class PhasePipeline:
         fix_pass: _FixPassFn,
         notifier: _NotifyFn,
         post_round: Optional[_PostRoundFn] = None,
+        next_issue: Optional[_NextIssueFn] = None,
     ) -> Any:  # DevLoopResult
         """Run the Dev Loop orchestration.
 
@@ -136,6 +138,12 @@ class PhasePipeline:
             Called after each successful round with ``(issue, exec_result,
             fix_passes, verdict)``.  The caller (typically a Temporal
             workflow) uses this to emit KPIs.
+        next_issue : _NextIssueFn, optional
+            ``() -> int`` — called once the current ``triggering_issue`` has
+            no more issues to plan. A truthy return value is treated as
+            another issue to run rounds for (see issue #184: issues labelled
+            while a run is already in flight are queued onto the same
+            workflow rather than dropped); a falsy value ends the run.
 
         Returns
         -------
@@ -156,6 +164,11 @@ class PhasePipeline:
                 )
             issues = plan.get("issues") or []
             if not issues:
+                if next_issue is not None:
+                    nxt = await _run_fn(next_issue)
+                    if nxt:
+                        inp.triggering_issue = nxt
+                        continue
                 return _devloop_result(
                     "completed",
                     queued_for_review=queued,

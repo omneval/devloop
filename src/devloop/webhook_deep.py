@@ -12,6 +12,7 @@ import os
 import re
 
 from temporalio.common import WorkflowIDConflictPolicy
+from temporalio.exceptions import WorkflowAlreadyStartedError
 
 from .projects import ProjectConfig, parse_github_repo
 from .shared import ORCHESTRATION_QUEUE
@@ -42,29 +43,46 @@ class WorkflowFactory:
         agent_label: str,
         issue_number,
     ) -> str:
-        """Create a DevLoopInput and start the workflow.
+        """Create a DevLoopInput and start (or queue onto) the Dev Loop workflow.
+
+        The Dev Loop workflow is one-issue-at-a-time per project (stable
+        workflow id ``devloop-{project_id}``), so a label event arriving
+        while a previous issue is still being worked must not be dropped
+        (issue #184). We first try a normal start; if a run for this project
+        is already in flight, ``start_workflow`` raises
+        ``WorkflowAlreadyStartedError`` and we signal the running workflow
+        to queue this issue instead — it gets picked up once the current
+        issue's rounds finish.
 
         Returns the workflow id so callers can return it in their response dict.
         """
         from .dev_loop import DevLoopInput
 
         wf_id = f"devloop-{project_id}"
-        input_obj = DevLoopInput.from_env(
-            project_id, agent_label, int(issue_number or 0)
-        )
-        await self._client.start_workflow(
-            "DevLoopWorkflow",
-            input_obj,
-            id=wf_id,
-            task_queue=ORCHESTRATION_QUEUE,
-            id_conflict_policy=WorkflowIDConflictPolicy.USE_EXISTING,
-        )
-        log.info(
-            "triggered Dev Loop %s for %s (issue #%s)",
-            wf_id,
-            project_id,
-            issue_number,
-        )
+        issue_no = int(issue_number or 0)
+        input_obj = DevLoopInput.from_env(project_id, agent_label, issue_no)
+        try:
+            await self._client.start_workflow(
+                "DevLoopWorkflow",
+                input_obj,
+                id=wf_id,
+                task_queue=ORCHESTRATION_QUEUE,
+            )
+            log.info(
+                "triggered Dev Loop %s for %s (issue #%s)",
+                wf_id,
+                project_id,
+                issue_number,
+            )
+        except WorkflowAlreadyStartedError:
+            handle = self._client.get_workflow_handle(wf_id)
+            await handle.signal("enqueue_issue", issue_no)
+            log.info(
+                "Dev Loop %s already running for %s — queued issue #%s",
+                wf_id,
+                project_id,
+                issue_number,
+            )
         return wf_id
 
     async def create_pr_comment_input(

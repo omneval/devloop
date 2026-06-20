@@ -475,6 +475,55 @@ async def test_webhook_run_uses_plan_issue_activity(reset_mocks):
 
 
 @pytest.mark.asyncio
+async def test_enqueue_issue_signal_picks_up_second_issue(reset_mocks):
+    """Regression test for issue #184: an issue labelled while a Dev Loop run
+    is already in flight must be queued onto that same run (via the
+    ``enqueue_issue`` signal) and processed once the first issue's rounds
+    are done, instead of being silently dropped.
+
+    ``start_signal``/``start_signal_args`` here mimics what
+    ``WorkflowFactory.create_devloop_input`` does in production when a
+    second ``agent-ready`` label arrives while a run for the project is
+    already in flight: the signal is delivered to the running workflow
+    instead of starting a duplicate one."""
+    reset_mocks.plan_issue_rounds = [
+        _one_issue(1),  # round 1: process issue #1
+        {"issues": []},  # round 2: no more rounds for #1 -> dequeue #2
+        _one_issue(2),  # round 3: process issue #2
+    ]
+
+    acts = _make_activities()
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with (
+            Worker(
+                env.client,
+                task_queue=ORCHESTRATION_QUEUE,
+                workflows=[DevLoopWorkflow],
+                activities=acts["orchestration"],
+            ),
+            Worker(
+                env.client,
+                task_queue=JOB_DISPATCH_QUEUE,
+                workflows=[],
+                activities=acts["dispatch"],
+            ),
+        ):
+            wf_id = f"devloop-test-{uuid.uuid4().hex[:8]}"
+            handle = await env.client.start_workflow(
+                DevLoopWorkflow.run,
+                DevLoopInput("omneval", triggering_issue=1, max_iterations=5),
+                id=wf_id,
+                task_queue=ORCHESTRATION_QUEUE,
+                start_signal="enqueue_issue",
+                start_signal_args=[2],
+            )
+            result = await handle.result()
+
+    assert result.status == "completed"
+    assert result.queued_for_review == [1, 2]
+
+
+@pytest.mark.asyncio
 async def test_non_webhook_run_still_dispatches_plan_job(reset_mocks):
     """When triggering_issue == 0 (non-webhook), the Plan Agent Execution Job
     is still dispatched — the activity path only applies to webhook runs."""
