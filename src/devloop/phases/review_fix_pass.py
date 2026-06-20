@@ -17,8 +17,8 @@ from __future__ import annotations
 from dataclasses import asdict
 from typing import Any, Optional
 
-from devloop.dev_loop_logic import pr_number_from_url
-from devloop.shared import TaskSpec
+from ..phases.phase_ops import PhaseOps
+from ..shared import TaskSpec
 
 
 # Re-use types from the unified protocol
@@ -64,10 +64,16 @@ class ReviewFixPass:
         bool
             True when the fix pass produced commits, False otherwise.
         """
+<<<<<<< HEAD
         cb = callbacks or PhaseOps.default()
         issue_no = _as_int(issue.get("id"))
+=======
+        cb = callbacks or _Callbacks.default()
+        ops = PhaseOps()
+        issue_no = ops.as_int(issue.get("id"))
+>>>>>>> origin/main
         pr_url = exec_result.get("pr_url", "")
-        pr_number = pr_number_from_url(pr_url)
+        pr_number = ops.pr_number_from_url(pr_url)
         findings = review.get("summary", "")
         inline = review.get("inline_comments") or []
         if inline:
@@ -78,11 +84,11 @@ class ReviewFixPass:
         if not findings.strip():
             return False
 
-        await self._post_comment(
+        await ops.comment(
             inp.project_id,
             issue_no,
             "⏳ queued — agent is addressing automated review findings",
-            cb,
+            callback=cb.post_comment,
         )
         spec = TaskSpec(
             phase="pr_comment",
@@ -96,22 +102,24 @@ class ReviewFixPass:
                 "pr_number": pr_number,
             },
         )
-        result = await self._dispatch_fix(
+        result = await ops.dispatch_helper(
             inp.project_id,
             spec,
             issue_number=issue_no,
             poll_interval_seconds=inp.poll_interval_seconds,
-            cb=cb,
+            dispatch_callback=cb.dispatch_fix,
         )
         if not _has_commits(result):
             return False
-        await self._post_comment(
+        await ops.comment(
             inp.project_id,
             issue_no,
             f"🔧 Fix pass pushed {_commits_count(result)} commit(s) addressing review findings.",
+            callback=cb.post_comment,
         )
         return True
 
+<<<<<<< HEAD
     async def _dispatch_fix(
         self,
         project_id: str,
@@ -151,6 +159,8 @@ class ReviewFixPass:
         if cb and cb.kpi_bump is not None:
             await cb.kpi_bump(name, value)
 
+=======
+>>>>>>> origin/main
 
 def _has_commits(result: Any) -> bool:
     """Check if a dispatch result has non-zero commits.
@@ -176,6 +186,7 @@ def _commits_count(result: Any) -> int:
     return getattr(result, "commits", 0)
 
 
+<<<<<<< HEAD
 def _as_int(value: Any) -> int:
     try:
         return int(value)
@@ -219,6 +230,8 @@ class ReviewFixPassCallbacks(PhaseOps):
         return self
 
 
+=======
+>>>>>>> origin/main
 # Re-export for convenience.
 PhaseOpsCallbacks = PhaseOps  # noqa: F401
 ReviewFixPassCallbacks = ReviewFixPassCallbacks  # noqa: F401

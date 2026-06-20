@@ -5,6 +5,7 @@ from temporalio.common import RetryPolicy
 
 _RETRY = RetryPolicy(maximum_attempts=3)
 _GITHUB_COMMENT_TIMEOUT = timedelta(seconds=60)
+_DISPATCH_TIMEOUT = timedelta(seconds=60)
 
 # Temporal activity timeout for Agent Execution Jobs. Must exceed
 # AGENT_JOB_ACTIVE_DEADLINE so Temporal always outlasts the K8s job and

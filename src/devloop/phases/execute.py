@@ -9,21 +9,19 @@ and delegates to ``CICycle`` for the CI fix loop.
 
 from __future__ import annotations
 
+<<<<<<< HEAD
 from datetime import timedelta
+=======
+from dataclasses import dataclass
+>>>>>>> origin/main
 from typing import Any, Callable, Coroutine, Optional
 
-from temporalio import workflow
-from temporalio.common import RetryPolicy
 
-from .._constants import _ACTIVITY_TIMEOUT, _GITHUB_COMMENT_TIMEOUT, _RETRY
 from ..phases.cycle import CICycle
 from ..phases.phase_ops import PhaseOps
 from ..projects import get_project
 from ..shared import (
     AgentJobResult,
-    DispatchInput,
-    GithubNotificationInput,
-    JOB_DISPATCH_QUEUE,
     JobStatus,
     TaskSpec,
 )
@@ -100,7 +98,8 @@ class ExecutePhase:
             ``commits``, ``exhausted`` keys.
         """
         cb = callbacks or ExecutePhaseCallbacks.default()
-        issue_no = _as_int(issue.get("id"))
+        ops = PhaseOps()
+        issue_no = ops.as_int(issue.get("id"))
 
         try:
             project_cfg = get_project(inp.project_id)
@@ -125,18 +124,18 @@ class ExecutePhase:
         for attempt in range(1, max_iters + 1):
             if cb.kpi_bump is not None:
                 await cb.kpi_bump("execute_attempts", 1)
-            await self._comment(
+            await ops.comment(
                 inp.project_id,
                 issue_no,
                 "⏳ queued — agent is working on this issue",
-                cb,
+                callback=cb.post_comment,
             )
-            result = await self._dispatch_execute(
+            result = await ops.dispatch_helper(
                 inp.project_id,
                 spec,
                 issue_number=issue_no,
                 poll_interval_seconds=inp.poll_interval_seconds,
-                cb=cb,
+                dispatch_callback=cb.dispatch_execute,
             )
             # Resolve mid-run AWAITING_HUMAN questions.
             result = await self._answer_questions(inp.project_id, issue_no, result, cb)
@@ -148,11 +147,15 @@ class ExecutePhase:
             # execute_max_iterations was misconfigured to < 1, so the loop
             # above never ran — treat it the same as a failed attempt rather
             # than crashing on a None dereference below.
-            await self._comment(
+            await ops.comment(
                 inp.project_id,
                 issue_no,
                 "❌ Parked — execute phase failed: execute_max_iterations must be >= 1",
+<<<<<<< HEAD
                 cb,
+=======
+                callback=cb.post_comment,
+>>>>>>> origin/main
             )
             return {
                 "issue_id": issue_no,
@@ -163,11 +166,11 @@ class ExecutePhase:
             }
 
         if result.status != JobStatus.COMPLETE.value:
-            await self._comment(
+            await ops.comment(
                 inp.project_id,
                 issue_no,
                 f"❌ Parked — execute phase failed: {result.error or 'unknown error'}",
-                cb,
+                callback=cb.post_comment,
             )
             return {
                 "issue_id": issue_no,
@@ -178,12 +181,12 @@ class ExecutePhase:
             }
 
         if not result.commits:
-            await self._comment(
+            await ops.comment(
                 inp.project_id,
                 issue_no,
                 f"❌ Execute exhausted {max_iters} attempts with no commits"
                 " — skipping this round",
-                cb,
+                callback=cb.post_comment,
             )
             return {
                 "issue_id": issue_no,
@@ -193,11 +196,11 @@ class ExecutePhase:
                 "exhausted": False,
             }
 
-        await self._comment(
+        await ops.comment(
             inp.project_id,
             issue_no,
             f"✅ Implemented — PR: {result.pr_url or result.branch}",
-            cb,
+            callback=cb.post_comment,
         )
         exec_result = {
             "issue_id": issue_no,
@@ -221,6 +224,7 @@ class ExecutePhase:
         exec_result["exhausted"] = cycle_result.exhausted
         return exec_result
 
+<<<<<<< HEAD
     async def _dispatch_execute(
         self,
         project_id: str,
@@ -251,6 +255,8 @@ class ExecutePhase:
             await self._cleanup(result.job_name, cb)
         return result
 
+=======
+>>>>>>> origin/main
     async def _answer_questions(
         self,
         project_id: str,
@@ -272,6 +278,7 @@ class ExecutePhase:
         # Default: no question resolution — return result as-is.
         return result
 
+<<<<<<< HEAD
     async def _comment(
         self, project_id: str, issue_number: int, body: str, cb: PhaseOps
     ) -> None:
@@ -310,3 +317,53 @@ def _as_int(value: Any) -> int:
         return int(value)
     except (TypeError, ValueError):
         return 0
+=======
+
+# --------------------------------------------------------------------------- #
+# CICycle bridge (ExecutePhase delegates CI fix to CICycle)
+# --------------------------------------------------------------------------- #
+
+
+class _CICycleCallbacks:
+    """Bridge from ExecutePhase callbacks to CICycle's callback model.
+
+    CICycle needs: ``poll_ci``, ``dispatch_fix``, ``post_comment``,
+    ``kpi_bump``, ``cleanup``.  ExecutePhase only exposes
+    ``dispatch_execute``, ``answer_question``, ``post_comment``, ``kpi_bump``.
+    This bridge maps what it can and lets CICycle fall back to its own
+    ``default()`` for the rest.
+    """
+
+    def __init__(
+        self,
+        execute_cb: Optional[ExecutePhaseCallbacks] = None,
+    ) -> None:
+        self._execute_cb = execute_cb or ExecutePhaseCallbacks.default()
+
+    @classmethod
+    def from_execute(
+        cls, execute_cb: Optional[ExecutePhaseCallbacks] = None
+    ) -> "_CICycleCallbacks":
+        """Create from ExecutePhase's ExecutePhaseCallbacks instance."""
+        return cls(execute_cb)
+
+    def build(self) -> Optional[Any]:
+        """Build a CICycle callbacks object, or ``None`` to use defaults.
+
+        Returns ``None`` when *all* required callbacks are ``None``,
+        signalling that CICycle should fall back to its own activity
+        defaults.
+        """
+        needs = {
+            "post_comment": self._execute_cb.post_comment,
+            "kpi_bump": self._execute_cb.kpi_bump,
+        }
+        if all(v is None for v in needs.values()):
+            return None
+
+        cic_cb = __import__("devloop.phases.cycle", fromlist=["_Callbacks"])._Callbacks
+        return cic_cb(
+            post_comment=self._execute_cb.post_comment,
+            kpi_bump=self._execute_cb.kpi_bump,
+        )
+>>>>>>> origin/main

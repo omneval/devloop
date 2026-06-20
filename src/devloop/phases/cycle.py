@@ -15,18 +15,16 @@ from datetime import timedelta
 from typing import Any, Callable, Coroutine, Optional
 
 from temporalio import workflow
-from temporalio.common import RetryPolicy
 
+<<<<<<< HEAD
 from ..dev_loop_logic import pr_number_from_url
+=======
+>>>>>>> origin/main
 from ..phases.phase_ops import PhaseOps
 from ..shared import (
-    AgentJobResult,
     CIChecksResult,
-    DispatchInput,
-    GithubNotificationInput,
     JOB_DISPATCH_QUEUE,
     Phase,
-    PollCIChecksInput,
     TaskSpec,
 )
 
@@ -115,8 +113,14 @@ class CICycle:
             ``exhausted=True`` when every fix attempt is spent without CI
             going green.
         """
+<<<<<<< HEAD
         cb = callbacks or PhaseOps.default()
         pr_number = pr_number_from_url(exec_result.get("pr_url", ""))
+=======
+        cb = callbacks or _Callbacks.default()
+        ops = PhaseOps()
+        pr_number = ops.pr_number_from_url(exec_result.get("pr_url", ""))
+>>>>>>> origin/main
         if pr_number <= 0:
             return CICycleResult(exhausted=False, commits=0)
 
@@ -126,7 +130,7 @@ class CICycle:
         total_commits = 0
 
         while attempt < max_iters:
-            checks = await self._poll(project_id, pr_number, cb)
+            checks = await ops.poll(project_id, pr_number, callback=cb.poll_ci)
             if checks.all_passed:
                 return CICycleResult(exhausted=False, commits=total_commits)
 
@@ -162,39 +166,53 @@ class CICycle:
                 "extra": {"ci_check_failures": failures},
             }
 
-            await self._post_comment(
+            await ops.comment(
                 project_id,
                 pr_number,
                 f"⏳ queued — CI fix attempt {attempt}/{max_iters}",
-                cb,
+                callback=cb.post_comment,
             )
 
-            commits = await self._dispatch_fix(
-                project_id, issue_no, spec_dict, poll_interval_seconds, cb
-            )
+            if cb.dispatch_fix is not None:
+                commits = await cb.dispatch_fix(
+                    project_id, issue_no, spec_dict, poll_interval_seconds
+                )
+            else:
+                _result = await ops.dispatch_helper(
+                    project_id,
+                    TaskSpec(**spec_dict),
+                    issue_no,
+                    poll_interval_seconds,
+                    dispatch_callback=None,
+                    task_queue=JOB_DISPATCH_QUEUE,
+                )
+                await ops.cleanup(_result.job_name, callback=cb.cleanup)
+                commits = _result.commits
             total_commits += commits
 
-            if cb.post_comment:
-                if commits > 0:
-                    await cb.post_comment(
-                        project_id,
-                        pr_number,
-                        f"🔧 CI fix attempt {attempt}/{max_iters} — "
-                        f"pushed {commits} commit(s)",
-                    )
-                else:
-                    await cb.post_comment(
-                        project_id,
-                        pr_number,
-                        f"❌ CI fix attempt {attempt}/{max_iters} failed",
-                    )
+            if commits > 0:
+                await ops.comment(
+                    project_id,
+                    pr_number,
+                    f"🔧 CI fix attempt {attempt}/{max_iters} — "
+                    f"pushed {commits} commit(s)",
+                    callback=cb.post_comment,
+                )
+            else:
+                await ops.comment(
+                    project_id,
+                    pr_number,
+                    f"❌ CI fix attempt {attempt}/{max_iters} failed",
+                    callback=cb.post_comment,
+                )
 
         # Re-check before declaring exhaustion.
-        final_checks = await self._poll(project_id, pr_number, cb)
+        final_checks = await ops.poll(project_id, pr_number, callback=cb.poll_ci)
         return CICycleResult(
             exhausted=not final_checks.all_passed,
             commits=total_commits,
         )
+<<<<<<< HEAD
 
     async def _poll(
         self,
@@ -280,3 +298,5 @@ class CICycle:
             )
         except Exception:  # noqa: BLE001
             workflow.logger.warning("cleanup_configmap failed for %s", job_name)
+=======
+>>>>>>> origin/main

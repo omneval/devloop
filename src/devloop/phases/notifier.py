@@ -17,7 +17,12 @@ from __future__ import annotations
 
 from typing import Any, Callable, Coroutine, Optional
 
+<<<<<<< HEAD
 from devloop.github import ReviewerRequestResult
+=======
+from ..phases.phase_ops import PhaseOps
+
+>>>>>>> origin/main
 
 from .phase_ops import PhaseOps
 
@@ -54,12 +59,22 @@ class Notifier:
         callbacks : PhaseOps, optional
             Injected callbacks for testing.
         """
+<<<<<<< HEAD
         cb = callbacks or PhaseOps.default()
         issue_no = _as_int(issue.get("id"))
+=======
+        cb = callbacks or _Callbacks.default()
+        ops = PhaseOps()
+        issue_no = ops.as_int(issue.get("id"))
+>>>>>>> origin/main
         pr_url = exec_result.get("pr_url", "")
-        pr_number = _pr_number_from_url(pr_url)
+        pr_number = ops.pr_number_from_url(pr_url)
 
-        reviewer_result = await self._request_reviewer(inp.project_id, pr_number, cb)
+        reviewer_result = await ops.request_reviewer(
+            inp.project_id,
+            pr_number,
+            callback=cb.request_reviewer,  # type: ignore[arg-type]
+        )
         if reviewer_result.requested:
             reviewer_note = "Reviewer has been tagged."
         elif reviewer_result.reason:
@@ -73,13 +88,14 @@ class Notifier:
             if exec_result.get("exhausted")
             else ""
         )
-        await self._post_comment(
+        await ops.comment(
             inp.project_id,
             issue_no,
             f"👀 Ready for review — PR: {pr_url}. {reviewer_note}{note}",
-            cb,
+            callback=cb.post_comment,
         )
 
+<<<<<<< HEAD
     async def _request_reviewer(
         self, project_id: str, pr_number: Optional[int], cb: PhaseOps
     ) -> Any:
@@ -114,6 +130,8 @@ def _as_int(value: Any) -> int:
     except (TypeError, ValueError):
         return 0
 
+=======
+>>>>>>> origin/main
 
 class NotifierCallbacks(PhaseOps):
     """Backward-compatible shim that delegates to a ``PhaseOps`` instance.
