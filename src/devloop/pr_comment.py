@@ -1,51 +1,16 @@
-"""PRCommentWorkflow — respond to reviewer feedback on open agent PRs (#78).
-
-Triggered by ``webhook.py`` when a human posts a ``pull_request_review`` or an
-``@devloop-bot``-mentioning ``issue_comment`` on an open ``agent/issue-<N>``
-PR. The workflow re-engages the agent on the existing branch:
-
-    "⏳ queued" ─▶ Phase.PR_COMMENT job (PR number + comment/review body;
-                   the agent fetches the diff itself via ``gh pr diff``)
-                 ─▶ CI Fix Cycle (delegate to standalone ``CICycle``)
-                 ─▶ request reviewer + post result comment
-
-A concurrent run for the same PR (workflow ID
-``pr-comment-{owner}-{repo}-{pr_number}``, ``TERMINATE_EXISTING`` conflict
-policy) terminates the in-flight run and starts fresh — the newest comment
-wins as context.
-"""
-
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
+from typing import Optional
+
 from temporalio import workflow
 
-from . import dev_loop_logic as logic
-from ._constants import _GITHUB_COMMENT_TIMEOUT, _RETRY
 from ._workflow_common import _WorkflowCommon
-from .execution import AgentJobResult
+from .execution import AgentJobResult, TaskSpec
 from .github import ReviewerRequestResult
 from .phases.cycle import CICycle
 from .phases.phase_ops import PhaseOps
-from .shared import (
-    GetPRBranchInput,
-    JobStatus,
-    Phase,
-    TaskSpec,
-)
-
-# Agent issue branches are named ``agent/issue-<N>[-slug]`` (see entrypoint.py /
-# github_ops._AGENT_BRANCH / webhook._AGENT_BRANCH). ``_handle_pull_request_review``
-# already filters on this before starting the workflow (the head ref comes free
-# in that payload); ``_handle_issue_comment`` can't — an ``issue_comment``
-# payload carries no head ref, only a PR number — so it dispatches with an
-# empty ``branch`` and lets ``get_pr_branch`` resolve it here. Re-checking the
-# resolved branch closes that gap: without it, an ``@devloop-bot`` mention on
-# *any* open PR (not just agent-owned ones) would resolve a real branch and
-# proceed to the entrypoint's ``force=True`` push — clobbering a human's work
-# (issue #101).
-_AGENT_BRANCH = re.compile(r"^agent/issue-(\d+)")
+from .phases.pr_comment import PRCommentPhase
 
 
 @dataclass
@@ -75,7 +40,7 @@ class PRCommentInput:
         author: str,
     ) -> "PRCommentInput":
         """Build an input with the timeout gates sourced from the worker env —
-        same lazy-resolution pattern as ``DevLoopInput.from_env``: called only
+        same lazy-resolution pattern as DevLoopInput.from_env: called only
         from the webhook entry point (outside the workflow sandbox)."""
         import os
 
@@ -108,24 +73,25 @@ class PRCommentResult:
     detail: str = ""
 
 
-def _as_int(value) -> int:
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return 0
-
-
 @workflow.defn
 class PRCommentWorkflow(_WorkflowCommon, PhaseOps):
+    """Respond to reviewer feedback on open agent PRs.
+
+    Thin adapter — composes PRCommentPhase, CICycle, and
+    reviewer request as separate deep modules.  Implements the
+    PhaseOps protocol by wiring its ``_WorkflowCommon`` helpers as
+    callable fields.
+    """
+
     def __init__(self) -> None:
-        # Bind PhaseOps protocol fields to methods that use the local
-        # `workflow` reference (devloop.pr_comment.workflow).  This is what
-        # makes PRCommentWorkflow a true PhaseOps adapter.
+        # PhaseOps adapters (use local ``workflow`` from this module) --------- #
         self.comment = self._comment_activity
         self.dispatch = self._dispatch_activity
         self.request_reviewer = self._request_reviewer_activity
+        # Lazy-init: phase instances are workflow state and must survive replay.
+        self._pr_comment_phase_instance: Optional[PRCommentPhase] = None
 
-    # ---- PhaseOps adapters (use local `workflow` from this module) --------- #
+    # ---- PhaseOps adapters ----------------------------------------------- #
 
     async def _comment_activity(
         self, project_id: str, issue_number: int, body: str
@@ -156,104 +122,21 @@ class PRCommentWorkflow(_WorkflowCommon, PhaseOps):
 
     @workflow.run
     async def run(self, inp: PRCommentInput) -> PRCommentResult:
+        # 1. PRCommentPhase: branch resolution, validation, dispatch
+        phase = self._pr_comment_phase_instance or PRCommentPhase()
+        phase_result = await phase.run(inp)
+
+        if phase_result.error:
+            return PRCommentResult(
+                status="failed",
+                pr_number=inp.pr_number,
+                detail=phase_result.error,
+            )
+
+        exec_result: dict = phase_result.exec_result or {}
         issue_no = inp.issue_number or inp.pr_number
 
-        await self._comment(
-            inp.project_id,
-            issue_no,
-            "⏳ queued — agent is responding to reviewer feedback",
-        )
-
-        # `issue_comment` (an ``@devloop-bot`` mention) webhook payloads carry
-        # no `pull_request.head.ref` — only `pull_request_review` does — so
-        # `inp.branch` arrives empty. Resolve it from the PR number before
-        # dispatching: an empty branch becomes `git clone --branch ''`, which
-        # fails the Agent Execution Job outright (issue #101).
-        branch = inp.branch
-        if not branch:
-            branch = await workflow.execute_activity(
-                "get_pr_branch",
-                GetPRBranchInput(inp.project_id, inp.pr_number),
-                start_to_close_timeout=_GITHUB_COMMENT_TIMEOUT,
-                retry_policy=_RETRY,
-            )
-        if not branch:
-            await self._comment(
-                inp.project_id,
-                issue_no,
-                f"❌ Could not respond to feedback — could not resolve PR #{inp.pr_number}'s branch",
-            )
-            return PRCommentResult(
-                status="failed",
-                pr_number=inp.pr_number,
-                detail="branch resolution failed",
-            )
-
-        # `_handle_pull_request_review` already filters to agent-owned PRs
-        # before starting this workflow (the head ref comes free in that
-        # payload); a comment-sourced run resolves its branch here instead, so
-        # it must be re-checked — otherwise an `@devloop-bot` mention on *any*
-        # open PR would reach the entrypoint's `force=True` push and clobber a
-        # human's branch (issue #101).
-        if not _AGENT_BRANCH.match(branch):
-            await self._comment(
-                inp.project_id,
-                issue_no,
-                f"❌ Could not respond to feedback — PR #{inp.pr_number} isn't an agent-owned PR (branch `{branch}`)",
-            )
-            return PRCommentResult(
-                status="failed",
-                pr_number=inp.pr_number,
-                detail="not an agent-owned branch",
-            )
-
-        spec = TaskSpec(
-            phase=Phase.PR_COMMENT.value,
-            project_id=inp.project_id,
-            issue_number=issue_no,
-            branch=branch,
-            extra={
-                "pr_number": inp.pr_number,
-                "comment_body": inp.comment_body,
-                "source": inp.source,
-                "author": inp.author,
-            },
-        )
-        result = await self._dispatch(
-            inp.project_id,
-            spec,
-            issue_number=issue_no,
-            poll_interval_seconds=inp.poll_interval_seconds,
-        )
-
-        if result.status != JobStatus.COMPLETE.value:
-            await self._comment(
-                inp.project_id,
-                issue_no,
-                f"❌ Could not respond to feedback — {result.error or 'unknown error'}",
-            )
-            return PRCommentResult(
-                status="failed",
-                pr_number=inp.pr_number,
-                detail=result.error or "phase failed",
-            )
-
-        # Resolve a usable pr_url for the CI fix cycle's `pr_number_from_url`
-        # parsing — prefer the agent's reported URL; if it's empty or doesn't
-        # carry a `/pull/<N>` suffix, synthesize one from the already-known PR
-        # number so CICycle can still poll CI checks for this PR.
-        pr_url = result.pr_url
-        if not logic.pr_number_from_url(pr_url) and inp.pr_number:
-            pr_url = f"/pull/{inp.pr_number}"
-
-        exec_result = {
-            "issue_id": issue_no,
-            "branch": result.branch or branch,
-            "pr_url": pr_url,
-            "commits": result.commits,
-            "exhausted": False,
-        }
-
+        # 2. CI Fix Cycle
         cycle_result = await CICycle().run(
             project_id=inp.project_id,
             issue_no=issue_no,
@@ -261,17 +144,18 @@ class PRCommentWorkflow(_WorkflowCommon, PhaseOps):
             ci_fix_max_iterations=inp.ci_fix_max_iterations,
             poll_interval_seconds=inp.poll_interval_seconds,
         )
-        exhausted = cycle_result.exhausted
 
+        # 3. Request reviewer
         await self._request_reviewer(inp.project_id, inp.pr_number)
 
+        # 4. Post result comment with summary
         note = (
             " ⚠️ CI is still failing after exhausting the CI fix attempts —"
             " please take another look."
-            if exhausted
+            if cycle_result.exhausted
             else ""
         )
-        summary = (result.summary or "").strip()
+        summary = (exec_result.get("summary") or "").strip()
         body = f"👀 Addressed your feedback on PR #{inp.pr_number}.{note}"
         if summary:
             body += f"\n\n{summary}"
@@ -280,6 +164,6 @@ class PRCommentWorkflow(_WorkflowCommon, PhaseOps):
         return PRCommentResult(
             status="completed",
             pr_number=inp.pr_number,
-            commits=result.commits,
-            exhausted=exhausted,
+            commits=exec_result.get("commits", 0),
+            exhausted=cycle_result.exhausted,
         )
