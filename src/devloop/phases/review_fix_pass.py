@@ -14,36 +14,19 @@ worthwhile), False when it failed or changed nothing.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any, Callable, Coroutine, Optional
+from typing import Any, Optional
 
 from devloop.dev_loop_logic import pr_number_from_url
 from devloop.shared import TaskSpec
 
 
-# Type aliases for injectable callbacks.
-_DispatchFixCallback = Callable[
-    [str, TaskSpec, int, float], Coroutine[Any, Any, Any]
-]  # returns AgentJobResult-like
-_PostCommentCallback = Callable[[str, int, str], Coroutine[Any, Any, None]]
-_KpiBumpCallback = Callable[[str, int], Coroutine[Any, Any, None]]
-
-
-@dataclass
-class _Callbacks:
-    """Callback set for ReviewFixPass.run().
-
-    When all fields are ``None``, the default Temporal activity paths are used.
-    """
-
-    dispatch_fix: Optional[_DispatchFixCallback] = None
-    post_comment: Optional[_PostCommentCallback] = None
-    kpi_bump: Optional[_KpiBumpCallback] = None
-
-    @classmethod
-    def default(cls) -> "_Callbacks":
-        """Return a callbacks instance that delegates to Temporal activities."""
-        return cls()
+# Re-use types from the unified protocol
+from .phase_ops import (
+    PhaseOps,
+    _DispatchFixCallback,
+    _KpiBumpCallback,
+    _PostCommentCallback,
+)
 
 
 class ReviewFixPass:
@@ -58,7 +41,7 @@ class ReviewFixPass:
         issue: dict,
         exec_result: dict,
         review: dict,
-        callbacks: Optional[_Callbacks] = None,
+        callbacks: Optional[PhaseOps] = None,
     ) -> bool:
         """Run one review fix pass.
 
@@ -72,7 +55,7 @@ class ReviewFixPass:
             Execute result dict (must have ``pr_url``, ``branch``).
         review : dict
             Review payload (may have ``summary``, ``inline_comments``).
-        callbacks : _Callbacks, optional
+        callbacks : PhaseOps, optional
             Injected callbacks for testing.
 
         Returns
@@ -80,7 +63,7 @@ class ReviewFixPass:
         bool
             True when the fix pass produced commits, False otherwise.
         """
-        cb = callbacks or _Callbacks.default()
+        cb = callbacks or PhaseOps.default()
         issue_no = _as_int(issue.get("id"))
         pr_url = exec_result.get("pr_url", "")
         pr_number = pr_number_from_url(pr_url)
@@ -134,7 +117,7 @@ class ReviewFixPass:
         spec: TaskSpec,
         issue_number: int,
         poll_interval_seconds: float,
-        cb: _Callbacks,
+        cb: PhaseOps,
     ) -> Any:
         """Dispatch the fix agent job (or use injected callback)."""
         if cb.dispatch_fix is not None:
@@ -149,15 +132,15 @@ class ReviewFixPass:
         project_id: str,
         issue_number: int,
         body: str,
-        cb: Optional[_Callbacks] = None,
+        cb: Optional[PhaseOps] = None,
     ) -> None:
         """Post a GitHub Issue/PR comment."""
-        if cb and cb.post_comment is not None:
-            await cb.post_comment(project_id, issue_number, body)
+        if cb and cb.comment is not None:
+            await cb.comment(project_id, issue_number, body)
             return
 
     async def _kpi_bump(
-        self, name: str, value: int, cb: Optional[_Callbacks] = None
+        self, name: str, value: int, cb: Optional[PhaseOps] = None
     ) -> None:
         """Record a KPI metric."""
         if cb and cb.kpi_bump is not None:
@@ -185,5 +168,42 @@ def _as_int(value: Any) -> int:
         return 0
 
 
+class ReviewFixPassCallbacks(PhaseOps):
+    """Backward-compatible shim that delegates to a ``PhaseOps`` instance.
+
+    This class exists only for callers that still construct
+    ``ReviewFixPassCallbacks(dispatch_fix=..., ...)`` directly.  On
+    construction it creates a ``PhaseOps`` that carries the same fields,
+    so all downstream code uses the unified protocol.
+
+    Subclassing ``PhaseOps`` so that consumers expecting a ``PhaseOps``
+    instance still work.
+    """
+
+    def __init__(
+        self,
+        dispatch_fix: Optional[_DispatchFixCallback] = None,
+        post_comment: Optional[_PostCommentCallback] = None,
+        kpi_bump: Optional[_KpiBumpCallback] = None,
+        **kwargs: Any,
+    ) -> None:
+        PhaseOps.__init__(
+            self,
+            dispatch_fix=dispatch_fix,
+            comment=post_comment,
+            kpi_bump=kpi_bump,
+            **kwargs,
+        )
+
+    @classmethod
+    def default(cls) -> "ReviewFixPassCallbacks":
+        return cls()
+
+    @property
+    def phaseops(self) -> PhaseOps:
+        return self
+
+
 # Re-export for convenience.
-ReviewFixPassCallbacks = _Callbacks
+PhaseOpsCallbacks = PhaseOps  # noqa: F401
+ReviewFixPassCallbacks = ReviewFixPassCallbacks  # noqa: F401

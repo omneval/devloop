@@ -6,12 +6,13 @@ as a standalone deep module with a small interface: ``run(inp, issue, callbacks)
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any, Callable, Coroutine, Optional
 
 from temporalio import workflow
 from temporalio.common import RetryPolicy
+
+from ..phases.phase_ops import PhaseOps
 
 from .._constants import _ACTIVITY_TIMEOUT, _RETRY
 from ..shared import (
@@ -35,23 +36,6 @@ _PostReviewFindingsCallback = Callable[
 _PostCommentCallback = Callable[[str, int, str], Coroutine[Any, Any, None]]
 
 
-@dataclass
-class _Callbacks:
-    """Callback set for ReviewPhase.run().
-
-    When all fields are ``None``, the default Temporal activity paths are used.
-    """
-
-    dispatch_review: Optional[_DispatchReviewCallback] = None
-    post_review_findings: Optional[_PostReviewFindingsCallback] = None
-    post_comment: Optional[_PostCommentCallback] = None
-
-    @classmethod
-    def default(cls) -> "_Callbacks":
-        """Return a callbacks instance that delegates to Temporal activities."""
-        return cls()
-
-
 class ReviewPhase:
     """Review the PR and post findings.
 
@@ -63,7 +47,7 @@ class ReviewPhase:
         inp: Any,  # DevLoopInput
         issue: dict,
         exec_result: dict,
-        callbacks: Optional[_Callbacks] = None,
+        callbacks: Optional[PhaseOps] = None,
     ) -> dict | None:
         """Review the PR and return the review payload.
 
@@ -75,7 +59,7 @@ class ReviewPhase:
             Plan issue dict (must have ``id``).
         exec_result : dict
             Execute result dict (must have ``branch``, ``pr_url``).
-        callbacks : _Callbacks, optional
+        callbacks : PhaseOps, optional
             Injected callbacks for testing.
 
         Returns
@@ -84,7 +68,7 @@ class ReviewPhase:
             A review dict with a ``verdict`` key, or ``None`` when
             the review job produced nothing parseable.
         """
-        cb = callbacks or _Callbacks.default()
+        cb = callbacks or PhaseOps.default()
         issue_no = _as_int(issue.get("id"))
 
         spec = TaskSpec(
@@ -145,7 +129,7 @@ class ReviewPhase:
         spec: TaskSpec,
         issue_number: int,
         poll_interval_seconds: float,
-        cb: _Callbacks,
+        cb: PhaseOps,
     ) -> AgentJobResult:
         """Dispatch the review agent job."""
         if cb.dispatch_review is not None:
@@ -175,7 +159,7 @@ class ReviewPhase:
         pr_url: str,
         review: dict,
         result: AgentJobResult,
-        cb: _Callbacks,
+        cb: PhaseOps,
     ) -> None:
         """Post the reviewer's findings to the PR."""
         if cb.post_review_findings is not None:
@@ -209,7 +193,7 @@ class ReviewPhase:
         )
 
     async def _comment(
-        self, project_id: str, issue_number: int, body: str, cb: _Callbacks
+        self, project_id: str, issue_number: int, body: str, cb: PhaseOps
     ) -> None:
         """Post a GitHub Issue/PR comment."""
         if cb.post_comment is not None:
@@ -248,5 +232,37 @@ def _as_int(value: Any) -> int:
         return 0
 
 
-# Re-export for convenience.
-ReviewPhaseCallbacks = _Callbacks
+class ReviewPhaseCallbacks(PhaseOps):
+    """Backward-compatible shim that delegates to a ``PhaseOps`` instance.
+
+    This class exists only for callers that still construct
+    ``ReviewPhaseCallbacks(dispatch_review=..., ...)`` directly.  On
+    construction it creates a ``PhaseOps`` that carries the same fields,
+    so all downstream code uses the unified protocol.
+
+    Subclassing ``PhaseOps`` so that consumers expecting a ``PhaseOps``
+    instance still work.
+    """
+
+    def __init__(
+        self,
+        dispatch_review: Optional[_DispatchReviewCallback] = None,
+        post_review_findings: Optional[_PostReviewFindingsCallback] = None,
+        post_comment: Optional[_PostCommentCallback] = None,
+        **kwargs: Any,
+    ) -> None:
+        PhaseOps.__init__(
+            self,
+            dispatch_review=dispatch_review,
+            post_review_findings=post_review_findings,
+            comment=post_comment,
+            **kwargs,
+        )
+
+    @classmethod
+    def default(cls) -> "ReviewPhaseCallbacks":
+        return cls()
+
+    @property
+    def phaseops(self) -> PhaseOps:
+        return self

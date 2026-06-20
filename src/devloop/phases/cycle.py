@@ -18,6 +18,7 @@ from temporalio import workflow
 from temporalio.common import RetryPolicy
 
 from ..dev_loop_logic import pr_number_from_url
+from ..phases.phase_ops import PhaseOps
 from ..shared import (
     AgentJobResult,
     CIChecksResult,
@@ -53,23 +54,77 @@ _KpiBumpCallback = Callable[[str, int], Coroutine[None, None, None]]
 _CleanupCallback = Callable[[str], Coroutine[None, None, None]]
 
 
-@dataclass
 class _Callbacks:
-    """Callback set for CICycle.run().
+    """Backward-compatible shim that delegates to a ``PhaseOps`` instance.
 
-    When all fields are ``None``, the default Temporal activity paths are used.
+    This class exists only for callers that still construct
+    ``_Callbacks(poll_ci=..., dispatch_fix=..., ...)`` directly.  On
+    construction it creates a ``PhaseOps`` that carries the same fields,
+    so all downstream code uses the unified protocol.
     """
 
-    poll_ci: Optional[_PollCiCallback] = None
-    dispatch_fix: Optional[_DispatchFixCallback] = None
-    post_comment: Optional[_PostCommentCallback] = None
-    kpi_bump: Optional[_KpiBumpCallback] = None
-    cleanup: Optional[_CleanupCallback] = None
+    def __init__(
+        self,
+        poll_ci: Optional[_PollCiCallback] = None,
+        dispatch_fix: Optional[_DispatchFixCallback] = None,
+        post_comment: Optional[_PostCommentCallback] = None,
+        kpi_bump: Optional[_KpiBumpCallback] = None,
+        cleanup: Optional[_CleanupCallback] = None,
+    ) -> None:
+        self._phaseops = PhaseOps(
+            poll_ci=poll_ci,
+            dispatch_fix=dispatch_fix,
+            comment=post_comment,
+            kpi_bump=kpi_bump,
+            cleanup=cleanup,
+        )
 
-    @classmethod
-    def default(cls) -> "_Callbacks":
-        """Return a callbacks instance that delegates to Temporal activities."""
-        return cls()
+    @property
+    def phaseops(self) -> PhaseOps:
+        """The underlying ``PhaseOps`` instance."""
+        return self._phaseops
+
+    # Backward-compatible property access
+
+    @property
+    def poll_ci(self) -> Optional[_PollCiCallback]:
+        return self._phaseops.poll_ci
+
+    @poll_ci.setter
+    def poll_ci(self, value: Optional[_PollCiCallback]) -> None:
+        self._phaseops.poll_ci = value
+
+    @property
+    def dispatch_fix(self) -> Optional[_DispatchFixCallback]:
+        return self._phaseops.dispatch_fix
+
+    @dispatch_fix.setter
+    def dispatch_fix(self, value: Optional[_DispatchFixCallback]) -> None:
+        self._phaseops.dispatch_fix = value
+
+    @property
+    def post_comment(self) -> Optional[_PostCommentCallback]:
+        return self._phaseops.comment
+
+    @post_comment.setter
+    def post_comment(self, value: Optional[_PostCommentCallback]) -> None:
+        self._phaseops.comment = value
+
+    @property
+    def kpi_bump(self) -> Optional[_KpiBumpCallback]:
+        return self._phaseops.kpi_bump
+
+    @kpi_bump.setter
+    def kpi_bump(self, value: Optional[_KpiBumpCallback]) -> None:
+        self._phaseops.kpi_bump = value
+
+    @property
+    def cleanup(self) -> Optional[_CleanupCallback]:
+        return self._phaseops.cleanup
+
+    @cleanup.setter
+    def cleanup(self, value: Optional[_CleanupCallback]) -> None:
+        self._phaseops.cleanup = value
 
 
 class CICycle:
@@ -88,7 +143,7 @@ class CICycle:
         exec_result: dict,
         ci_fix_max_iterations: int,
         poll_interval_seconds: float = 5.0,
-        callbacks: Optional[_Callbacks] = None,
+        callbacks: Optional[PhaseOps] = None,
     ) -> CICycleResult:
         """Run the CI fix loop.
 
@@ -97,7 +152,7 @@ class CICycle:
 
         Parameters
         ----------
-        callbacks : _Callbacks, optional
+        callbacks : PhaseOps, optional
             Injected callbacks for testing.  When omitted, the default
             activity path is used.
 
@@ -107,7 +162,7 @@ class CICycle:
             ``exhausted=True`` when every fix attempt is spent without CI
             going green.
         """
-        cb = callbacks or _Callbacks.default()
+        cb = callbacks or PhaseOps.default()
         pr_number = pr_number_from_url(exec_result.get("pr_url", ""))
         if pr_number <= 0:
             return CICycleResult(exhausted=False, commits=0)
@@ -192,7 +247,7 @@ class CICycle:
         self,
         project_id: str,
         pr_number: int,
-        cb: _Callbacks,
+        cb: PhaseOps,
     ) -> CIChecksResult:
         """Poll CI checks, using an injected callback or the real activity."""
         if cb.poll_ci is not None:
@@ -206,7 +261,7 @@ class CICycle:
         )
 
     async def _post_comment(
-        self, project_id: str, issue_number: int, body: str, cb: _Callbacks
+        self, project_id: str, issue_number: int, body: str, cb: PhaseOps
     ) -> None:
         """Post a GitHub Issue/PR comment."""
         if cb.post_comment is not None:
@@ -229,7 +284,7 @@ class CICycle:
         issue_no: int,
         spec_dict: dict,
         poll_interval_seconds: float,
-        cb: _Callbacks,
+        cb: PhaseOps,
     ) -> int:
         """Dispatch a CI fix Agent Execution Job (or use injected callback).
 
@@ -256,7 +311,7 @@ class CICycle:
         await self._cleanup(result.job_name, cb)
         return result.commits
 
-    async def _cleanup(self, job_name: str, cb: _Callbacks) -> None:
+    async def _cleanup(self, job_name: str, cb: PhaseOps) -> None:
         """Delete the output ConfigMap for a completed job — fire-and-forget."""
         if cb.cleanup is not None:
             await cb.cleanup(job_name)

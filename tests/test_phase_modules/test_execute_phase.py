@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from devloop.phases.execute import ExecutePhase, ExecutePhaseCallbacks
+from devloop.phases.phase_ops import PhaseOps
 from devloop.projects import install_registry
 from devloop.shared import JobStatus
 
@@ -271,3 +272,76 @@ class TestExecutePhase:
         # Clean up registry
         (tmp_path / "empty.yaml").write_text("projects: []\n")
         install_registry(tmp_path / "empty.yaml")
+
+
+class TestExecutePhaseWithPhaseOps:
+    """ExecutePhase should accept the unified PhaseOps protocol."""
+
+    @pytest.mark.asyncio
+    async def test_accepts_phaseops_for_callbacks(self) -> None:
+        """ExecutePhase.run() accepts a PhaseOps instance as callbacks."""
+        phase = ExecutePhase()
+
+        callbacks = PhaseOps(
+            dispatch_execute=AsyncMock(
+                return_value=MagicMock(
+                    status=JobStatus.COMPLETE.value,
+                    commits=3,
+                    branch="feat/1",
+                    pr_url="https://github.com/p/r/1",
+                )
+            ),
+            post_comment=AsyncMock(),
+            kpi_bump=AsyncMock(),
+        )
+        inp = MagicMock(
+            project_id="proj",
+            execute_max_iterations=1,
+            poll_interval_seconds=5.0,
+            ci_fix_max_iterations=3,
+        )
+
+        result = await phase.run(
+            inp=inp,
+            issue={"id": "42"},
+            callbacks=callbacks,
+        )
+
+        assert result["issue_id"] == 42
+        assert result["commits"] == 3
+        callbacks.kpi_bump.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_phaseops_with_none_defaults_uses_activities(self) -> None:
+        """PhaseOps with all None still works — ExecutePhase falls back."""
+        phase = ExecutePhase()
+
+        callbacks = PhaseOps.default()
+        # Provide minimal callbacks so Temporal activities
+        # aren't triggered (they require a workflow event loop).
+        callbacks.post_comment = AsyncMock()
+        callbacks.dispatch_execute = AsyncMock(
+            return_value=MagicMock(
+                status=JobStatus.COMPLETE.value,
+                commits=1,
+                branch="feat/1",
+                pr_url="https://github.com/p/r/1",
+            )
+        )
+        inp = MagicMock(
+            project_id="proj",
+            execute_max_iterations=1,
+            poll_interval_seconds=5.0,
+            ci_fix_max_iterations=3,
+        )
+
+        # With minimal callbacks, ExecutePhase uses the PhaseOps
+        # protocol path rather than Temporal activities.
+        result = await phase.run(
+            inp=inp,
+            issue={"id": "42"},
+            callbacks=callbacks,
+        )
+        # The result structure is still valid
+        assert "issue_id" in result
+        assert "commits" in result

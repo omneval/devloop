@@ -15,29 +15,17 @@ supposed to act on it.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Any, Callable, Coroutine, Optional
 
+from devloop.github import ReviewerRequestResult
 
-# Type aliases for injectable callbacks.
-_RequestReviewerCallback = Callable[[str, Optional[int]], Coroutine[Any, Any, Any]]
+from .phase_ops import PhaseOps
+
+# Re-use types from the unified protocol
 _PostCommentCallback = Callable[[str, int, str], Coroutine[Any, Any, None]]
-
-
-@dataclass
-class _Callbacks:
-    """Callback set for Notifier.run().
-
-    When all fields are ``None``, the default Temporal activity paths are used.
-    """
-
-    request_reviewer: Optional[_RequestReviewerCallback] = None
-    post_comment: Optional[_PostCommentCallback] = None
-
-    @classmethod
-    def default(cls) -> "_Callbacks":
-        """Return a callbacks instance that delegates to Temporal activities."""
-        return cls()
+_RequestReviewerCallback = Callable[
+    [str, Optional[int]], Coroutine[Any, Any, ReviewerRequestResult]
+]
 
 
 class Notifier:
@@ -51,7 +39,7 @@ class Notifier:
         inp: Any,  # DevLoopInput
         issue: dict,
         exec_result: dict,
-        callbacks: Optional[_Callbacks] = None,
+        callbacks: Optional[PhaseOps] = None,
     ) -> None:
         """Notify the reviewer.
 
@@ -63,10 +51,10 @@ class Notifier:
             Plan issue dict (must have ``id``).
         exec_result : dict
             Execute result dict (must have ``pr_url``).
-        callbacks : _Callbacks, optional
+        callbacks : PhaseOps, optional
             Injected callbacks for testing.
         """
-        cb = callbacks or _Callbacks.default()
+        cb = callbacks or PhaseOps.default()
         issue_no = _as_int(issue.get("id"))
         pr_url = exec_result.get("pr_url", "")
         pr_number = _pr_number_from_url(pr_url)
@@ -93,7 +81,7 @@ class Notifier:
         )
 
     async def _request_reviewer(
-        self, project_id: str, pr_number: Optional[int], cb: _Callbacks
+        self, project_id: str, pr_number: Optional[int], cb: PhaseOps
     ) -> Any:
         """Request a GitHub PR reviewer (or use injected callback)."""
         if cb.request_reviewer is not None:
@@ -101,11 +89,11 @@ class Notifier:
         return None
 
     async def _post_comment(
-        self, project_id: str, issue_number: int, body: str, cb: _Callbacks
+        self, project_id: str, issue_number: int, body: str, cb: PhaseOps
     ) -> None:
         """Post a GitHub Issue/PR comment."""
-        if cb.post_comment is not None:
-            await cb.post_comment(project_id, issue_number, body)
+        if cb.comment is not None:
+            await cb.comment(project_id, issue_number, body)
             return
 
 
@@ -127,5 +115,40 @@ def _as_int(value: Any) -> int:
         return 0
 
 
+class NotifierCallbacks(PhaseOps):
+    """Backward-compatible shim that delegates to a ``PhaseOps`` instance.
+
+    This class exists only for callers that still construct
+    ``NotifierCallbacks(request_reviewer=..., ...)`` directly.  On
+    construction it creates a ``PhaseOps`` that carries the same fields,
+    so all downstream code uses the unified protocol.
+
+    Subclassing ``PhaseOps`` so that consumers expecting a ``PhaseOps``
+    instance (e.g. code that reads ``cb.comment``) still work.
+    """
+
+    def __init__(
+        self,
+        request_reviewer: Optional[_RequestReviewerCallback] = None,
+        post_comment: Optional[_PostCommentCallback] = None,
+        **kwargs: Any,
+    ) -> None:
+        PhaseOps.__init__(
+            self,
+            request_reviewer=request_reviewer,
+            comment=post_comment,
+            **kwargs,
+        )
+
+    @classmethod
+    def default(cls) -> "NotifierCallbacks":
+        return cls()
+
+    @property
+    def phaseops(self) -> PhaseOps:
+        return self
+
+
 # Re-export for convenience.
-NotifierCallbacks = _Callbacks
+PhaseOpsCallbacks = PhaseOps  # noqa: F401
+NotifierCallbacks = NotifierCallbacks  # noqa: F401

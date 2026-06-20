@@ -100,7 +100,11 @@ class TestPhasePipelineNextIssue:
 
         async def execute_phase(inp, issue):
             state.execute_calls.append((inp, issue))
-            return {"commits": 1, "branch": "main", "pr_url": f"https://pr/{issue['id']}"}
+            return {
+                "commits": 1,
+                "branch": "main",
+                "pr_url": f"https://pr/{issue['id']}",
+            }
 
         async def review_phase(inp, issue, exec_result):
             state.review_calls.append((inp, issue, exec_result))

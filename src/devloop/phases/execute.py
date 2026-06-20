@@ -9,7 +9,6 @@ and delegates to ``CICycle`` for the CI fix loop.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any, Callable, Coroutine, Optional
 
@@ -18,6 +17,7 @@ from temporalio.common import RetryPolicy
 
 from .._constants import _ACTIVITY_TIMEOUT, _GITHUB_COMMENT_TIMEOUT, _RETRY
 from ..phases.cycle import CICycle
+from ..phases.phase_ops import PhaseOps
 from ..projects import get_project
 from ..shared import (
     AgentJobResult,
@@ -40,22 +40,72 @@ _PostCommentCallback = Callable[[str, int, str], Coroutine[Any, Any, None]]
 _KpiBumpCallback = Callable[[str, int], Coroutine[Any, Any, None]]
 
 
-@dataclass
 class ExecutePhaseCallbacks:
-    """Callback set for ExecutePhase.run().
+    """Backward-compatible shim that delegates to a ``PhaseOps`` instance.
 
-    When all fields are ``None``, the default Temporal activity paths are used.
+    This class exists only for callers that still construct
+    ``ExecutePhaseCallbacks(dispatch_execute=..., ...)`` directly.  On
+    construction it creates a ``PhaseOps`` that carries the same fields,
+    so all downstream code uses the unified protocol.
     """
 
-    dispatch_execute: Optional[_DispatchExecuteCallback] = None
-    answer_question: Optional[_AnswerQuestionCallback] = None
-    post_comment: Optional[_PostCommentCallback] = None
-    kpi_bump: Optional[_KpiBumpCallback] = None
+    def __init__(
+        self,
+        dispatch_execute: Optional[_DispatchExecuteCallback] = None,
+        answer_question: Optional[_AnswerQuestionCallback] = None,
+        post_comment: Optional[_PostCommentCallback] = None,
+        kpi_bump: Optional[_KpiBumpCallback] = None,
+    ) -> None:
+        self._phaseops = PhaseOps(
+            dispatch_execute=dispatch_execute,
+            answer_question=answer_question,
+            comment=post_comment,
+            kpi_bump=kpi_bump,
+        )
 
     @classmethod
     def default(cls) -> "ExecutePhaseCallbacks":
         """Return a callbacks instance that delegates to Temporal activities."""
         return cls()
+
+    @property
+    def phaseops(self) -> PhaseOps:
+        """The underlying ``PhaseOps`` instance."""
+        return self._phaseops
+
+    # Backward-compatible property access
+
+    @property
+    def dispatch_execute(self) -> Optional[_DispatchExecuteCallback]:
+        return self._phaseops.dispatch_execute
+
+    @dispatch_execute.setter
+    def dispatch_execute(self, value: Optional[_DispatchExecuteCallback]) -> None:
+        self._phaseops.dispatch_execute = value
+
+    @property
+    def answer_question(self) -> Optional[_AnswerQuestionCallback]:
+        return self._phaseops.answer_question
+
+    @answer_question.setter
+    def answer_question(self, value: Optional[_AnswerQuestionCallback]) -> None:
+        self._phaseops.answer_question = value
+
+    @property
+    def post_comment(self) -> Optional[_PostCommentCallback]:
+        return self._phaseops.comment
+
+    @post_comment.setter
+    def post_comment(self, value: Optional[_PostCommentCallback]) -> None:
+        self._phaseops.comment = value
+
+    @property
+    def kpi_bump(self) -> Optional[_KpiBumpCallback]:
+        return self._phaseops.kpi_bump
+
+    @kpi_bump.setter
+    def kpi_bump(self, value: Optional[_KpiBumpCallback]) -> None:
+        self._phaseops.kpi_bump = value
 
 
 class ExecutePhase:
@@ -140,8 +190,7 @@ class ExecutePhase:
             await self._comment(
                 inp.project_id,
                 issue_no,
-                "❌ Parked — execute phase failed: execute_max_iterations "
-                "must be >= 1",
+                "❌ Parked — execute phase failed: execute_max_iterations must be >= 1",
                 cb,
             )
             return {
@@ -206,7 +255,7 @@ class ExecutePhase:
             exec_result=exec_result,
             ci_fix_max_iterations=ci_fix_max_iters,
             poll_interval_seconds=poll_interval,
-            callbacks=_CICycleCallbacks.from_execute(cb).build(),
+            callbacks=cb.phaseops,
         )
         exec_result["exhausted"] = cycle_result.exhausted
         return exec_result
@@ -300,52 +349,3 @@ def _as_int(value: Any) -> int:
         return int(value)
     except (TypeError, ValueError):
         return 0
-
-
-# --------------------------------------------------------------------------- #
-# CICycle bridge (ExecutePhase delegates CI fix to CICycle)
-# --------------------------------------------------------------------------- #
-
-
-class _CICycleCallbacks:
-    """Bridge from ExecutePhase callbacks to CICycle's callback model.
-
-    CICycle needs: ``poll_ci``, ``dispatch_fix``, ``post_comment``,
-    ``kpi_bump``, ``cleanup``.  ExecutePhase only exposes
-    ``dispatch_execute``, ``answer_question``, ``post_comment``, ``kpi_bump``.
-    This bridge maps what it can and lets CICycle fall back to its own
-    ``default()`` for the rest.
-    """
-
-    def __init__(
-        self,
-        execute_cb: Optional[ExecutePhaseCallbacks] = None,
-    ) -> None:
-        self._execute_cb = execute_cb or ExecutePhaseCallbacks.default()
-
-    @classmethod
-    def from_execute(
-        cls, execute_cb: Optional[ExecutePhaseCallbacks] = None
-    ) -> "_CICycleCallbacks":
-        """Create from ExecutePhase's ExecutePhaseCallbacks instance."""
-        return cls(execute_cb)
-
-    def build(self) -> Optional[Any]:
-        """Build a CICycle callbacks object, or ``None`` to use defaults.
-
-        Returns ``None`` when *all* required callbacks are ``None``,
-        signalling that CICycle should fall back to its own activity
-        defaults.
-        """
-        needs = {
-            "post_comment": self._execute_cb.post_comment,
-            "kpi_bump": self._execute_cb.kpi_bump,
-        }
-        if all(v is None for v in needs.values()):
-            return None
-
-        cic_cb = __import__("devloop.phases.cycle", fromlist=["_Callbacks"])._Callbacks
-        return cic_cb(
-            post_comment=self._execute_cb.post_comment,
-            kpi_bump=self._execute_cb.kpi_bump,
-        )

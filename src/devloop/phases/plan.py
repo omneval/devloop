@@ -16,7 +16,6 @@ already have an open agent PR so the workflow doesn't re-surface them.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any, Callable, Coroutine, Optional
 
@@ -32,27 +31,15 @@ from ..shared import (
     TaskSpec,
 )
 
-# Type aliases for injectable callbacks.
-_PlanIssueCallback = Callable[[PlanIssueInput], Coroutine[Any, Any, dict]]
-_DispatchPlanCallback = Callable[..., Coroutine[Any, Any, AgentJobResult]]
-_DropInReviewCallback = Callable[..., Coroutine[Any, Any, list[dict]]]
 
-
-@dataclass
-class _Callbacks:
-    """Callback set for PlanPhase.run().
-
-    When all fields are ``None``, the default Temporal activity paths are used.
-    """
-
-    plan_issue: Optional[_PlanIssueCallback] = None
-    dispatch_plan: Optional[_DispatchPlanCallback] = None
-    drop_issues_in_review: Optional[_DropInReviewCallback] = None
-
-    @classmethod
-    def default(cls) -> "_Callbacks":
-        """Return a callbacks instance that delegates to Temporal activities."""
-        return cls()
+# Re-use types from the unified protocol
+from .phase_ops import (
+    PhaseOps,
+    _DispatchPlanCallback,
+    _DropInReviewCallback,
+    _KpiBumpCallback,
+    _PostCommentCallback,
+)
 
 
 class PlanPhase:
@@ -65,7 +52,7 @@ class PlanPhase:
         self,
         inp: Any,  # DevLoopInput
         rnd: int,
-        callbacks: Optional[_Callbacks] = None,
+        callbacks: Optional[PhaseOps] = None,
     ) -> dict | None:
         """Return the plan dict for this round.
 
@@ -76,7 +63,7 @@ class PlanPhase:
             ``agent_label``, ``poll_interval_seconds``).
         rnd : int
             Current round number (currently unused by plan logic — reserved).
-        callbacks : _Callbacks, optional
+        callbacks : PhaseOps, optional
             Injected callbacks for testing.
 
         Returns
@@ -84,7 +71,7 @@ class PlanPhase:
         dict | None
             A plan dict with an ``issues`` list, or ``None`` on failure.
         """
-        cb = callbacks or _Callbacks.default()
+        cb = callbacks or PhaseOps.default()
 
         if inp.triggering_issue > 0:
             # Lightweight path: single-issue plan via activity (issue #120).
@@ -170,5 +157,48 @@ def _as_int(value: Any) -> int:
         return 0
 
 
+class PlanPhaseCallbacks(PhaseOps):
+    """Backward-compatible shim that delegates to a ``PhaseOps`` instance.
+
+    This class exists only for callers that still construct
+    ``PlanPhaseCallbacks(plan_issue=..., dispatch_plan=..., ...)`` directly.  On
+    construction it creates a ``PhaseOps`` that carries the same fields,
+    so all downstream code uses the unified protocol.
+
+    Subclassing ``PhaseOps`` so that consumers expecting a ``PhaseOps``
+    instance still work.
+    """
+
+    def __init__(
+        self,
+        plan_issue: Optional[
+            Callable[[PlanIssueInput], Coroutine[Any, Any, dict]]
+        ] = None,
+        dispatch_plan: Optional[_DispatchPlanCallback] = None,
+        drop_issues_in_review: Optional[_DropInReviewCallback] = None,
+        post_comment: Optional[_PostCommentCallback] = None,
+        kpi_bump: Optional[_KpiBumpCallback] = None,
+        **kwargs: Any,
+    ) -> None:
+        PhaseOps.__init__(
+            self,
+            plan_issue=plan_issue,
+            dispatch_plan=dispatch_plan,
+            drop_issues_in_review=drop_issues_in_review,
+            comment=post_comment,
+            kpi_bump=kpi_bump,
+            **kwargs,
+        )
+
+    @classmethod
+    def default(cls) -> "PlanPhaseCallbacks":
+        return cls()
+
+    @property
+    def phaseops(self) -> PhaseOps:
+        return self
+
+
 # Re-export for convenience.
-PlanPhaseCallbacks = _Callbacks
+PhaseOpsCallbacks = PhaseOps  # noqa: F401
+PlanPhaseCallbacks = PlanPhaseCallbacks  # noqa: F401

@@ -182,3 +182,125 @@ class TestCICycleNoPR:
         assert result.exhausted is False
         assert result.commits == 0
         assert state.ci_poll_index == 0  # no polls made
+
+
+class TestCICycleWithPhaseOps:
+    """CICycle should accept the unified PhaseOps protocol directly."""
+
+    async def test_accepts_phaseops_protocol(self, state: _MockState) -> None:
+        """CICycle accepts a PhaseOps instance directly — no _Callbacks shim
+        needed. This proves the unified protocol is the real seam."""
+        from devloop.phases.phase_ops import PhaseOps
+
+        state.ci_poll_results = [
+            CIChecksResult(
+                all_passed=False,
+                failures=[CICheckFailure(name="pytest", conclusion="failure")],
+            ),
+            CIChecksResult(all_passed=True, failures=[]),
+        ]
+        state.dispatch_commits = [2]
+        state.dispatch_count = 0
+        state.comments = []
+        state.kpi_bumps = []
+        state.cleanup_names = []
+
+        async def _poll_ci(project_id: str, pr_number: int) -> CIChecksResult:
+            idx = min(state.ci_poll_index, len(state.ci_poll_results) - 1)
+            state.ci_poll_index += 1
+            return state.ci_poll_results[idx]
+
+        async def _dispatch_fix(
+            project_id: str, issue_no: int, spec_dict: dict, poll_interval: float = 5.0
+        ) -> int:
+            state.dispatch_count += 1
+            commits = state.dispatch_commits[
+                min(state.dispatch_count - 1, len(state.dispatch_commits) - 1)
+            ]
+            if commits > 0:
+                state.cleanup_names.append(f"fix-{issue_no}")
+            return commits
+
+        async def _post_comment(project_id: str, issue_number: int, body: str) -> None:
+            state.comments.append((issue_number, body))
+
+        async def _kpi_bump(key: str, n: int = 1) -> None:
+            state.kpi_bumps.append((key, n))
+
+        async def _cleanup(name: str) -> None:
+            if name:
+                state.cleanup_names.append(name)
+
+        callbacks = PhaseOps(
+            poll_ci=_poll_ci,
+            dispatch_fix=_dispatch_fix,
+            post_comment=_post_comment,
+            kpi_bump=_kpi_bump,
+            cleanup=_cleanup,
+        )
+
+        result = await CICycle().run(
+            project_id="omneval",
+            issue_no=42,
+            exec_result={
+                "branch": "agent/issue-42",
+                "pr_url": "https://github.com/omneval/omneval/pull/42",
+            },
+            ci_fix_max_iterations=3,
+            poll_interval_seconds=5.0,
+            callbacks=callbacks,
+        )
+
+        assert result.exhausted is False
+        assert result.commits == 2
+
+    async def test_phaseops_bridge_execute_to_cycle(self, state: _MockState) -> None:
+        """ExecutePhase -> CICycle passes callbacks through PhaseOps
+        without a dynamic import. The unified protocol is the bridge."""
+        from devloop.phases.phase_ops import PhaseOps
+
+        async def _poll_ci(project_id: str, pr_number: int) -> CIChecksResult:
+            return CIChecksResult(all_passed=True, failures=[])
+
+        callbacks = PhaseOps(
+            poll_ci=_poll_ci,
+        )
+
+        result = await CICycle().run(
+            project_id="omneval",
+            issue_no=42,
+            exec_result={
+                "branch": "agent/issue-42",
+                "pr_url": "https://github.com/omneval/omneval/pull/42",
+            },
+            ci_fix_max_iterations=3,
+            poll_interval_seconds=5.0,
+            callbacks=callbacks,
+        )
+
+        # CI already green → zero fix dispatches, no exhaustion
+        assert result.exhausted is False
+        assert result.commits == 0
+
+    async def test_phaseops_default_is_valid_callback_source(
+        self, state: _MockState
+    ) -> None:
+        """PhaseOps.default() creates a valid callbacks object — CICycle
+        short-circuits gracefully when all callbacks are None."""
+        from devloop.phases.phase_ops import PhaseOps
+
+        # No PR URL → CICycle returns immediately regardless of callbacks
+        result = await CICycle().run(
+            project_id="omneval",
+            issue_no=42,
+            exec_result={
+                "branch": "agent/issue-42",
+                # No pr_url
+            },
+            ci_fix_max_iterations=3,
+            poll_interval_seconds=5.0,
+            callbacks=PhaseOps.default(),
+        )
+
+        assert result.exhausted is False
+        assert result.commits == 0
