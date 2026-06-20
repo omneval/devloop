@@ -2,6 +2,18 @@
 
 No Temporal / I/O imports — safe to use from both the workflow sandbox and
 unit tests.
+
+Exposed utilities
+------------------
+* ``is_approval(reply)`` — recognise common Phase Gate approval tokens
+  (``approve``, ``lgtm``, ``👍``, …) in a reply string.
+* ``pr_number_from_url(pr_url)`` — extract the ``<N>`` from a GitHub ``/pull/<N>``
+  URL fragment; returns ``0`` when no number is found.
+* ``render_plan(project_id, iteration, issues)`` — produce the Plan-gate
+  message that tells a human which issue is next and what other candidates
+  are unblocked for the round.
+* ``merge_gate_message(issue, pr_url)`` — produce the per-issue Merge-gate
+  prompt that asks whether to open a review PR or skip.
 """
 
 from __future__ import annotations
