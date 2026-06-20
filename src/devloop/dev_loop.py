@@ -28,7 +28,7 @@ from typing import Any, Optional
 
 from temporalio import workflow
 
-from . import dev_loop_logic as logic
+from devloop.dev_loop_logic import pr_number_from_url
 from ._constants import _ACTIVITY_TIMEOUT, _RETRY
 from ._workflow_common import _WorkflowCommon
 from .phases.execute import ExecutePhase
@@ -538,7 +538,7 @@ class DevLoopWorkflow(_WorkflowCommon, PhaseOps):
         ]
         if not summary and not inline:
             return
-        pr_number = logic.pr_number_from_url(pr_url)
+        pr_number = pr_number_from_url(pr_url)
         if not pr_number:
             raise RuntimeError(
                 f"cannot post review findings: pr_url '{pr_url}' "
