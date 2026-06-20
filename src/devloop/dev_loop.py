@@ -15,8 +15,9 @@ Architecture note (issue #149 / #153): the orchestration loop has been
 extracted to ``devloop.phases.PhasePipeline`` and the per-phase logic
 lives in standalone deep modules (``PlanPhase``, ``ExecutePhase``,
 ``ReviewPhase``, ``ReviewFixPass``, ``Notifier``).  This workflow is a
-thin adapter — it creates phase instances, injects its own Temporal
-activity methods as callbacks, and delegates the loop to the pipeline.
+thin adapter — it inherits from ``PhaseOps``, delegates all its methods to
+Temporal activity calls, and passes itself as the unified callback seam to
+every phase.
 """
 
 from __future__ import annotations
@@ -30,23 +31,23 @@ from temporalio import workflow
 from . import dev_loop_logic as logic
 from ._constants import _ACTIVITY_TIMEOUT, _RETRY
 from ._workflow_common import _WorkflowCommon
-from .phases.execute import ExecutePhase, ExecutePhaseCallbacks as _ExecuteCallbacks
-from .phases.notifier import Notifier, NotifierCallbacks as _NotifierCallbacks
+from .phases.execute import ExecutePhase
+from .phases.notifier import Notifier
+from .phases.phase_ops import PhaseOps
 from .phases.pipeline import PhasePipeline
-from .phases.plan import PlanPhase, PlanPhaseCallbacks as _PlanCallbacks
-from .phases.review import ReviewPhase, ReviewPhaseCallbacks as _ReviewCallbacks
-from .phases.review_fix_pass import (
-    ReviewFixPass,
-    ReviewFixPassCallbacks as _FixCallbacks,
-)
+from .phases.plan import PlanPhase
+from .phases.review import ReviewPhase
+from .phases.review_fix_pass import ReviewFixPass
 from .shared import (
     AgentJobResult,
     AnswerInput,
     AwaitInput,
+    CIChecksResult,
     InlineComment,
     OpenAgentPRsInput,
     Phase,
     PlanIssueInput,
+    PollCIChecksInput,
     PostCommentsInput,
     ReviewerRequestResult,
     TaskSpec,
@@ -143,16 +144,43 @@ def _as_int(value) -> int:
 
 
 @workflow.defn
-class DevLoopWorkflow(_WorkflowCommon):
+class DevLoopWorkflow(_WorkflowCommon, PhaseOps):
     """Thin adapter: wires phase instances into PhasePipeline.
 
     All orchestration lives in ``PhasePipeline.run()`` — this class only
     creates phases, binds its own ``_WorkflowCommon`` methods as callbacks,
     and calls the pipeline.  Per-issue KPIs are emitted via a ``post_round``
     callback that the pipeline invokes after each successful round.
+
+    Inherits from ``PhaseOps`` so the workflow itself is the unified callback
+    seam: every phase receives ``self`` (a ``PhaseOps``) with all methods
+    wired to Temporal activity calls.
     """
 
     def __init__(self) -> None:
+        # Initialize PhaseOps base class — every field delegates to a Temporal
+        # activity adapter method defined below.  ``drop_issues_in_review`` is
+        # a no-op at init time and gets re-bound in ``_plan_phase_adapter``
+        # with a closure over the current ``inp``.
+        PhaseOps.__init__(
+            self,
+            comment=self._comment_activity,
+            cleanup=self._cleanup_activity,
+            dispatch=self._dispatch_activity,
+            kpi_bump=self._kpi_bump_activity,
+            kpi_take=self._kpi_take_activity,
+            emit_kpis=self._emit_kpis_activity,
+            poll_ci=self._poll_ci_activity,
+            request_reviewer=self._request_reviewer_activity,
+            dispatch_execute=self._dispatch_execute_activity,
+            answer_question=self._answer_question_activity,
+            dispatch_review=self._dispatch_review_activity,
+            post_review_findings=self._post_review_findings_activity,
+            dispatch_fix=self._dispatch_fix_activity,
+            plan_issue=self._plan_issue_activity,
+            dispatch_plan=self._dispatch_plan_activity,
+            drop_issues_in_review=self._drop_issues_in_review,
+        )
         # Lazy-init: KPI counters are workflow state and must survive replay.
         self._plan_phase_instance: PlanPhase | None = None
         self._execute_phase_instance: ExecutePhase | None = None
@@ -206,6 +234,7 @@ class DevLoopWorkflow(_WorkflowCommon):
     @workflow.run
     async def run(self, inp: DevLoopInput) -> DevLoopResult:
         started = workflow.now()
+        self._devloop_input = inp  # store for activity adapters (#188)
 
         pipeline = PhasePipeline()
         return await pipeline.run(
@@ -229,76 +258,39 @@ class DevLoopWorkflow(_WorkflowCommon):
             next_issue=self._dequeue_issue,
         )
 
-    # ---- PhasePipeline adapter methods ---------------------------------- #
+    # ---- PhasePipeline adapter methods (pass self as PhaseOps) ---------- #
     async def _plan_phase_adapter(self, inp: DevLoopInput, rnd: int) -> dict | None:
-        """Adapter that binds the plan_phase callbacks."""
-        callbacks = _PlanCallbacks.default()
-        callbacks.plan_issue = self._plan_issue_activity
-        callbacks.dispatch_plan = self._dispatch_plan_activity
-        callbacks.drop_issues_in_review = lambda _inp, issues: (
-            self._drop_issues_in_review(inp, issues)
+        """Adapter that wires plan_phase callbacks through the workflow's PhaseOps.
+
+        Re-binds ``drop_issues_in_review`` with a closure over the current
+        ``inp`` before running the plan phase.
+        """
+        self.drop_issues_in_review = lambda _inp, issues: self._drop_issues_in_review(
+            inp, issues
         )
-        return await self._plan().run(inp, rnd, callbacks)
+        return await self._plan().run(inp, rnd, self)
 
     async def _execute_phase_adapter(self, inp: DevLoopInput, issue: dict) -> dict:
-        """Adapter that binds the execute_phase callbacks."""
-        callbacks = _ExecuteCallbacks.default()
-        callbacks.dispatch_execute = lambda project_id, spec, issue_number, poll: (
-            self._dispatch_execute_activity(inp, _as_int(issue.get("id")), spec, poll)
-        )
-        callbacks.answer_question = lambda project_id, issue_no, result: (
-            self._answer_question_activity(
-                inp, _as_int(issue.get("id")), result.question, result
-            )
-        )
-        callbacks.post_comment = lambda project_id, issue_number, body: (
-            self._comment_activity(project_id, issue_number, body)
-        )
-        callbacks.kpi_bump = lambda key, val: self._kpi_bump_activity(key, val)
-        return await self._execute().run(inp, issue, callbacks)
+        """Adapter that wires execute_phase callbacks through the workflow's PhaseOps."""
+        return await self._execute().run(inp, issue, self)
 
     async def _review_phase_adapter(
         self, inp: DevLoopInput, issue: dict, exec_result: dict
     ) -> dict | None:
-        """Adapter that binds the review_phase callbacks."""
-        callbacks = _ReviewCallbacks.default()
-        callbacks.dispatch_review = lambda project_id, spec, issue_number, poll: (
-            self._dispatch_review_activity(inp, issue_number, spec, poll)
-        )
-        callbacks.post_review_findings = lambda project_id, pr_url, review, result: (
-            self._post_review_findings_activity(project_id, pr_url, review, result)
-        )
-        callbacks.post_comment = lambda project_id, issue_number, body: (
-            self._comment_activity(project_id, issue_number, body)
-        )
-        return await self._review().run(inp, issue, exec_result, callbacks)
+        """Adapter that wires review_phase callbacks through the workflow's PhaseOps."""
+        return await self._review().run(inp, issue, exec_result, self)
 
     async def _fix_pass_adapter(
         self, inp: DevLoopInput, issue: dict, exec_result: dict, review: dict
     ) -> bool:
-        """Adapter that binds the fix_pass callbacks."""
-        callbacks = _FixCallbacks.default()
-        callbacks.dispatch_fix = lambda project_id, spec, issue_number, poll: (
-            self._dispatch_fix_activity(inp, project_id, spec, issue_number, poll)
-        )
-        callbacks.post_comment = lambda project_id, issue_number, body: (
-            self._comment_activity(project_id, issue_number, body)
-        )
-        callbacks.kpi_bump = lambda key, val: self._kpi_bump_activity(key, val)
-        return await self._fix().run(inp, issue, exec_result, review, callbacks)
+        """Adapter that wires fix_pass callbacks through the workflow's PhaseOps."""
+        return await self._fix().run(inp, issue, exec_result, review, self)
 
     async def _notify_adapter(
         self, inp: DevLoopInput, issue: dict, exec_result: dict
     ) -> None:
-        """Adapter that binds the notifier callbacks."""
-        callbacks = _NotifierCallbacks.default()
-        callbacks.request_reviewer = lambda project_id, pr_number: (
-            self._request_reviewer_activity(project_id, pr_number)
-        )
-        callbacks.post_comment = lambda project_id, issue_number, body: (
-            self._comment_activity(project_id, issue_number, body)
-        )
-        await self._notify().run(inp, issue, exec_result, callbacks)
+        """Adapter that wires notifier callbacks through the workflow's PhaseOps."""
+        await self._notify().run(inp, issue, exec_result, self)
 
     # ---- KPI emission after each round ---------------------------------- #
     async def _emit_kpis_round(
@@ -329,6 +321,55 @@ class DevLoopWorkflow(_WorkflowCommon):
         )
 
     # ---- Activity-level adapters (called by phase callbacks) ------------- #
+    async def _cleanup_activity(self, job_name: str) -> None:
+        """Real ``cleanup_configmap`` activity — adapter for PhaseOps.cleanup."""
+        return await self._cleanup(job_name)
+
+    async def _dispatch_activity(
+        self,
+        project_id: str,
+        spec: TaskSpec,
+        issue_number: int = 0,
+        poll_interval_seconds: float = 5.0,
+    ) -> AgentJobResult:
+        """Real ``dispatch_agent_job`` activity — adapter for PhaseOps.dispatch."""
+        return await self._dispatch(
+            project_id,
+            spec,
+            issue_number=issue_number,
+            poll_interval_seconds=poll_interval_seconds,
+        )
+
+    async def _kpi_bump_activity(self, key: str, val: int) -> None:
+        """Real KPI bump — adapter for PhaseOps.kpi_bump."""
+        return self._kpi_bump(key, val)
+
+    async def _kpi_take_activity(self) -> dict:
+        """Real KPI take — adapter for PhaseOps.kpi_take."""
+        return self._kpi_take()
+
+    async def _emit_kpis_activity(self, inp: WorkflowKpiInput) -> None:
+        """Real ``emit_workflow_kpis`` activity — adapter for PhaseOps.emit_kpis."""
+        return await self._emit_kpis(inp)
+
+    async def _poll_ci_activity(
+        self, project_id: str, pr_number: int
+    ) -> CIChecksResult:
+        """Real ``poll_ci_checks`` activity — adapter for PhaseOps.poll_ci."""
+        return await workflow.execute_activity(
+            "poll_ci_checks",
+            PollCIChecksInput(project_id=project_id, pr_number=pr_number),
+            result_type=CIChecksResult,
+            start_to_close_timeout=_ACTIVITY_TIMEOUT,
+            retry_policy=_RETRY,
+        )
+
+    async def _comment_activity(
+        self, project_id: str, issue_number: int, body: str
+    ) -> None:
+        """Real ``post_github_comment`` activity — adapter for PhaseOps.comment."""
+        return await self._comment(project_id, issue_number, body)
+
     async def _plan_issue_activity(self, inp: PlanIssueInput) -> dict:
         """Real ``plan_issue`` activity call — adapter for PlanPhase."""
         return await workflow.execute_activity(
@@ -386,21 +427,21 @@ class DevLoopWorkflow(_WorkflowCommon):
 
     async def _dispatch_execute_activity(
         self,
-        inp: DevLoopInput,
-        issue_no: int,
+        project_id: str,
         spec: TaskSpec,
+        issue_number: int,
         poll_interval_seconds: float,
     ) -> AgentJobResult:
         """Real dispatch activity — adapter for ExecutePhase."""
         return await self._dispatch(
-            inp.project_id,
+            project_id,
             spec,
-            issue_number=issue_no,
+            issue_number=issue_number,
             poll_interval_seconds=poll_interval_seconds,
         )
 
     async def _answer_question_activity(
-        self, inp: DevLoopInput, issue_no: int, question: str, result: AgentJobResult
+        self, project_id: str, issue_no: int, result: AgentJobResult
     ) -> AgentJobResult:
         """Resolve mid-run ``AWAITING_HUMAN`` pauses via the answer agent.
 
@@ -414,11 +455,13 @@ class DevLoopWorkflow(_WorkflowCommon):
         """
         # This method is called in a loop by the ExecutePhase callbacks.
         # Each call resolves one AWAITING_HUMAN pause.
+        inp = self._devloop_input  # stored in ``run`` (#188)
         questions_asked = getattr(self, "_answer_questions_count", 0)
+        question = result.question or "unspecified question"
         if questions_asked >= inp.max_questions_per_phase:
             answer = "proceed with your best guess"
             await self._comment(
-                inp.project_id,
+                project_id,
                 issue_no,
                 "⚠️ Question limit reached — agent proceeding with best "
                 f"guess. Question was: {question}",
@@ -462,14 +505,14 @@ class DevLoopWorkflow(_WorkflowCommon):
 
     async def _dispatch_review_activity(
         self,
-        inp: DevLoopInput,
-        issue_no: int,
+        project_id: str,
         spec: TaskSpec,
+        issue_no: int,
         poll_interval_seconds: float,
     ) -> AgentJobResult:
         """Real ``dispatch_agent_job`` for review — adapter for ReviewPhase."""
         return await self._dispatch(
-            inp.project_id,
+            project_id,
             spec,
             issue_number=issue_no,
             poll_interval_seconds=poll_interval_seconds,
@@ -510,19 +553,23 @@ class DevLoopWorkflow(_WorkflowCommon):
 
     async def _dispatch_fix_activity(
         self,
-        inp: DevLoopInput,
         project_id: str,
-        spec: TaskSpec,
         issue_no: int,
+        spec_dict: dict,
         poll_interval_seconds: float,
-    ) -> AgentJobResult:
-        """Real ``dispatch_agent_job`` for fix pass — adapter for ReviewFixPass."""
-        return await self._dispatch(
+    ) -> int:
+        """Real ``dispatch_agent_job`` for fix pass — adapter for CICycle.
+
+        Returns the commit count extracted from the ``AgentJobResult`` so that
+        CICycle can report it back to the workflow (#188).
+        """
+        result = await self._dispatch(
             project_id,
-            spec,
+            TaskSpec(**spec_dict),
             issue_number=issue_no,
             poll_interval_seconds=poll_interval_seconds,
         )
+        return result.commits or 0
 
     async def _request_reviewer_activity(
         self, project_id: str, pr_number: Optional[int]

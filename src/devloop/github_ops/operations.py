@@ -302,9 +302,9 @@ async def request_github_reviewer(inp: RequestReviewerInput) -> ReviewerRequestR
         return ReviewerRequestResult(
             requested=False, reason="no reviewer is configured for this project"
         )
-    if inp.pr_number <= 0:
+    if inp.pr_number is None or inp.pr_number <= 0:
         log.info(
-            "request_github_reviewer: invalid pr_number %d for project %s — skipping",
+            "request_github_reviewer: invalid pr_number %s for project %s — skipping",
             inp.pr_number,
             inp.project_id,
         )

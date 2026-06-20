@@ -60,7 +60,7 @@ class RequestReviewerInput:
     """
 
     project_id: str
-    pr_number: int
+    pr_number: int | None
     reviewer: str
 
 

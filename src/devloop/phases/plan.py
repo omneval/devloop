@@ -104,7 +104,7 @@ class PlanPhase:
                         issue_number=inp.triggering_issue,
                         extra={"agent_label": inp.agent_label},
                     ),
-                    poll_interval_seconds=inp.poll_interval_seconds,
+                    inp.poll_interval_seconds,
                 )
             else:
                 result = await workflow.execute_activity(

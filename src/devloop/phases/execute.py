@@ -40,13 +40,13 @@ _PostCommentCallback = Callable[[str, int, str], Coroutine[Any, Any, None]]
 _KpiBumpCallback = Callable[[str, int], Coroutine[Any, Any, None]]
 
 
-class ExecutePhaseCallbacks:
-    """Backward-compatible shim that delegates to a ``PhaseOps`` instance.
+class ExecutePhaseCallbacks(PhaseOps):
+    """Backward-compatible shim that extends the unified ``PhaseOps`` protocol.
 
     This class exists only for callers that still construct
-    ``ExecutePhaseCallbacks(dispatch_execute=..., ...)`` directly.  On
-    construction it creates a ``PhaseOps`` that carries the same fields,
-    so all downstream code uses the unified protocol.
+    ``ExecutePhaseCallbacks(dispatch_execute=..., ...)`` directly.  It
+    inherits from ``PhaseOps`` so all downstream code uses the unified
+    protocol seamlessly.
     """
 
     def __init__(
@@ -56,10 +56,10 @@ class ExecutePhaseCallbacks:
         post_comment: Optional[_PostCommentCallback] = None,
         kpi_bump: Optional[_KpiBumpCallback] = None,
     ) -> None:
-        self._phaseops = PhaseOps(
+        super().__init__(
             dispatch_execute=dispatch_execute,
             answer_question=answer_question,
-            comment=post_comment,
+            post_comment=post_comment,
             kpi_bump=kpi_bump,
         )
 
@@ -67,45 +67,6 @@ class ExecutePhaseCallbacks:
     def default(cls) -> "ExecutePhaseCallbacks":
         """Return a callbacks instance that delegates to Temporal activities."""
         return cls()
-
-    @property
-    def phaseops(self) -> PhaseOps:
-        """The underlying ``PhaseOps`` instance."""
-        return self._phaseops
-
-    # Backward-compatible property access
-
-    @property
-    def dispatch_execute(self) -> Optional[_DispatchExecuteCallback]:
-        return self._phaseops.dispatch_execute
-
-    @dispatch_execute.setter
-    def dispatch_execute(self, value: Optional[_DispatchExecuteCallback]) -> None:
-        self._phaseops.dispatch_execute = value
-
-    @property
-    def answer_question(self) -> Optional[_AnswerQuestionCallback]:
-        return self._phaseops.answer_question
-
-    @answer_question.setter
-    def answer_question(self, value: Optional[_AnswerQuestionCallback]) -> None:
-        self._phaseops.answer_question = value
-
-    @property
-    def post_comment(self) -> Optional[_PostCommentCallback]:
-        return self._phaseops.comment
-
-    @post_comment.setter
-    def post_comment(self, value: Optional[_PostCommentCallback]) -> None:
-        self._phaseops.comment = value
-
-    @property
-    def kpi_bump(self) -> Optional[_KpiBumpCallback]:
-        return self._phaseops.kpi_bump
-
-    @kpi_bump.setter
-    def kpi_bump(self, value: Optional[_KpiBumpCallback]) -> None:
-        self._phaseops.kpi_bump = value
 
 
 class ExecutePhase:
@@ -118,7 +79,7 @@ class ExecutePhase:
         self,
         inp: Any,  # DevLoopInput
         issue: dict,
-        callbacks: Optional[ExecutePhaseCallbacks] = None,
+        callbacks: Optional[PhaseOps] = None,
     ) -> dict:
         """Dispatch the execute job, retrying on zero commits.
 
@@ -129,7 +90,7 @@ class ExecutePhase:
             ``poll_interval_seconds``).
         issue : dict
             Plan issue dict (must have ``id``, ``title``, ``branch``).
-        callbacks : ExecutePhaseCallbacks, optional
+        callbacks : PhaseOps, optional
             Injected callbacks for testing.
 
         Returns
@@ -266,7 +227,7 @@ class ExecutePhase:
         spec: TaskSpec,
         issue_number: int,
         poll_interval_seconds: float,
-        cb: ExecutePhaseCallbacks,
+        cb: PhaseOps,
     ) -> AgentJobResult:
         """Dispatch the execute agent job (or use injected callback)."""
         if cb.dispatch_execute is not None:
@@ -295,7 +256,7 @@ class ExecutePhase:
         project_id: str,
         issue_no: int,
         result: AgentJobResult,
-        cb: ExecutePhaseCallbacks,
+        cb: PhaseOps,
     ) -> AgentJobResult:
         """Resolve mid-run AWAITING_HUMAN questions.
 
@@ -312,7 +273,7 @@ class ExecutePhase:
         return result
 
     async def _comment(
-        self, project_id: str, issue_number: int, body: str, cb: ExecutePhaseCallbacks
+        self, project_id: str, issue_number: int, body: str, cb: PhaseOps
     ) -> None:
         """Post a GitHub Issue/PR comment."""
         if cb.post_comment is not None:
@@ -329,7 +290,7 @@ class ExecutePhase:
             retry_policy=_RETRY,
         )
 
-    async def _cleanup(self, job_name: str, cb: ExecutePhaseCallbacks) -> None:
+    async def _cleanup(self, job_name: str, cb: PhaseOps) -> None:
         """Delete the output ConfigMap for a completed job."""
         if not job_name:
             return

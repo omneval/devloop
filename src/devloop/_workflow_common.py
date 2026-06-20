@@ -130,7 +130,7 @@ class _WorkflowCommon:
 
     # ---- Reviewer request (#74) ------------------------------------------- #
     async def _request_reviewer(
-        self, project_id: str, pr_number: int
+        self, project_id: str, pr_number: int | None
     ) -> ReviewerRequestResult:
         """Request a GitHub PR reviewer via the project's configured reviewer.
 

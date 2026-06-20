@@ -54,13 +54,13 @@ _KpiBumpCallback = Callable[[str, int], Coroutine[None, None, None]]
 _CleanupCallback = Callable[[str], Coroutine[None, None, None]]
 
 
-class _Callbacks:
-    """Backward-compatible shim that delegates to a ``PhaseOps`` instance.
+class _Callbacks(PhaseOps):
+    """Backward-compatible shim that extends the unified ``PhaseOps`` protocol.
 
     This class exists only for callers that still construct
-    ``_Callbacks(poll_ci=..., dispatch_fix=..., ...)`` directly.  On
-    construction it creates a ``PhaseOps`` that carries the same fields,
-    so all downstream code uses the unified protocol.
+    ``_Callbacks(poll_ci=..., dispatch_fix=..., ...)`` directly.  It
+    inherits from ``PhaseOps`` so all downstream code uses the unified
+    protocol seamlessly.
     """
 
     def __init__(
@@ -71,60 +71,13 @@ class _Callbacks:
         kpi_bump: Optional[_KpiBumpCallback] = None,
         cleanup: Optional[_CleanupCallback] = None,
     ) -> None:
-        self._phaseops = PhaseOps(
+        super().__init__(
             poll_ci=poll_ci,
             dispatch_fix=dispatch_fix,
-            comment=post_comment,
+            post_comment=post_comment,
             kpi_bump=kpi_bump,
             cleanup=cleanup,
         )
-
-    @property
-    def phaseops(self) -> PhaseOps:
-        """The underlying ``PhaseOps`` instance."""
-        return self._phaseops
-
-    # Backward-compatible property access
-
-    @property
-    def poll_ci(self) -> Optional[_PollCiCallback]:
-        return self._phaseops.poll_ci
-
-    @poll_ci.setter
-    def poll_ci(self, value: Optional[_PollCiCallback]) -> None:
-        self._phaseops.poll_ci = value
-
-    @property
-    def dispatch_fix(self) -> Optional[_DispatchFixCallback]:
-        return self._phaseops.dispatch_fix
-
-    @dispatch_fix.setter
-    def dispatch_fix(self, value: Optional[_DispatchFixCallback]) -> None:
-        self._phaseops.dispatch_fix = value
-
-    @property
-    def post_comment(self) -> Optional[_PostCommentCallback]:
-        return self._phaseops.comment
-
-    @post_comment.setter
-    def post_comment(self, value: Optional[_PostCommentCallback]) -> None:
-        self._phaseops.comment = value
-
-    @property
-    def kpi_bump(self) -> Optional[_KpiBumpCallback]:
-        return self._phaseops.kpi_bump
-
-    @kpi_bump.setter
-    def kpi_bump(self, value: Optional[_KpiBumpCallback]) -> None:
-        self._phaseops.kpi_bump = value
-
-    @property
-    def cleanup(self) -> Optional[_CleanupCallback]:
-        return self._phaseops.cleanup
-
-    @cleanup.setter
-    def cleanup(self, value: Optional[_CleanupCallback]) -> None:
-        self._phaseops.cleanup = value
 
 
 class CICycle:

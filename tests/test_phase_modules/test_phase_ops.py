@@ -5,7 +5,6 @@ from __future__ import annotations
 import inspect
 
 
-
 # All known PhaseOps attribute names (data attributes + properties + classmethods).
 _KNOWN_ATTRS = frozenset(
     {

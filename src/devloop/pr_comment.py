@@ -24,7 +24,10 @@ from temporalio import workflow
 from . import dev_loop_logic as logic
 from ._constants import _GITHUB_COMMENT_TIMEOUT, _RETRY
 from ._workflow_common import _WorkflowCommon
+from .execution import AgentJobResult
+from .github import ReviewerRequestResult
 from .phases.cycle import CICycle
+from .phases.phase_ops import PhaseOps
 from .shared import (
     GetPRBranchInput,
     JobStatus,
@@ -113,9 +116,43 @@ def _as_int(value) -> int:
 
 
 @workflow.defn
-class PRCommentWorkflow(_WorkflowCommon):
+class PRCommentWorkflow(_WorkflowCommon, PhaseOps):
     def __init__(self) -> None:
-        pass
+        # Bind PhaseOps protocol fields to methods that use the local
+        # `workflow` reference (devloop.pr_comment.workflow).  This is what
+        # makes PRCommentWorkflow a true PhaseOps adapter.
+        self.comment = self._comment_activity
+        self.dispatch = self._dispatch_activity
+        self.request_reviewer = self._request_reviewer_activity
+
+    # ---- PhaseOps adapters (use local `workflow` from this module) --------- #
+
+    async def _comment_activity(
+        self, project_id: str, issue_number: int, body: str
+    ) -> None:
+        """Real ``post_github_comment`` activity — adapter for PhaseOps.comment."""
+        return await self._comment(project_id, issue_number, body)
+
+    async def _dispatch_activity(
+        self,
+        project_id: str,
+        spec: TaskSpec,
+        issue_number: int = 0,
+        poll_interval_seconds: float = 5.0,
+    ) -> AgentJobResult:
+        """Real ``dispatch_agent_job`` activity — adapter for PhaseOps.dispatch."""
+        return await self._dispatch(
+            project_id,
+            spec,
+            issue_number=issue_number,
+            poll_interval_seconds=poll_interval_seconds,
+        )
+
+    async def _request_reviewer_activity(
+        self, project_id: str, pr_number: int | None
+    ) -> ReviewerRequestResult:
+        """Real ``request_github_reviewer`` activity — adapter for PhaseOps.request_reviewer."""
+        return await self._request_reviewer(project_id, pr_number)
 
     @workflow.run
     async def run(self, inp: PRCommentInput) -> PRCommentResult:
