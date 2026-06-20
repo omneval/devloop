@@ -15,17 +15,12 @@ from datetime import timedelta
 from typing import Any, Callable, Coroutine, Optional
 
 from temporalio import workflow
-from temporalio.common import RetryPolicy
 
-from ..dev_loop_logic import pr_number_from_url
 from ..phases.phase_ops import PhaseOps
 from ..shared import (
-    AgentJobResult,
     CIChecksResult,
-    DispatchInput,
     JOB_DISPATCH_QUEUE,
     Phase,
-    PollCIChecksInput,
     TaskSpec,
 )
 
@@ -109,7 +104,7 @@ class CICycle:
         """
         cb = callbacks or _Callbacks.default()
         ops = PhaseOps()
-        pr_number = pr_number_from_url(exec_result.get("pr_url", ""))
+        pr_number = ops.pr_number_from_url(exec_result.get("pr_url", ""))
         if pr_number <= 0:
             return CICycleResult(exhausted=False, commits=0)
 
@@ -119,7 +114,7 @@ class CICycle:
         total_commits = 0
 
         while attempt < max_iters:
-            checks = await self._poll(project_id, pr_number, cb)
+            checks = await ops.poll(project_id, pr_number, callback=cb.poll_ci)
             if checks.all_passed:
                 return CICycleResult(exhausted=False, commits=total_commits)
 
@@ -162,9 +157,21 @@ class CICycle:
                 callback=cb.post_comment,
             )
 
-            commits = await self._dispatch_fix(
-                project_id, issue_no, spec_dict, poll_interval_seconds, cb
-            )
+            if cb.dispatch_fix is not None:
+                commits = await cb.dispatch_fix(
+                    project_id, issue_no, spec_dict, poll_interval_seconds
+                )
+            else:
+                _result = await ops.dispatch_helper(
+                    project_id,
+                    TaskSpec(**spec_dict),
+                    issue_no,
+                    poll_interval_seconds,
+                    dispatch_callback=None,
+                    task_queue=JOB_DISPATCH_QUEUE,
+                )
+                await ops.cleanup(_result.job_name, callback=cb.cleanup)
+                commits = _result.commits
             total_commits += commits
 
             if commits > 0:
@@ -184,59 +191,8 @@ class CICycle:
                 )
 
         # Re-check before declaring exhaustion.
-        final_checks = await self._poll(project_id, pr_number, cb)
+        final_checks = await ops.poll(project_id, pr_number, callback=cb.poll_ci)
         return CICycleResult(
             exhausted=not final_checks.all_passed,
             commits=total_commits,
         )
-
-    async def _poll(
-        self,
-        project_id: str,
-        pr_number: int,
-        cb: _Callbacks,
-    ) -> CIChecksResult:
-        """Poll CI checks, using an injected callback or the real activity."""
-        if cb.poll_ci is not None:
-            return await cb.poll_ci(project_id, pr_number)
-        return await workflow.execute_activity(
-            "poll_ci_checks",
-            PollCIChecksInput(project_id=project_id, pr_number=pr_number),
-            result_type=CIChecksResult,
-            start_to_close_timeout=timedelta(minutes=5),
-            retry_policy=RetryPolicy(maximum_attempts=3),
-        )
-
-    async def _dispatch_fix(
-        self,
-        project_id: str,
-        issue_no: int,
-        spec_dict: dict,
-        poll_interval_seconds: float,
-        cb: _Callbacks,
-    ) -> int:
-        """Dispatch a CI fix Agent Execution Job (or use injected callback).
-
-        Returns the number of commits produced.
-        """
-        if cb.dispatch_fix is not None:
-            return await cb.dispatch_fix(
-                project_id, issue_no, spec_dict, poll_interval_seconds
-            )
-        # Fallback: call the real Temporal dispatch.
-        result = await workflow.execute_activity(
-            "dispatch_agent_job",
-            DispatchInput(
-                project_id,
-                issue_no,
-                TaskSpec(**spec_dict),
-                poll_interval_seconds=poll_interval_seconds,
-            ),
-            result_type=AgentJobResult,
-            start_to_close_timeout=timedelta(minutes=5),
-            retry_policy=RetryPolicy(maximum_attempts=3),
-            task_queue=JOB_DISPATCH_QUEUE,
-        )
-        ops = PhaseOps()
-        await ops.cleanup(result.job_name, callback=cb.cleanup)
-        return result.commits

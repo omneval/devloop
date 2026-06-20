@@ -17,8 +17,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable, Coroutine, Optional
 
-from devloop.dev_loop_logic import pr_number_from_url
-
 from ..phases.phase_ops import PhaseOps
 from ..shared import TaskSpec
 
@@ -86,7 +84,7 @@ class ReviewFixPass:
         ops = PhaseOps()
         issue_no = ops.as_int(issue.get("id"))
         pr_url = exec_result.get("pr_url", "")
-        pr_number = pr_number_from_url(pr_url)
+        pr_number = ops.pr_number_from_url(pr_url)
         findings = review.get("summary", "")
         inline = review.get("inline_comments") or []
         if inline:
@@ -131,13 +129,6 @@ class ReviewFixPass:
             callback=cb.post_comment,
         )
         return True
-
-    async def _kpi_bump(
-        self, name: str, value: int, cb: Optional[_Callbacks] = None
-    ) -> None:
-        """Record a KPI metric."""
-        if cb and cb.kpi_bump is not None:
-            await cb.kpi_bump(name, value)
 
 
 def _has_commits(result: Any) -> bool:

@@ -153,8 +153,6 @@ class ReviewPhase:
 
         from temporalio.common import RetryPolicy
 
-        from .. import dev_loop_logic as logic
-
         summary = review.get("summary", "")
         inline = [
             InlineComment(
@@ -167,7 +165,7 @@ class ReviewPhase:
         if not summary and not inline:
             return
 
-        pr_number = logic.pr_number_from_url(pr_url)
+        pr_number = PhaseOps().pr_number_from_url(pr_url)
         if not pr_number:
             raise RuntimeError(
                 f"cannot post review findings: pr_url '{pr_url}' "

@@ -18,8 +18,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable, Coroutine, Optional
 
-from devloop.dev_loop_logic import pr_number_from_url
-
 from ..phases.phase_ops import PhaseOps
 
 
@@ -74,9 +72,13 @@ class Notifier:
         ops = PhaseOps()
         issue_no = ops.as_int(issue.get("id"))
         pr_url = exec_result.get("pr_url", "")
-        pr_number = pr_number_from_url(pr_url)
+        pr_number = ops.pr_number_from_url(pr_url)
 
-        reviewer_result = await self._request_reviewer(inp.project_id, pr_number, cb)
+        reviewer_result = await ops.request_reviewer(
+            inp.project_id,
+            pr_number,
+            callback=cb.request_reviewer,  # type: ignore[arg-type]
+        )
         if reviewer_result.requested:
             reviewer_note = "Reviewer has been tagged."
         elif reviewer_result.reason:
@@ -96,14 +98,6 @@ class Notifier:
             f"👀 Ready for review — PR: {pr_url}. {reviewer_note}{note}",
             callback=cb.post_comment,
         )
-
-    async def _request_reviewer(
-        self, project_id: str, pr_number: Optional[int], cb: _Callbacks
-    ) -> Any:
-        """Request a GitHub PR reviewer (or use injected callback)."""
-        if cb.request_reviewer is not None:
-            return await cb.request_reviewer(project_id, pr_number)
-        return None
 
 
 # Re-export for convenience.

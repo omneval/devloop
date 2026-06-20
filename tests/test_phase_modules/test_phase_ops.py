@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from devloop.phases.phase_ops import PhaseOps
-from devloop.shared import GithubNotificationInput
+from devloop.shared import (
+    GithubNotificationInput,
+    PollCIChecksInput,
+    RequestReviewerInput,
+)
 
 
 class TestPhaseOpsAsInt:
@@ -168,3 +173,151 @@ class TestPhaseOpsDispatch:
         assert name == "dispatch_agent_job"
         assert payload.project_id == "proj"
         assert payload.issue_number == 42
+
+
+class TestPhaseOpsPrNumberFromUrl:
+    """PhaseOps.pr_number_from_url — safe PR number extraction from URL."""
+
+    def test_pr_number_from_github_pr_url(self) -> None:
+        """PhaseOps.pr_number_from_url extracts the PR number from a GitHub URL."""
+        assert (
+            PhaseOps.pr_number_from_url("https://github.com/omneval/omneval/pull/42")
+            == 42
+        )
+
+    def test_pr_number_from_github_pr_url_with_trailing_slash(self) -> None:
+        """PhaseOps.pr_number_from_url handles trailing slash."""
+        assert (
+            PhaseOps.pr_number_from_url("https://github.com/omneval/omneval/pull/99/")
+            == 99
+        )
+
+    def test_pr_number_from_url_no_pr_returns_zero(self) -> None:
+        """PhaseOps.pr_number_from_url returns 0 for non-PR URLs."""
+        assert (
+            PhaseOps.pr_number_from_url("https://github.com/omneval/omneval/issues/42")
+            == 0
+        )
+
+    def test_pr_number_from_url_empty_string_returns_zero(self) -> None:
+        """PhaseOps.pr_number_from_url returns 0 for empty string."""
+        assert PhaseOps.pr_number_from_url("") == 0
+
+    def test_pr_number_from_url_none_returns_zero(self) -> None:
+        """PhaseOps.pr_number_from_url returns 0 for None."""
+        assert PhaseOps.pr_number_from_url(None) == 0  # type: ignore[arg-type]
+
+
+class TestPhaseOpsDispatchActivity:
+    """PhaseOps.dispatch_activity — generic activity dispatch with callback fallback."""
+
+    @pytest.mark.asyncio
+    async def test_dispatch_activity_calls_callback_when_provided(self) -> None:
+        """PhaseOps.dispatch_activity invokes the callback directly."""
+        mock_result = MagicMock(status="ok")
+        cb = AsyncMock(return_value=mock_result)
+        result = await PhaseOps().dispatch_activity(
+            "custom_activity",
+            {"key": "value"},
+            callback=cb,
+        )
+        cb.assert_awaited_once_with({"key": "value"})
+        assert result.status == "ok"
+
+    @pytest.mark.asyncio
+    async def test_dispatch_activity_uses_temporal_when_no_callback(self) -> None:
+        """PhaseOps.dispatch_activity falls through to workflow.execute_activity."""
+        activity_called = []
+
+        async def fake_act(name, payload, **kwargs):  # noqa: ANN001, ANN002
+            activity_called.append((name, payload, kwargs))
+            return MagicMock(status="ok")
+
+        with patch(
+            "devloop.phases.phase_ops.workflow.execute_activity",
+            fake_act,
+        ):
+            result = await PhaseOps().dispatch_activity(
+                "custom_activity",
+                {"key": "value"},
+                callback=None,
+                timeout=timedelta(seconds=30),
+            )
+
+        assert len(activity_called) == 1
+        name, payload, kwargs = activity_called[0]
+        assert name == "custom_activity"
+        assert payload == {"key": "value"}
+        assert result.status == "ok"
+
+
+class TestPhaseOpsPoll:
+    """PhaseOps.poll — polls CI checks via activity or callback."""
+
+    @pytest.mark.asyncio
+    async def test_poll_calls_callback_when_provided(self) -> None:
+        """PhaseOps.poll invokes the callback directly."""
+        mock_result = MagicMock(all_passed=True, failures=[])
+        cb = AsyncMock(return_value=mock_result)
+        result = await PhaseOps().poll("proj", 42, callback=cb)
+        cb.assert_awaited_once_with("proj", 42)
+        assert result.all_passed is True
+
+    @pytest.mark.asyncio
+    async def test_poll_uses_temporal_when_no_callback(self) -> None:
+        """PhaseOps.poll falls through to workflow.execute_activity for poll_ci_checks."""
+        activity_called = []
+
+        async def fake_act(name, payload, **kwargs):  # noqa: ANN001, ANN002
+            activity_called.append((name, payload, kwargs))
+            return MagicMock(all_passed=True, failures=[])
+
+        with patch(
+            "devloop.phases.phase_ops.workflow.execute_activity",
+            fake_act,
+        ):
+            result = await PhaseOps().poll("proj", 42, callback=None)
+
+        assert len(activity_called) == 1
+        name, payload, kwargs = activity_called[0]
+        assert name == "poll_ci_checks"
+        assert isinstance(payload, PollCIChecksInput)
+        assert payload.project_id == "proj"
+        assert payload.pr_number == 42
+        assert result.all_passed is True
+
+
+class TestPhaseOpsRequestReviewer:
+    """PhaseOps.request_reviewer — requests a GitHub PR reviewer."""
+
+    @pytest.mark.asyncio
+    async def test_request_reviewer_calls_callback_when_provided(self) -> None:
+        """PhaseOps.request_reviewer invokes the callback directly."""
+        mock_result = MagicMock(requested=True, reason=None)
+        cb = AsyncMock(return_value=mock_result)
+        result = await PhaseOps().request_reviewer("proj", 42, callback=cb)
+        cb.assert_awaited_once_with("proj", 42)
+        assert result.requested is True
+
+    @pytest.mark.asyncio
+    async def test_request_reviewer_uses_temporal_when_no_callback(self) -> None:
+        """PhaseOps.request_reviewer falls through to workflow.execute_activity."""
+        activity_called = []
+
+        async def fake_act(name, payload, **kwargs):  # noqa: ANN001, ANN002
+            activity_called.append((name, payload, kwargs))
+            return MagicMock(requested=True, reason=None)
+
+        with patch(
+            "devloop.phases.phase_ops.workflow.execute_activity",
+            fake_act,
+        ):
+            result = await PhaseOps().request_reviewer("proj", 42, callback=None)
+
+        assert len(activity_called) == 1
+        name, payload, kwargs = activity_called[0]
+        assert name == "request_github_reviewer"
+        assert isinstance(payload, RequestReviewerInput)
+        assert payload.project_id == "proj"
+        assert payload.pr_number == 42
+        assert result.requested is True

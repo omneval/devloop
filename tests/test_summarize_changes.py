@@ -161,13 +161,17 @@ def test_fetch_changes_no_compare_call_when_base_equals_head(monkeypatch):
 def test_fetch_changes_resolves_closed_issue_titles(monkeypatch):
     from devloop.summarize_activities import _fetch_changes
 
-    fake_client = _FakeGithubClient(issues={12: "Fix the thing", 34: "Add the other thing"})
+    fake_client = _FakeGithubClient(
+        issues={12: "Fix the thing", 34: "Add the other thing"}
+    )
     monkeypatch.setattr(
         "devloop.summarize_activities._client", _autospec_client(fake_client)
     )
 
     commits, issues, head = asyncio.run(
-        _fetch_changes(_fake_project(), "omneval/omneval", "base123", "head456", [12, 34, 99])
+        _fetch_changes(
+            _fake_project(), "omneval/omneval", "base123", "head456", [12, 34, 99]
+        )
     )
 
     assert issues == [
