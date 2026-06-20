@@ -1,16 +1,22 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional
+from datetime import timedelta
+from typing import Any, Optional
 
 from temporalio import workflow
+from temporalio.common import RetryPolicy
 
 from ._workflow_common import _WorkflowCommon
 from .execution import AgentJobResult, TaskSpec
 from .github import ReviewerRequestResult
-from .phases.cycle import CICycle
+from .phases.cycle import CICycle, CICycleCallbacks as _CICycleCallbacks
+from .phases.notifier import Notifier, NotifierCallbacks as _NotifierCallbacks
 from .phases.phase_ops import PhaseOps
-from .phases.pr_comment import PRCommentPhase
+from .phases.pr_comment import (
+    PRCommentPhase,
+    PRCommentPhaseCallbacks as _PhaseCallbacks,
+)
 
 
 @dataclass
@@ -71,16 +77,27 @@ class PRCommentResult:
     commits: int = 0
     exhausted: bool = False
     detail: str = ""
+    exec_result: dict | None = None
+    error: str | None = None
 
 
 @workflow.defn
 class PRCommentWorkflow(_WorkflowCommon, PhaseOps):
     """Respond to reviewer feedback on open agent PRs.
 
-    Thin adapter — composes PRCommentPhase, CICycle, and
-    reviewer request as separate deep modules.  Implements the
-    PhaseOps protocol by wiring its ``_WorkflowCommon`` helpers as
-    callable fields.
+    Thin adapter — composes PRCommentPhase, CICycle, and Notifier as
+    deep phases with injectable callbacks.  All orchestration lives in
+    ``run``; the body wires phase instances, binds its own ``_WorkflowCommon``
+    methods as callbacks, and delegates each phase's ``run()``.
+
+    The 5 phases are wired with injectable callbacks consistent with the
+    PhaseOps pattern (issues #187/#188):
+
+    1. **PRCommentPhase** — branch resolution, validation, task dispatch
+    2. **CICycle** — CI fix loop (poll, dispatch-fix, re-poll)
+    3. **Notifier** — reviewer request + notification comment
+    4. **Comment** — post the result summary (adapter method)
+    5. **Status assembly** — final status callback
     """
 
     def __init__(self) -> None:
@@ -90,6 +107,25 @@ class PRCommentWorkflow(_WorkflowCommon, PhaseOps):
         self.request_reviewer = self._request_reviewer_activity
         # Lazy-init: phase instances are workflow state and must survive replay.
         self._pr_comment_phase_instance: Optional[PRCommentPhase] = None
+        self._cycle_instance: Optional[CICycle] = None
+        self._notifier_instance: Optional[Notifier] = None
+
+    # ---- lazy phase constructors ---------------------------------------- #
+
+    def _pr_comment_phase(self) -> PRCommentPhase:
+        if self._pr_comment_phase_instance is None:
+            self._pr_comment_phase_instance = PRCommentPhase()
+        return self._pr_comment_phase_instance
+
+    def _cycle(self) -> CICycle:
+        if self._cycle_instance is None:
+            self._cycle_instance = CICycle()
+        return self._cycle_instance
+
+    def _notifier(self) -> Notifier:
+        if self._notifier_instance is None:
+            self._notifier_instance = Notifier()
+        return self._notifier_instance
 
     # ---- PhaseOps adapters ----------------------------------------------- #
 
@@ -123,8 +159,7 @@ class PRCommentWorkflow(_WorkflowCommon, PhaseOps):
     @workflow.run
     async def run(self, inp: PRCommentInput) -> PRCommentResult:
         # 1. PRCommentPhase: branch resolution, validation, dispatch
-        phase = self._pr_comment_phase_instance or PRCommentPhase()
-        phase_result = await phase.run(inp)
+        phase_result = await self._pr_comment_phase_adapter(inp)
 
         if phase_result.error:
             return PRCommentResult(
@@ -136,19 +171,13 @@ class PRCommentWorkflow(_WorkflowCommon, PhaseOps):
         exec_result: dict = phase_result.exec_result or {}
         issue_no = inp.issue_number or inp.pr_number
 
-        # 2. CI Fix Cycle
-        cycle_result = await CICycle().run(
-            project_id=inp.project_id,
-            issue_no=issue_no,
-            exec_result=exec_result,
-            ci_fix_max_iterations=inp.ci_fix_max_iterations,
-            poll_interval_seconds=inp.poll_interval_seconds,
-        )
+        # 2. CICycle: CI fix loop
+        cycle_result = await self._cycle_adapter(inp, issue_no, exec_result)
 
-        # 3. Request reviewer
-        await self._request_reviewer(inp.project_id, inp.pr_number)
+        # 3. Notifier: reviewer request + notification
+        await self._notifier_adapter(inp, issue_no, exec_result, cycle_result)
 
-        # 4. Post result comment with summary
+        # 4. Comment: post the result summary
         note = (
             " ⚠️ CI is still failing after exhausting the CI fix attempts —"
             " please take another look."
@@ -159,11 +188,145 @@ class PRCommentWorkflow(_WorkflowCommon, PhaseOps):
         body = f"👀 Addressed your feedback on PR #{inp.pr_number}.{note}"
         if summary:
             body += f"\n\n{summary}"
-        await self._comment(inp.project_id, issue_no, body)
+        await self._cb_post_comment(inp.project_id, issue_no, body)
 
+        # 5. Status assembly: final status callback
+        return await self._status_assembly_adapter(inp, exec_result, cycle_result)
+
+    # ---- Phase adapter methods ------------------------------------------ #
+
+    async def _pr_comment_phase_adapter(self, inp: PRCommentInput) -> PRCommentResult:
+        """Adapter that binds PRCommentPhase callbacks."""
+        callbacks = _PhaseCallbacks.default()
+        callbacks.post_comment = self._cb_post_comment
+        callbacks.get_branch = self._cb_get_branch
+        callbacks.dispatch = self._cb_dispatch
+        return await self._pr_comment_phase().run(inp, callbacks=callbacks)
+
+    async def _cycle_adapter(
+        self,
+        inp: PRCommentInput,
+        issue_no: int,
+        exec_result: dict,
+    ) -> Any:
+        """Adapter that binds CICycle callbacks."""
+        callbacks = _CICycleCallbacks.default()
+        callbacks.poll_ci = self._cb_poll_ci
+        callbacks.dispatch_fix = self._cb_dispatch_fix
+        callbacks.post_comment = self._cb_post_comment
+        callbacks.kpi_bump = self._cb_kpi_bump
+        callbacks.cleanup = self._cb_cleanup
+        return await self._cycle().run(
+            project_id=inp.project_id,
+            issue_no=issue_no,
+            exec_result=exec_result,
+            ci_fix_max_iterations=inp.ci_fix_max_iterations,
+            poll_interval_seconds=inp.poll_interval_seconds,
+            callbacks=callbacks,
+        )
+
+    async def _notifier_adapter(
+        self,
+        inp: PRCommentInput,
+        issue_no: int,
+        exec_result: dict,
+        cycle_result: Any,
+    ) -> None:
+        """Adapter that binds Notifier callbacks."""
+        callbacks = _NotifierCallbacks.default()
+        callbacks.request_reviewer = self._cb_request_reviewer
+        callbacks.post_comment = self._cb_post_comment
+        exec_result_with_exhausted = dict(exec_result)
+        exec_result_with_exhausted["exhausted"] = cycle_result.exhausted
+        await self._notifier().run(
+            inp, {"id": issue_no}, exec_result_with_exhausted, callbacks
+        )
+
+    async def _status_assembly_adapter(
+        self,
+        inp: PRCommentInput,
+        exec_result: dict,
+        cycle_result: Any,
+    ) -> PRCommentResult:
+        """Final status callback — assembles and returns the result."""
         return PRCommentResult(
             status="completed",
             pr_number=inp.pr_number,
             commits=exec_result.get("commits", 0),
             exhausted=cycle_result.exhausted,
         )
+
+    # ---- Callback methods bound to _WorkflowCommon helpers --------------- #
+
+    async def _cb_post_comment(
+        self, project_id: str, issue_number: int, body: str
+    ) -> None:
+        """Real ``post_github_comment`` activity — adapter for comment calls."""
+        return await self._comment(project_id, issue_number, body)
+
+    async def _cb_get_branch(self, project_id: str, pr_number: int) -> str:
+        """Real ``get_pr_branch`` activity — adapter for PRCommentPhase."""
+        from .shared import GetPRBranchInput
+
+        return await workflow.execute_activity(
+            "get_pr_branch",
+            GetPRBranchInput(project_id=project_id, pr_number=pr_number),
+            result_type=str,
+            start_to_close_timeout=timedelta(minutes=2),
+            retry_policy=RetryPolicy(maximum_attempts=1),
+        )
+
+    async def _cb_dispatch(
+        self, project_id: str, spec: TaskSpec, issue_number: int, poll: float
+    ) -> Any:
+        """Real ``dispatch_agent_job`` activity — adapter for PRCommentPhase."""
+        return await self._dispatch(
+            project_id,
+            spec,
+            issue_number=issue_number,
+            poll_interval_seconds=poll,
+        )
+
+    async def _cb_poll_ci(self, project_id: str, pr_number: int) -> Any:
+        """Real ``poll_ci_checks`` activity — adapter for CICycle."""
+        from .shared import CIChecksResult, PollCIChecksInput
+
+        return await workflow.execute_activity(
+            "poll_ci_checks",
+            PollCIChecksInput(project_id=project_id, pr_number=pr_number),
+            result_type=CIChecksResult,
+            start_to_close_timeout=timedelta(minutes=2),
+            retry_policy=RetryPolicy(maximum_attempts=1),
+        )
+
+    async def _cb_dispatch_fix(
+        self, project_id: str, issue_no: int, spec: dict, poll: float
+    ) -> int:
+        """Real ``dispatch_agent_job`` activity — adapter for CICycle."""
+        result = await self._dispatch(
+            project_id,
+            TaskSpec(
+                phase="ci_fix",
+                project_id=project_id,
+                issue_number=issue_no,
+                branch=spec.get("branch", ""),
+                extra=spec.get("extra", {}),
+            ),
+            issue_number=issue_no,
+            poll_interval_seconds=poll,
+        )
+        return result.commits or 0
+
+    async def _cb_kpi_bump(self, key: str, val: int) -> None:
+        """Real ``_kpi_bump`` helper — adapter for CICycle."""
+        self._kpi_bump(key, val)
+
+    async def _cb_cleanup(self, job_name: str) -> None:
+        """Real ``cleanup_configmap`` activity — adapter for CICycle."""
+        return await self._cleanup(job_name)
+
+    async def _cb_request_reviewer(
+        self, project_id: str, pr_number: Optional[int]
+    ) -> Any:
+        """Real ``request_github_reviewer`` activity — adapter for Notifier."""
+        return await self._request_reviewer(project_id, pr_number or 0)

@@ -292,3 +292,7 @@ class CICycle:
             )
         except Exception:  # noqa: BLE001
             workflow.logger.warning("cleanup_configmap failed for %s", job_name)
+
+
+# Re-export for convenience.
+CICycleCallbacks = _Callbacks

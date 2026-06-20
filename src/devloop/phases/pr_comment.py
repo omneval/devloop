@@ -25,6 +25,7 @@ from .._constants import _ACTIVITY_TIMEOUT, _GITHUB_COMMENT_TIMEOUT, _RETRY
 from ..dev_loop_logic import pr_number_from_url
 
 if TYPE_CHECKING:
+    from ..pr_comment import PRCommentInput, PRCommentResult
     from ..shared import AgentJobResult, TaskSpec
 
 # Agent issue branches are named ``agent/issue-<N>[-slug]`` (see entrypoint.py /
@@ -65,24 +66,6 @@ class _Callbacks:
         return cls()
 
 
-@dataclass
-class PRCommentPhaseResult:
-    """Result of a PRCommentPhase run.
-
-    Attributes
-    ----------
-    exec_result : dict | None
-        The agent job result dict, or ``None`` when an error prevented
-        dispatch.  When present, carries ``issue_id``, ``branch``,
-        ``pr_url``, and ``commits`` keys.
-    error : str | None
-        A human-readable error description, or ``None`` on success.
-    """
-
-    exec_result: dict | None = None
-    error: str | None = None
-
-
 class PRCommentPhase:
     """Resolve a PR's branch, validate it's agent-owned, and dispatch the
     PR_COMMENT agent job.
@@ -92,9 +75,9 @@ class PRCommentPhase:
 
     async def run(
         self,
-        inp: Any,  # PRCommentInput
+        inp: "PRCommentInput",
         callbacks: Optional[_Callbacks] = None,
-    ) -> PRCommentPhaseResult:
+    ) -> "PRCommentResult":
         """Run the PR comment phase.
 
         Parameters
@@ -108,11 +91,14 @@ class PRCommentPhase:
 
         Returns
         -------
-        PRCommentPhaseResult
-            The exec result dict (with issue_id, branch, pr_url, commits),
-            or an error if the phase failed.
+        PRCommentResult
+            The result with ``exec_result`` dict (with issue_id, branch,
+            pr_url, commits), or an error if the phase failed.
         """
         from ..shared import JobStatus, Phase, TaskSpec
+
+        # Lazy import PRCommentResult to avoid circular import.
+        from ..pr_comment import PRCommentResult
 
         cb = callbacks or _Callbacks.default()
         issue_no = inp.issue_number or inp.pr_number
@@ -138,7 +124,9 @@ class PRCommentPhase:
                 f"❌ Could not respond to feedback — could not resolve PR #{inp.pr_number}'s branch",
                 cb,
             )
-            return PRCommentPhaseResult(
+            return PRCommentResult(
+                status="failed",
+                pr_number=inp.pr_number,
                 exec_result=None,
                 error="branch resolution failed",
             )
@@ -151,7 +139,9 @@ class PRCommentPhase:
                 f"❌ Could not respond to feedback — PR #{inp.pr_number} isn't an agent-owned PR (branch `{branch}`)",
                 cb,
             )
-            return PRCommentPhaseResult(
+            return PRCommentResult(
+                status="failed",
+                pr_number=inp.pr_number,
                 exec_result=None,
                 error="not an agent-owned branch",
             )
@@ -184,7 +174,9 @@ class PRCommentPhase:
                 f"❌ Could not respond to feedback — {result.error or 'unknown error'}",
                 cb,
             )
-            return PRCommentPhaseResult(
+            return PRCommentResult(
+                status="failed",
+                pr_number=inp.pr_number,
                 exec_result=None,
                 error=result.error or "phase failed",
             )
@@ -194,15 +186,20 @@ class PRCommentPhase:
         if not pr_number_from_url(pr_url) and inp.pr_number:
             pr_url = f"/pull/{inp.pr_number}"
 
-        return PRCommentPhaseResult(
-            exec_result={
-                "issue_id": issue_no,
-                "branch": result.branch or branch,
-                "pr_url": pr_url,
-                "commits": result.commits,
-                "summary": result.summary or "",
-            },
-            error=None,
+        exec_result: dict = {
+            "issue_id": issue_no,
+            "branch": result.branch or branch,
+            "pr_url": pr_url,
+            "commits": result.commits,
+            "summary": result.summary or "",
+        }
+        return PRCommentResult(
+            status="completed",
+            pr_number=inp.pr_number,
+            commits=result.commits,
+            exec_result=exec_result,
+            detail="",
+            exhausted=False,
         )
 
     async def _get_branch(self, project_id: str, pr_number: int, cb: _Callbacks) -> str:
@@ -273,3 +270,7 @@ class PRCommentPhase:
                 start_to_close_timeout=_GITHUB_COMMENT_TIMEOUT,
                 retry_policy=_RETRY,
             )
+
+
+# Re-export for convenience.
+PRCommentPhaseCallbacks = _Callbacks

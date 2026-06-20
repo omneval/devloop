@@ -17,6 +17,7 @@ from temporalio.client import Client
 from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import Worker
 
+from devloop.github import RequestReviewerInput, ReviewerRequestResult
 from devloop.pr_comment import PRCommentInput, PRCommentWorkflow
 from devloop.shared import (
     JOB_DISPATCH_QUEUE,
@@ -92,11 +93,16 @@ def _make_activities():
 
     @activity.defn(name="post_github_comment")
     async def post_github_comment(inp: GithubNotificationInput) -> None:
+        if isinstance(inp, dict):
+            inp = GithubNotificationInput(**inp)
         M.github_comments.append(inp)
 
     @activity.defn(name="request_github_reviewer")
-    async def request_github_reviewer(inp) -> None:
+    async def request_github_reviewer(inp) -> ReviewerRequestResult:
+        if isinstance(inp, dict):
+            inp = RequestReviewerInput(**inp)
         M.reviewer_requests.append(inp)
+        return ReviewerRequestResult(requested=True)
 
     @activity.defn(name="poll_ci_checks")
     async def poll_ci_checks(inp) -> CIChecksResult:

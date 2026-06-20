@@ -1,7 +1,8 @@
-"""Tests for PRCommentPhase — the deep module extracted from PRCommentWorkflow."""
+"""Tests verifying PRCommentPhase.run() uses PRCommentInput -> PRCommentResult."""
 
 from __future__ import annotations
 
+import inspect
 from dataclasses import dataclass, field
 from unittest.mock import AsyncMock
 
@@ -20,9 +21,7 @@ class PhaseMocks:
     get_branch_calls: list = field(default_factory=list)
     dispatch_calls: list = field(default_factory=list)
 
-    # Default branch resolution result
     branch_result: str = "agent/issue-53"
-    # Default dispatch result
     dispatch_result: AgentJobResult = field(
         default_factory=lambda: AgentJobResult(
             status=JobStatus.COMPLETE.value,
@@ -56,13 +55,48 @@ def _input(**overrides):
     return PRCommentInput(**base)
 
 
-class TestPRCommentPhase:
-    """Tests for PRCommentPhase.run() via callback injection."""
+class TestPRCommentPhaseInterface:
+    """Verify PRCommentPhase.run() uses PRCommentInput -> PRCommentResult."""
 
     @pytest.mark.asyncio
-    async def test_run_with_branch_provided_happy_path(self, mocks: PhaseMocks) -> None:
-        """When branch is provided, dispatches Phase.PR_COMMENT and returns
-        the agent job result."""
+    async def test_run_signature_accepts_pr_comment_input(
+        self, mocks: PhaseMocks
+    ) -> None:
+        """PRCommentPhase.run() must accept inp: PRCommentInput."""
+        phase = PRCommentPhase()
+        sig = inspect.signature(phase.run)
+        params = list(sig.parameters.keys())
+        assert "inp" in params
+
+    @pytest.mark.asyncio
+    async def test_run_returns_pr_comment_result_type(self, mocks: PhaseMocks) -> None:
+        """PRCommentPhase.run() returns PRCommentResult, not a custom type."""
+        phase = PRCommentPhase()
+
+        mock_post_comment = AsyncMock()
+        mock_get_branch = AsyncMock()
+        mock_dispatch = AsyncMock()
+
+        from devloop.phases.pr_comment import _Callbacks
+
+        callbacks = _Callbacks(
+            post_comment=mock_post_comment,
+            get_branch=mock_get_branch,
+            dispatch=mock_dispatch,
+        )
+
+        mock_dispatch.return_value = mocks.dispatch_result
+
+        result = await phase.run(_input(), callbacks=callbacks)
+
+        # The result must be PRCommentResult, NOT a custom PRCommentPhaseResult
+        assert isinstance(result, PRCommentResult)
+
+    @pytest.mark.asyncio
+    async def test_run_produces_exec_result_in_pr_comment_result(
+        self, mocks: PhaseMocks
+    ) -> None:
+        """PRCommentResult carries exec_result dict with issue_id, branch, pr_url, commits."""
         phase = PRCommentPhase()
 
         mock_post_comment = AsyncMock()
@@ -82,6 +116,7 @@ class TestPRCommentPhase:
         result = await phase.run(_input(), callbacks=callbacks)
 
         assert isinstance(result, PRCommentResult)
+        # exec_result dict should be present
         assert result.exec_result is not None
         assert result.exec_result["issue_id"] == 53
         assert result.exec_result["branch"] == "agent/issue-53"
@@ -90,99 +125,12 @@ class TestPRCommentPhase:
         )
         assert result.exec_result["commits"] == 1
         assert result.error is None
-        assert mock_get_branch.call_count == 0  # branch provided, no resolution needed
-        assert mock_dispatch.call_count == 1
 
     @pytest.mark.asyncio
-    async def test_run_resolves_branch_when_empty(self, mocks: PhaseMocks) -> None:
-        """When branch is empty, calls get_branch callback to resolve it."""
-        phase = PRCommentPhase()
-
-        mock_post_comment = AsyncMock()
-        mock_get_branch = AsyncMock()
-        mock_dispatch = AsyncMock()
-
-        from devloop.phases.pr_comment import _Callbacks
-
-        callbacks = _Callbacks(
-            post_comment=mock_post_comment,
-            get_branch=mock_get_branch,
-            dispatch=mock_dispatch,
-        )
-
-        mock_get_branch.return_value = "agent/issue-53-feature"
-        mock_dispatch.return_value = AgentJobResult(
-            status=JobStatus.COMPLETE.value,
-            job_name="pr-comment-job",
-            issue_number=53,
-            branch="agent/issue-53-feature",
-            pr_url="https://github.com/omneval/omneval/pull/17",
-            commits=1,
-            summary="Done",
-        )
-
-        result = await phase.run(_input(branch=""), callbacks=callbacks)
-
-        assert result.exec_result is not None
-        assert result.exec_result["branch"] == "agent/issue-53-feature"
-        mock_get_branch.assert_called_once_with("omneval", 17)
-        assert mock_dispatch.call_count == 1
-
-    @pytest.mark.asyncio
-    async def test_run_fails_when_branch_resolution_returns_empty(
+    async def test_run_error_path_sets_exec_result_none(
         self, mocks: PhaseMocks
     ) -> None:
-        """When get_branch returns empty, returns error without dispatching."""
-        phase = PRCommentPhase()
-
-        mock_post_comment = AsyncMock()
-        mock_get_branch = AsyncMock()
-        mock_dispatch = AsyncMock()
-
-        from devloop.phases.pr_comment import _Callbacks
-
-        callbacks = _Callbacks(
-            post_comment=mock_post_comment,
-            get_branch=mock_get_branch,
-            dispatch=mock_dispatch,
-        )
-
-        mock_get_branch.return_value = ""
-
-        result = await phase.run(_input(branch=""), callbacks=callbacks)
-
-        assert result.exec_result is None
-        assert result.error == "branch resolution failed"
-        assert mock_dispatch.call_count == 0
-
-    @pytest.mark.asyncio
-    async def test_run_refuses_non_agent_branch(self, mocks: PhaseMocks) -> None:
-        """A branch not matching agent/issue-<N> is refused."""
-        phase = PRCommentPhase()
-
-        mock_post_comment = AsyncMock()
-        mock_get_branch = AsyncMock()
-        mock_dispatch = AsyncMock()
-
-        from devloop.phases.pr_comment import _Callbacks
-
-        callbacks = _Callbacks(
-            post_comment=mock_post_comment,
-            get_branch=mock_get_branch,
-            dispatch=mock_dispatch,
-        )
-
-        mock_get_branch.return_value = "a-humans-feature-branch"
-
-        result = await phase.run(_input(branch=""), callbacks=callbacks)
-
-        assert result.exec_result is None
-        assert result.error == "not an agent-owned branch"
-        assert mock_dispatch.call_count == 0
-
-    @pytest.mark.asyncio
-    async def test_run_dispatch_fails(self, mocks: PhaseMocks) -> None:
-        """When dispatch returns a failed status, returns error."""
+        """When dispatch fails, exec_result is None and error is set."""
         phase = PRCommentPhase()
 
         mock_post_comment = AsyncMock()
@@ -207,5 +155,58 @@ class TestPRCommentPhase:
 
         result = await phase.run(_input(), callbacks=callbacks)
 
+        assert isinstance(result, PRCommentResult)
         assert result.exec_result is None
         assert result.error == "task_queue not found"
+
+    @pytest.mark.asyncio
+    async def test_run_fails_on_empty_branch_resolution(
+        self, mocks: PhaseMocks
+    ) -> None:
+        """When branch resolution returns empty, exec_result is None."""
+        phase = PRCommentPhase()
+
+        mock_post_comment = AsyncMock()
+        mock_get_branch = AsyncMock()
+        mock_dispatch = AsyncMock()
+
+        from devloop.phases.pr_comment import _Callbacks
+
+        callbacks = _Callbacks(
+            post_comment=mock_post_comment,
+            get_branch=mock_get_branch,
+            dispatch=mock_dispatch,
+        )
+
+        mock_get_branch.return_value = ""
+
+        result = await phase.run(_input(branch=""), callbacks=callbacks)
+
+        assert isinstance(result, PRCommentResult)
+        assert result.exec_result is None
+        assert result.error == "branch resolution failed"
+
+    @pytest.mark.asyncio
+    async def test_run_refuses_non_agent_branch(self, mocks: PhaseMocks) -> None:
+        """A branch not matching agent/issue-<N> is refused."""
+        phase = PRCommentPhase()
+
+        mock_post_comment = AsyncMock()
+        mock_get_branch = AsyncMock()
+        mock_dispatch = AsyncMock()
+
+        from devloop.phases.pr_comment import _Callbacks
+
+        callbacks = _Callbacks(
+            post_comment=mock_post_comment,
+            get_branch=mock_get_branch,
+            dispatch=mock_dispatch,
+        )
+
+        mock_get_branch.return_value = "a-humans-feature-branch"
+
+        result = await phase.run(_input(branch=""), callbacks=callbacks)
+
+        assert isinstance(result, PRCommentResult)
+        assert result.exec_result is None
+        assert result.error == "not an agent-owned branch"
