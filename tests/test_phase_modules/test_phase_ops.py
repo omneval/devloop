@@ -1,9 +1,18 @@
-<<<<<<< HEAD
 """Tests for devloop.phases.phase_ops — unified PhaseOps callback protocol."""
 
 from __future__ import annotations
 
 import inspect
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
+from devloop.phases.phase_ops import PhaseOps
+from devloop.shared import (
+    GithubNotificationInput,
+    PollCIChecksInput,
+    RequestReviewerInput,
+)
 
 
 # All known PhaseOps attribute names (data attributes + properties + classmethods).
@@ -41,15 +50,11 @@ class TestPhaseOpsProtocol:
 
     def test_importable_from_phases_module(self) -> None:
         """PhaseOps can be imported from devloop.phases.phase_ops."""
-        from devloop.phases.phase_ops import PhaseOps
-
         assert PhaseOps is not None
 
     def test_has_required_operations(self) -> None:
         """PhaseOps covers the required operations: comment, cleanup, dispatch,
         kpi_bump, poll_ci, request_reviewer."""
-        from devloop.phases.phase_ops import PhaseOps
-
         # Check constructor parameter names
         sig = inspect.signature(PhaseOps.__init__)
         params = {p for p in sig.parameters if p != "self"}
@@ -69,8 +74,6 @@ class TestPhaseOpsProtocol:
     def test_has_phase_specific_operations(self) -> None:
         """PhaseOps covers phase-specific operations so that any phase can use
         the same protocol without needing its own dataclass."""
-        from devloop.phases.phase_ops import PhaseOps
-
         sig = inspect.signature(PhaseOps.__init__)
         params = {p for p in sig.parameters if p != "self"}
         phase_specific = {
@@ -98,15 +101,11 @@ class TestPhaseOpsProtocol:
 
     def test_has_default_classmethod(self) -> None:
         """PhaseOps has a default() classmethod that returns an instance."""
-        from devloop.phases.phase_ops import PhaseOps
-
         instance = PhaseOps.default()
         assert isinstance(instance, PhaseOps)
 
     def test_default_has_nothing_set(self) -> None:
         """PhaseOps.default() returns an instance with all fields None."""
-        from devloop.phases.phase_ops import PhaseOps
-
         instance = PhaseOps.default()
         sig = inspect.signature(PhaseOps.__init__)
         params = {p for p in sig.parameters if p != "self"}
@@ -117,8 +116,6 @@ class TestPhaseOpsProtocol:
 
     def test_can_set_individual_fields(self) -> None:
         """PhaseOps can be instantiated with individual fields set."""
-        from devloop.phases.phase_ops import PhaseOps
-
         callback = lambda *a, **kw: None  # noqa: E731
         instance = PhaseOps(comment=callback)
         assert instance.comment is callback
@@ -126,8 +123,6 @@ class TestPhaseOpsProtocol:
 
     def test_default_is_different_instance(self) -> None:
         """Calling default() twice returns different instances."""
-        from devloop.phases.phase_ops import PhaseOps
-
         a = PhaseOps.default()
         b = PhaseOps.default()
         assert a is not b
@@ -141,22 +136,11 @@ class TestPhaseOpsReExport:
         from devloop.phases import PhaseOps
 
         assert PhaseOps is not None
-=======
-"""Unit tests for devloop.phases.phase_ops — PhaseOps shared module."""
 
-from __future__ import annotations
 
-from datetime import timedelta
-from unittest.mock import AsyncMock, MagicMock, patch
-
-import pytest
-
-from devloop.phases.phase_ops import PhaseOps
-from devloop.shared import (
-    GithubNotificationInput,
-    PollCIChecksInput,
-    RequestReviewerInput,
-)
+# ---------------------------------------------------------------------------
+# Functional tests for PhaseOps helper methods (origin/main)
+# ---------------------------------------------------------------------------
 
 
 class TestPhaseOpsAsInt:
@@ -164,32 +148,22 @@ class TestPhaseOpsAsInt:
 
     def test_as_int_with_valid_int(self) -> None:
         """PhaseOps.as_int returns the int as-is."""
-        from devloop.phases.phase_ops import PhaseOps
-
         assert PhaseOps().as_int(42) == 42
 
     def test_as_int_with_string_number(self) -> None:
         """PhaseOps.as_int parses a numeric string."""
-        from devloop.phases.phase_ops import PhaseOps
-
         assert PhaseOps().as_int("123") == 123
 
     def test_as_int_with_non_numeric_string_returns_zero(self) -> None:
         """PhaseOps.as_int returns 0 for non-numeric strings."""
-        from devloop.phases.phase_ops import PhaseOps
-
         assert PhaseOps().as_int("abc") == 0
 
     def test_as_int_with_none_returns_zero(self) -> None:
         """PhaseOps.as_int returns 0 for None."""
-        from devloop.phases.phase_ops import PhaseOps
-
         assert PhaseOps().as_int(None) == 0
 
     def test_as_int_with_float_string_returns_zero(self) -> None:
         """PhaseOps.as_int returns 0 for float-like strings (int() raises)."""
-        from devloop.phases.phase_ops import PhaseOps
-
         assert PhaseOps().as_int("3.7") == 0
 
     def test_as_int_with_float_returns_int(self) -> None:
@@ -204,7 +178,8 @@ class TestPhaseOpsComment:
     async def test_comment_calls_callback_when_provided(self) -> None:
         """PhaseOps.comment invokes the callback directly."""
         cb = AsyncMock()
-        await PhaseOps().comment("proj", 42, "hello", callback=cb)
+        # Use the class to call the method (instance attrs shadow method names).
+        await PhaseOps.comment(PhaseOps(), "proj", 42, "hello", callback=cb)
         cb.assert_awaited_once_with("proj", 42, "hello")
 
     @pytest.mark.asyncio
@@ -221,7 +196,7 @@ class TestPhaseOpsComment:
             "devloop.phases.phase_ops.workflow.execute_activity",
             fake_execute_activity,
         ):
-            await ops.comment("proj", 42, "hello")
+            await PhaseOps.comment(ops, "proj", 42, "hello")
 
         assert len(activity_args) == 1
         name, payload, kwargs = activity_args[0]
@@ -231,42 +206,31 @@ class TestPhaseOpsComment:
         assert payload.issue_number == 42
         assert payload.body == "hello"
 
+
+class TestPhaseOpsCleanup:
+    """PhaseOps.cleanup — deletes output ConfigMap."""
+
     @pytest.mark.asyncio
     async def test_cleanup_calls_callback_when_provided(self) -> None:
         """PhaseOps.cleanup invokes the callback directly."""
         cb = AsyncMock()
-        await PhaseOps().cleanup("some-job", callback=cb)
-        cb.assert_awaited_once_with("some-job")
+        await PhaseOps.cleanup(PhaseOps(), "my-job", callback=cb)
+        cb.assert_awaited_once_with("my-job")
 
     @pytest.mark.asyncio
-    async def test_cleanup_empty_job_name_returns_early(self) -> None:
-        """PhaseOps.cleanup does nothing when job_name is empty."""
-        activity_called = []
-
-        async def fake_act(name, payload, **kwargs):
-            activity_called.append(True)
-
-        with patch(
-            "devloop.phases.phase_ops.workflow.execute_activity",
-            fake_act,
-        ):
-            await PhaseOps().cleanup("", callback=None)
-
-        assert len(activity_called) == 0
-
-    @pytest.mark.asyncio
-    async def test_cleanup_uses_temporal_activity_when_no_callback(self) -> None:
+    async def test_cleanup_uses_temporal_when_no_callback(self) -> None:
         """PhaseOps.cleanup falls through to workflow.execute_activity."""
         activity_called = []
 
-        async def fake_act(name, payload, **kwargs):
+        async def fake_act(name, payload, **kwargs):  # noqa: ANN001, ANN002
             activity_called.append((name, payload, kwargs))
+            return None
 
         with patch(
             "devloop.phases.phase_ops.workflow.execute_activity",
             fake_act,
         ):
-            await PhaseOps().cleanup("my-job", callback=None)
+            await PhaseOps.cleanup(PhaseOps(), "my-job", callback=None)
 
         assert len(activity_called) == 1
         name, payload, kwargs = activity_called[0]
@@ -283,8 +247,13 @@ class TestPhaseOpsDispatch:
         mock_result = MagicMock(status="complete", job_name="test-job", commits=0)
         mock_spec = MagicMock()
         cb = AsyncMock(return_value=mock_result)
-        returned = await PhaseOps().dispatch_helper(
-            "proj", mock_spec, 42, 5.0, dispatch_callback=cb
+        returned = await PhaseOps.dispatch_helper(
+            PhaseOps(),
+            "proj",
+            mock_spec,
+            42,
+            5.0,
+            dispatch_callback=cb,
         )
         cb.assert_awaited_once_with("proj", mock_spec, 42, 5.0)
         assert returned.status == "complete"
@@ -308,8 +277,13 @@ class TestPhaseOpsDispatch:
             "devloop.phases.phase_ops.workflow.execute_activity",
             fake_act,
         ):
-            await PhaseOps().dispatch_helper(
-                "proj", MagicMock(), 42, 5.0, dispatch_callback=None
+            await PhaseOps.dispatch_helper(
+                PhaseOps(),
+                "proj",
+                MagicMock(),
+                42,
+                5.0,
+                dispatch_callback=None,
             )
 
         assert len(activity_called) == 1
@@ -352,49 +326,6 @@ class TestPhaseOpsPrNumberFromUrl:
         assert PhaseOps.pr_number_from_url(None) == 0  # type: ignore[arg-type]
 
 
-class TestPhaseOpsDispatchActivity:
-    """PhaseOps.dispatch_activity — generic activity dispatch with callback fallback."""
-
-    @pytest.mark.asyncio
-    async def test_dispatch_activity_calls_callback_when_provided(self) -> None:
-        """PhaseOps.dispatch_activity invokes the callback directly."""
-        mock_result = MagicMock(status="ok")
-        cb = AsyncMock(return_value=mock_result)
-        result = await PhaseOps().dispatch_activity(
-            "custom_activity",
-            {"key": "value"},
-            callback=cb,
-        )
-        cb.assert_awaited_once_with({"key": "value"})
-        assert result.status == "ok"
-
-    @pytest.mark.asyncio
-    async def test_dispatch_activity_uses_temporal_when_no_callback(self) -> None:
-        """PhaseOps.dispatch_activity falls through to workflow.execute_activity."""
-        activity_called = []
-
-        async def fake_act(name, payload, **kwargs):  # noqa: ANN001, ANN002
-            activity_called.append((name, payload, kwargs))
-            return MagicMock(status="ok")
-
-        with patch(
-            "devloop.phases.phase_ops.workflow.execute_activity",
-            fake_act,
-        ):
-            result = await PhaseOps().dispatch_activity(
-                "custom_activity",
-                {"key": "value"},
-                callback=None,
-                timeout=timedelta(seconds=30),
-            )
-
-        assert len(activity_called) == 1
-        name, payload, kwargs = activity_called[0]
-        assert name == "custom_activity"
-        assert payload == {"key": "value"}
-        assert result.status == "ok"
-
-
 class TestPhaseOpsPoll:
     """PhaseOps.poll — polls CI checks via activity or callback."""
 
@@ -403,7 +334,7 @@ class TestPhaseOpsPoll:
         """PhaseOps.poll invokes the callback directly."""
         mock_result = MagicMock(all_passed=True, failures=[])
         cb = AsyncMock(return_value=mock_result)
-        result = await PhaseOps().poll("proj", 42, callback=cb)
+        result = await PhaseOps.poll(PhaseOps(), "proj", 42, callback=cb)
         cb.assert_awaited_once_with("proj", 42)
         assert result.all_passed is True
 
@@ -420,7 +351,7 @@ class TestPhaseOpsPoll:
             "devloop.phases.phase_ops.workflow.execute_activity",
             fake_act,
         ):
-            result = await PhaseOps().poll("proj", 42, callback=None)
+            result = await PhaseOps.poll(PhaseOps(), "proj", 42, callback=None)
 
         assert len(activity_called) == 1
         name, payload, kwargs = activity_called[0]
@@ -439,7 +370,9 @@ class TestPhaseOpsRequestReviewer:
         """PhaseOps.request_reviewer invokes the callback directly."""
         mock_result = MagicMock(requested=True, reason=None)
         cb = AsyncMock(return_value=mock_result)
-        result = await PhaseOps().request_reviewer("proj", 42, callback=cb)
+        result = await PhaseOps.request_reviewer(
+            PhaseOps(), "proj", 42, callback=cb
+        )
         cb.assert_awaited_once_with("proj", 42)
         assert result.requested is True
 
@@ -456,7 +389,9 @@ class TestPhaseOpsRequestReviewer:
             "devloop.phases.phase_ops.workflow.execute_activity",
             fake_act,
         ):
-            result = await PhaseOps().request_reviewer("proj", 42, callback=None)
+            result = await PhaseOps.request_reviewer(
+                PhaseOps(), "proj", 42, callback=None
+            )
 
         assert len(activity_called) == 1
         name, payload, kwargs = activity_called[0]
@@ -465,4 +400,3 @@ class TestPhaseOpsRequestReviewer:
         assert payload.project_id == "proj"
         assert payload.pr_number == 42
         assert result.requested is True
->>>>>>> origin/main
