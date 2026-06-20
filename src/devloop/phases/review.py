@@ -75,7 +75,7 @@ class ReviewPhase:
             issue_number=issue_no,
             branch=exec_result["branch"],
         )
-        await ops.comment(
+        await ops._phase_comment(
             inp.project_id,
             issue_no,
             "⏳ queued — agent is reviewing this issue",
@@ -92,14 +92,14 @@ class ReviewPhase:
         review = result.review or {}
         verdict = review.get("verdict") if review else None
         if verdict:
-            await ops.comment(
+            await ops._phase_comment(
                 inp.project_id,
                 issue_no,
                 f"🔎 Reviewed #{issue_no} — verdict: {verdict}.",
                 callback=cb.post_comment,
             )
         else:
-            await ops.comment(
+            await ops._phase_comment(
                 inp.project_id,
                 issue_no,
                 f"🔎 Reviewed #{issue_no} — no changes needed.",
@@ -146,7 +146,9 @@ class ReviewPhase:
             task_queue=JOB_DISPATCH_QUEUE,
         )
         if result.status != "awaiting_human":
-            await ops.cleanup(result.job_name)
+            await ops._phase_cleanup(
+                result.job_name
+            )
         return result
     async def _post_review_findings(
         self,

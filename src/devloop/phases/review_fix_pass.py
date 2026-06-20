@@ -75,7 +75,7 @@ class ReviewFixPass:
         if not findings.strip():
             return False
 
-        await ops.comment(
+        await ops._phase_comment(
             inp.project_id,
             issue_no,
             "⏳ queued — agent is addressing automated review findings",
@@ -98,11 +98,11 @@ class ReviewFixPass:
             spec,
             issue_number=issue_no,
             poll_interval_seconds=inp.poll_interval_seconds,
-            dispatch_callback=cb.dispatch_fix,
+            dispatch_callback=cb.dispatch_fix,  # ty: ignore[invalid-argument-type]
         )
         if not _has_commits(result):
             return False
-        await ops.comment(
+        await ops._phase_comment(
             inp.project_id,
             issue_no,
             f"🔧 Fix pass pushed {_commits_count(result)} commit(s) addressing review findings.",
@@ -138,8 +138,12 @@ class ReviewFixPass:
         cb: Optional[PhaseOps] = None,
     ) -> None:
         """Post a GitHub Issue/PR comment."""
-        if cb and cb.comment is not None:
-            await cb.comment(project_id, issue_number, body)
+        if cb and cb._phase_comment is not None:
+            await cb._phase_comment(
+                project_id,
+                issue_number,
+                body,
+            )
             return
 
     async def _kpi_bump(

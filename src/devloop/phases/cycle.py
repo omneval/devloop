@@ -156,7 +156,7 @@ class CICycle:
                 "extra": {"ci_check_failures": failures},
             }
 
-            await ops.comment(
+            await ops._phase_comment(
                 project_id,
                 pr_number,
                 f"⏳ queued — CI fix attempt {attempt}/{max_iters}",
@@ -176,12 +176,15 @@ class CICycle:
                     dispatch_callback=None,
                     task_queue=JOB_DISPATCH_QUEUE,
                 )
-                await ops.cleanup(_result.job_name, callback=cb.cleanup)
+                await ops._phase_cleanup(
+                    _result.job_name,
+                    callback=cb._phase_cleanup,
+                )
                 commits = _result.commits
             total_commits += commits
 
             if commits > 0:
-                await ops.comment(
+                await ops._phase_comment(
                     project_id,
                     pr_number,
                     f"🔧 CI fix attempt {attempt}/{max_iters} — "
@@ -189,7 +192,7 @@ class CICycle:
                     callback=cb.post_comment,
                 )
             else:
-                await ops.comment(
+                await ops._phase_comment(
                     project_id,
                     pr_number,
                     f"❌ CI fix attempt {attempt}/{max_iters} failed",
@@ -273,8 +276,10 @@ class CICycle:
 
     async def _cleanup(self, job_name: str, cb: PhaseOps) -> None:
         """Delete the output ConfigMap for a completed job — fire-and-forget."""
-        if cb.cleanup is not None:
-            await cb.cleanup(job_name)
+        if cb._phase_cleanup is not None:
+            await cb._phase_cleanup(
+                job_name
+            )
             return
         if not job_name:
             return

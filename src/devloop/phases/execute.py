@@ -128,7 +128,7 @@ class ExecutePhase:
         for attempt in range(1, max_iters + 1):
             if cb.kpi_bump is not None:
                 await cb.kpi_bump("execute_attempts", 1)
-            await ops.comment(
+            await ops._phase_comment(
                 inp.project_id,
                 issue_no,
                 "⏳ queued — agent is working on this issue",
@@ -151,7 +151,7 @@ class ExecutePhase:
             # execute_max_iterations was misconfigured to < 1, so the loop
             # above never ran — treat it the same as a failed attempt rather
             # than crashing on a None dereference below.
-            await ops.comment(
+            await ops._phase_comment(
                 inp.project_id,
                 issue_no,
                 "❌ Parked — execute phase failed: execute_max_iterations must be >= 1",
@@ -166,7 +166,7 @@ class ExecutePhase:
             }
 
         if result.status != JobStatus.COMPLETE.value:
-            await ops.comment(
+            await ops._phase_comment(
                 inp.project_id,
                 issue_no,
                 f"❌ Parked — execute phase failed: {result.error or 'unknown error'}",
@@ -181,7 +181,7 @@ class ExecutePhase:
             }
 
         if not result.commits:
-            await ops.comment(
+            await ops._phase_comment(
                 inp.project_id,
                 issue_no,
                 f"❌ Execute exhausted {max_iters} attempts with no commits"
@@ -196,7 +196,7 @@ class ExecutePhase:
                 "exhausted": False,
             }
 
-        await ops.comment(
+        await ops._phase_comment(
             inp.project_id,
             issue_no,
             f"✅ Implemented — PR: {result.pr_url or result.branch}",

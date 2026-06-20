@@ -93,10 +93,14 @@ class PhaseOps:
 
     #: Post a GitHub Issue/PR comment.
     #: Also accessible via the backward-compatible ``post_comment`` alias.
-    comment: Optional[_PostCommentCallback] = None
+    #: NOTE: class-level type annotation removed to avoid ``ty`` union-type
+    #: collision with the ``comment`` method (the ``__init__`` assigns this
+    #: instance attribute at runtime).
+    comment = None
 
     #: Delete the output ConfigMap for a completed job.
-    cleanup: Optional[_CleanupCallback] = None
+    #: NOTE: same rationale as ``comment`` above.
+    cleanup = None
 
     #: Dispatch an Agent Execution Job and wait for the result.
     dispatch: Optional[_DispatchCallback] = None
@@ -114,7 +118,8 @@ class PhaseOps:
     poll_ci: Optional[_PollCiCallback] = None
 
     #: Request a GitHub PR reviewer.
-    request_reviewer: Optional[_RequestReviewerCallback] = None
+    #: NOTE: same rationale as ``comment`` above.
+    request_reviewer = None
 
     # ── ExecutePhase-specific ────────────────────────────────────────── #
 
@@ -178,14 +183,14 @@ class PhaseOps:
         ``comment``.  If both are provided, ``post_comment`` takes
         precedence (it is the older name used by tests).
         """
-        self.comment = post_comment if post_comment is not None else comment
-        self.cleanup = cleanup
+        self._phase_comment_callback: Optional[_PostCommentCallback] = post_comment if post_comment is not None else comment
+        self._phase_cleanup_callback: Optional[_CleanupCallback] = cleanup
         self.dispatch = dispatch
         self.kpi_bump = kpi_bump
         self.kpi_take = kpi_take
         self.emit_kpis = emit_kpis
         self.poll_ci = poll_ci
-        self.request_reviewer = request_reviewer
+        self._phase_request_reviewer: Optional[_RequestReviewerCallback] = request_reviewer
         self.dispatch_execute = dispatch_execute
         self.answer_question = answer_question
         self.dispatch_review = dispatch_review
@@ -197,12 +202,12 @@ class PhaseOps:
 
     @property
     def post_comment(self) -> Optional[_PostCommentCallback]:
-        """Backward-compatible alias for ``comment``."""
-        return self.comment
+        """Backward-compatible alias for the comment callback."""
+        return self._phase_comment_callback
 
     @post_comment.setter
     def post_comment(self, value: Optional[_PostCommentCallback]) -> None:
-        self.comment = value
+        self._phase_comment_callback = value
 
     @property
     def phaseops(self) -> "PhaseOps":
@@ -251,7 +256,7 @@ class PhaseOps:
     # comment — default Temporal activity path (fallback when field is None)
     # ------------------------------------------------------------------
 
-    async def comment(  # noqa: F811
+    async def _phase_comment(  # noqa: F811
         self,
         project_id: str,
         issue_number: int,
@@ -284,7 +289,7 @@ class PhaseOps:
     # cleanup — default Temporal activity path (fallback when field is None)
     # ------------------------------------------------------------------
 
-    async def cleanup(  # noqa: F811
+    async def _phase_cleanup(  # noqa: F811
         self,
         job_name: str,
         *,
@@ -395,7 +400,7 @@ class PhaseOps:
     # request_reviewer — default Temporal activity path (fallback when field is None)
     # ------------------------------------------------------------------
 
-    async def request_reviewer(  # noqa: F811
+    async def _phase_request_reviewer(  # noqa: F811
         self,
         project_id: str,
         pr_number: int,

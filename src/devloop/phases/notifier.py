@@ -60,10 +60,10 @@ class Notifier:
         pr_url = exec_result.get("pr_url", "")
         pr_number = ops.pr_number_from_url(pr_url)
 
-        reviewer_result = await ops.request_reviewer(
+        reviewer_result = await ops._phase_request_reviewer(  # ty: ignore[missing-argument]
             inp.project_id,
-            pr_number,
-            callback=cb.request_reviewer,  # type: ignore[arg-type]
+            pr_number,  # ty: ignore[invalid-argument-type]
+            callback=cb._phase_request_reviewer,  # ty: ignore[invalid-argument-type]
         )
         if reviewer_result.requested:
             reviewer_note = "Reviewer has been tagged."
@@ -78,7 +78,7 @@ class Notifier:
             if exec_result.get("exhausted")
             else ""
         )
-        await ops.comment(
+        await ops._phase_comment(
             inp.project_id,
             issue_no,
             f"👀 Ready for review — PR: {pr_url}. {reviewer_note}{note}",
@@ -89,16 +89,23 @@ class Notifier:
         self, project_id: str, pr_number: Optional[int], cb: PhaseOps
     ) -> Any:
         """Request a GitHub PR reviewer (or use injected callback)."""
-        if cb.request_reviewer is not None:
-            return await cb.request_reviewer(project_id, pr_number)
+        if cb._phase_request_reviewer is not None:
+            return await cb._phase_request_reviewer(  # ty: ignore[missing-argument]
+                project_id,  # ty: ignore[invalid-argument-type]
+                pr_number  # ty: ignore[invalid-argument-type]
+            )
         return None
 
     async def _post_comment(
         self, project_id: str, issue_number: int, body: str, cb: PhaseOps
     ) -> None:
         """Post a GitHub Issue/PR comment."""
-        if cb.comment is not None:
-            await cb.comment(project_id, issue_number, body)
+        if cb._phase_comment is not None:
+            await cb._phase_comment(
+                project_id,
+                issue_number,
+                body,
+            )
             return
 
 
@@ -128,7 +135,7 @@ class NotifierCallbacks(PhaseOps):
     so all downstream code uses the unified protocol.
 
     Subclassing ``PhaseOps`` so that consumers expecting a ``PhaseOps``
-    instance (e.g. code that reads ``cb.comment``) still work.
+    instance (e.g. code that reads ``cb.post_comment``) still work.
     """
 
     def __init__(
