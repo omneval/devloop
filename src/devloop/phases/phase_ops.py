@@ -198,7 +198,7 @@ class PhaseOps:
         self.emit_kpis = emit_kpis
         self.poll_ci = poll_ci
         self.request_reviewer = request_reviewer
-        self._phase_request_reviewer: Optional[_RequestReviewerCallback] = (
+        self._phase_request_reviewer_callback: Optional[_RequestReviewerCallback] = (
             self.request_reviewer
         )
         self.dispatch_execute = dispatch_execute
