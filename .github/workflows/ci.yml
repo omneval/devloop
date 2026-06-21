@@ -52,6 +52,7 @@ jobs:
           version: "0.11.18"
 
       - name: Cache Temporal test server binary
+        id: cache-server
         uses: actions/cache@v4
         with:
           path: .temporal-cache
@@ -59,6 +60,20 @@ jobs:
 
       - name: Install dependencies
         run: uv sync --all-groups
+
+      # Pre-download the Temporal test server binary so tests don't hang on
+      # first-run download from dl.temporal.io (issue #204).  The conftest
+      # helper already passes download_dest_dir=".temporal-cache" to the SDK
+      # so the binary is re-used across tests.  If the cache was restored this
+      # step completes instantly (binary already present).
+      - name: Warm Temporal test server cache
+        run: |
+          uv run python -c "
+            from tests.conftest import time_skipping_env
+            import asyncio
+            asyncio.run(time_skipping_env().__aenter__())
+            asyncio.run(time_skipping_env().__aexit__(None, None, None))
+          "
 
       - name: Test
         run: uv run pytest tests
