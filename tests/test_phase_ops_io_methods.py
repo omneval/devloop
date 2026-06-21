@@ -191,6 +191,59 @@ class TestPhaseOpsEmitKpis:
             await ops._emit_kpis(inp)
 
 
+class TestDevLoopWorkflowInheritsOnlyPhaseOps:
+    """Verify DevLoopWorkflow inherits only from PhaseOps (not _WorkflowCommon)."""
+
+    def test_devloop_workflow_is_subclass_of_phase_ops(self) -> None:
+        """DevLoopWorkflow must inherit from PhaseOps."""
+        from devloop.dev_loop import DevLoopWorkflow
+
+        assert issubclass(DevLoopWorkflow, PhaseOps)
+
+    def test_devloop_workflow_not_subclass_of_workflow_common(self) -> None:
+        """DevLoopWorkflow must NOT inherit from _WorkflowCommon."""
+        from devloop.dev_loop import DevLoopWorkflow
+
+        from devloop._workflow_common import _WorkflowCommon
+
+        assert not issubclass(DevLoopWorkflow, _WorkflowCommon)
+
+    def test_devloop_workflow_has_phaseops_io_methods(self) -> None:
+        """DevLoopWorkflow must have all 5 I/O methods."""
+        from devloop.dev_loop import DevLoopWorkflow
+
+        for method_name in (
+            "_comment",
+            "_dispatch",
+            "_cleanup",
+            "_request_reviewer",
+            "_emit_kpis",
+        ):
+            assert hasattr(DevLoopWorkflow, method_name), (
+                f"DevLoopWorkflow missing {method_name}"
+            )
+
+    @pytest.mark.asyncio
+    async def test_devloop_workflow_comment_delegates_to_phaseops(
+        self,
+    ) -> None:
+        """When DevLoopWorkflow._comment is called with self.comment set,
+        it goes through PhaseOps._comment (callback-first path)."""
+        from devloop.dev_loop import DevLoopWorkflow
+
+        wf = DevLoopWorkflow()
+
+        call_log: list = []
+
+        async def mock_comment(project_id: str, issue_number: int, body: str) -> None:
+            call_log.append((project_id, issue_number, body))
+
+        wf.comment = mock_comment
+        await wf._comment("test-project", 42, "Hello")
+
+        assert call_log == [("test-project", 42, "Hello")]
+
+
 class TestPRCommentWorkflowExercisesPhaseOps:
     """Verify PRCommentWorkflow delegates to PhaseOps methods."""
 

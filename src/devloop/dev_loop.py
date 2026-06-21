@@ -24,13 +24,19 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import timedelta
-from typing import Any, Optional
+from typing import Any
 
 from temporalio import workflow
+from temporalio.common import RetryPolicy
 
 from devloop.dev_loop_logic import pr_number_from_url
+from .execution import DispatchInput
 from ._constants import _ACTIVITY_TIMEOUT, _RETRY
-from ._workflow_common import _WorkflowCommon
+from .github import (
+    GithubNotificationInput,
+    RequestReviewerInput,
+    ReviewerRequestResult,
+)
 from .phases.execute import ExecutePhase
 from .phases.notifier import Notifier
 from .phases.phase_ops import PhaseOps
@@ -44,12 +50,13 @@ from .shared import (
     AwaitInput,
     CIChecksResult,
     InlineComment,
+    JobStatus,
+    JOB_DISPATCH_QUEUE,
     OpenAgentPRsInput,
     Phase,
     PlanIssueInput,
     PollCIChecksInput,
     PostCommentsInput,
-    ReviewerRequestResult,
     TaskSpec,
     WorkflowKpiInput,
 )
@@ -144,11 +151,11 @@ def _as_int(value) -> int:
 
 
 @workflow.defn
-class DevLoopWorkflow(_WorkflowCommon, PhaseOps):
+class DevLoopWorkflow(PhaseOps):
     """Thin adapter: wires phase instances into PhasePipeline.
 
     All orchestration lives in ``PhasePipeline.run()`` — this class only
-    creates phases, binds its own ``_WorkflowCommon`` methods as callbacks,
+    creates phases, binds its own PhaseOps methods as callbacks,
     and calls the pipeline.  Per-issue KPIs are emitted via a ``post_round``
     callback that the pipeline invokes after each successful round.
 
@@ -258,6 +265,69 @@ class DevLoopWorkflow(_WorkflowCommon, PhaseOps):
             next_issue=self._dequeue_issue,
         )
 
+    # ---- PhaseOps I/O method overrides (delegating to PhaseOps) ----------- #
+    async def _comment(
+        self,
+        project_id: str,
+        issue_number: int,
+        body: str,
+    ) -> None:
+        """Delegate to PhaseOps._comment so DevLoopWorkflow code paths
+        exercise the injectable callback protocol."""
+        return await PhaseOps._comment(self, project_id, issue_number, body)
+
+    async def _dispatch(
+        self,
+        project_id: str,
+        spec: TaskSpec,
+        issue_number: int = 0,
+        poll_interval_seconds: float = 5.0,
+    ) -> AgentJobResult:
+        """Delegate to PhaseOps._dispatch, then clean up non-parked jobs."""
+        result = await PhaseOps._dispatch(
+            self, project_id, spec, issue_number, poll_interval_seconds
+        )
+        if result.status != JobStatus.AWAITING_HUMAN.value:
+            await self._cleanup(result.job_name)
+        return result
+
+    async def _cleanup(self, job_name: str) -> None:
+        """Delegate to PhaseOps._cleanup so DevLoopWorkflow code paths
+        exercise the injectable callback protocol."""
+        return await PhaseOps._cleanup(self, job_name)
+
+    async def _request_reviewer(
+        self,
+        project_id: str,
+        pr_number: int | None,
+    ) -> ReviewerRequestResult:
+        """Delegate to PhaseOps._request_reviewer so DevLoopWorkflow code
+        paths exercise the injectable callback protocol."""
+        return await PhaseOps._request_reviewer(self, project_id, pr_number)
+
+    async def _emit_kpis(
+        self,
+        inp: WorkflowKpiInput,
+    ) -> None:
+        """Delegate to PhaseOps._emit_kpis so DevLoopWorkflow code paths
+        exercise the injectable callback protocol."""
+        return await PhaseOps._emit_kpis(self, inp)
+
+    # ---- KPI counter methods (PhaseOps doesn't provide these) ------------ #
+    def _kpi_bump(self, key: str, n: int = 1) -> None:
+        """Increment a per-issue KPI counter."""
+        counters = getattr(self, "_kpi_counters", None)
+        if counters is None:
+            counters = {}
+            self._kpi_counters = counters
+        counters[key] = counters.get(key, 0) + n
+
+    def _kpi_take(self) -> dict:
+        """Return and reset the accumulated counters (one issue's worth)."""
+        counters = getattr(self, "_kpi_counters", None) or {}
+        self._kpi_counters = {}
+        return counters
+
     # ---- PhasePipeline adapter methods (pass self as PhaseOps) ---------- #
     async def _plan_phase_adapter(self, inp: DevLoopInput, rnd: int) -> dict | None:
         """Adapter that wires plan_phase callbacks through the workflow's PhaseOps.
@@ -322,8 +392,19 @@ class DevLoopWorkflow(_WorkflowCommon, PhaseOps):
 
     # ---- Activity-level adapters (called by phase callbacks) ------------- #
     async def _cleanup_activity(self, job_name: str) -> None:
-        """Real ``cleanup_configmap`` activity — adapter for PhaseOps.cleanup."""
-        return await self._cleanup(job_name)
+        """Real ``cleanup_configmap`` activity — adapter for PhaseOps.cleanup.
+
+        Called from within PhaseOps._cleanup when ``self.cleanup`` callback is
+        set (which it is, in ``__init__``).  Calls ``workflow.execute_activity``
+        directly to avoid infinite recursion through the PhaseOps delegation
+        layer.
+        """
+        return await workflow.execute_activity(
+            "cleanup_configmap",
+            job_name,
+            start_to_close_timeout=timedelta(seconds=60),
+            retry_policy=RetryPolicy(maximum_attempts=3),
+        )
 
     async def _dispatch_activity(
         self,
@@ -332,12 +413,23 @@ class DevLoopWorkflow(_WorkflowCommon, PhaseOps):
         issue_number: int = 0,
         poll_interval_seconds: float = 5.0,
     ) -> AgentJobResult:
-        """Real ``dispatch_agent_job`` activity — adapter for PhaseOps.dispatch."""
-        return await self._dispatch(
-            project_id,
-            spec,
-            issue_number=issue_number,
-            poll_interval_seconds=poll_interval_seconds,
+        """Real ``dispatch_agent_job`` activity — adapter for PhaseOps.dispatch.
+
+        Called from within PhaseOps._dispatch when ``self.dispatch`` callback is
+        set (which it is, in ``__init__``).
+        """
+        return await workflow.execute_activity(
+            "dispatch_agent_job",
+            DispatchInput(
+                task_spec=spec,
+                project_id=project_id,
+                issue_number=issue_number,
+                poll_interval_seconds=poll_interval_seconds,
+            ),
+            result_type=AgentJobResult,
+            task_queue=JOB_DISPATCH_QUEUE,
+            start_to_close_timeout=_ACTIVITY_TIMEOUT,
+            retry_policy=_RETRY,
         )
 
     async def _kpi_bump_activity(self, key: str, val: int) -> None:
@@ -349,8 +441,17 @@ class DevLoopWorkflow(_WorkflowCommon, PhaseOps):
         return self._kpi_take()
 
     async def _emit_kpis_activity(self, inp: WorkflowKpiInput) -> None:
-        """Real ``emit_workflow_kpis`` activity — adapter for PhaseOps.emit_kpis."""
-        return await self._emit_kpis(inp)
+        """Real ``emit_workflow_kpis`` activity — adapter for PhaseOps.emit_kpis.
+
+        Calls ``workflow.execute_activity`` directly to avoid infinite recursion
+        through the PhaseOps delegation layer.
+        """
+        return await workflow.execute_activity(
+            "emit_workflow_kpis",
+            inp,
+            start_to_close_timeout=timedelta(seconds=60),
+            retry_policy=RetryPolicy(maximum_attempts=3),
+        )
 
     async def _poll_ci_activity(
         self, project_id: str, pr_number: int
@@ -367,8 +468,21 @@ class DevLoopWorkflow(_WorkflowCommon, PhaseOps):
     async def _comment_activity(
         self, project_id: str, issue_number: int, body: str
     ) -> None:
-        """Real ``post_github_comment`` activity — adapter for PhaseOps.comment."""
-        return await self._comment(project_id, issue_number, body)
+        """Real ``post_github_comment`` activity — adapter for PhaseOps.comment.
+
+        Called from within PhaseOps._comment when ``self.comment`` callback is
+        set (which it is, in ``__init__``).
+        """
+        return await workflow.execute_activity(
+            "post_github_comment",
+            GithubNotificationInput(
+                issue_number=issue_number,
+                project_id=project_id,
+                body=body,
+            ),
+            start_to_close_timeout=timedelta(seconds=60),
+            retry_policy=RetryPolicy(maximum_attempts=3),
+        )
 
     async def _plan_issue_activity(self, inp: PlanIssueInput) -> dict:
         """Real ``plan_issue`` activity call — adapter for PlanPhase."""
@@ -386,10 +500,27 @@ class DevLoopWorkflow(_WorkflowCommon, PhaseOps):
         spec: TaskSpec,
         poll_interval_seconds: float,
     ) -> AgentJobResult:
-        """Real ``dispatch_agent_job`` for plan — adapter for PlanPhase."""
-        return await self._dispatch(
-            project_id, spec, poll_interval_seconds=poll_interval_seconds
+        """Real ``dispatch_agent_job`` for plan — adapter for PlanPhase.
+
+        Calls the dispatch activity then cleans up the ConfigMap for non-parked
+        jobs (mirrors the old ``_WorkflowCommon._dispatch`` contract).
+        """
+        result = await workflow.execute_activity(
+            "dispatch_agent_job",
+            DispatchInput(
+                task_spec=spec,
+                project_id=project_id,
+                issue_number=0,
+                poll_interval_seconds=poll_interval_seconds,
+            ),
+            result_type=AgentJobResult,
+            task_queue=JOB_DISPATCH_QUEUE,
+            start_to_close_timeout=_ACTIVITY_TIMEOUT,
+            retry_policy=_RETRY,
         )
+        if result.status != JobStatus.AWAITING_HUMAN.value:
+            await self._cleanup(result.job_name)
+        return result
 
     async def _drop_issues_in_review(
         self, inp: DevLoopInput, issues: list[dict]
@@ -432,13 +563,27 @@ class DevLoopWorkflow(_WorkflowCommon, PhaseOps):
         issue_number: int,
         poll_interval_seconds: float,
     ) -> AgentJobResult:
-        """Real dispatch activity — adapter for ExecutePhase."""
-        return await self._dispatch(
-            project_id,
-            spec,
-            issue_number=issue_number,
-            poll_interval_seconds=poll_interval_seconds,
+        """Real dispatch activity — adapter for ExecutePhase.
+
+        Calls the dispatch activity then cleans up the ConfigMap for non-parked
+        jobs (mirrors the old ``_WorkflowCommon._dispatch`` contract).
+        """
+        result = await workflow.execute_activity(
+            "dispatch_agent_job",
+            DispatchInput(
+                task_spec=spec,
+                project_id=project_id,
+                issue_number=issue_number,
+                poll_interval_seconds=poll_interval_seconds,
+            ),
+            result_type=AgentJobResult,
+            task_queue=JOB_DISPATCH_QUEUE,
+            start_to_close_timeout=_ACTIVITY_TIMEOUT,
+            retry_policy=_RETRY,
         )
+        if result.status != JobStatus.AWAITING_HUMAN.value:
+            await self._cleanup(result.job_name)
+        return result
 
     async def _answer_question_activity(
         self, project_id: str, issue_no: int, result: AgentJobResult
@@ -460,7 +605,7 @@ class DevLoopWorkflow(_WorkflowCommon, PhaseOps):
         question = result.question or "unspecified question"
         if questions_asked >= inp.max_questions_per_phase:
             answer = "proceed with your best guess"
-            await self._comment(
+            await self._comment_activity(
                 project_id,
                 issue_no,
                 "⚠️ Question limit reached — agent proceeding with best "
@@ -490,18 +635,8 @@ class DevLoopWorkflow(_WorkflowCommon, PhaseOps):
             start_to_close_timeout=_ACTIVITY_TIMEOUT,
             retry_policy=_RETRY,
         )
-        await self._cleanup(result.job_name)
+        await self._cleanup_activity(result.job_name)
         return result
-
-    async def _comment_activity(
-        self, project_id: str, issue_number: int, body: str
-    ) -> None:
-        """Real ``post_github_comment`` activity — adapter for comment calls."""
-        return await self._comment(project_id, issue_number, body)
-
-    async def _kpi_bump_activity(self, key: str, val: int) -> None:
-        """Real KPI bump — adapter for KPI calls."""
-        return self._kpi_bump(key, val)
 
     async def _dispatch_review_activity(
         self,
@@ -510,13 +645,27 @@ class DevLoopWorkflow(_WorkflowCommon, PhaseOps):
         issue_no: int,
         poll_interval_seconds: float,
     ) -> AgentJobResult:
-        """Real ``dispatch_agent_job`` for review — adapter for ReviewPhase."""
-        return await self._dispatch(
-            project_id,
-            spec,
-            issue_number=issue_no,
-            poll_interval_seconds=poll_interval_seconds,
+        """Real ``dispatch_agent_job`` for review — adapter for ReviewPhase.
+
+        Calls the dispatch activity then cleans up the ConfigMap for non-parked
+        jobs (mirrors the old ``_WorkflowCommon._dispatch`` contract).
+        """
+        result = await workflow.execute_activity(
+            "dispatch_agent_job",
+            DispatchInput(
+                task_spec=spec,
+                project_id=project_id,
+                issue_number=issue_no,
+                poll_interval_seconds=poll_interval_seconds,
+            ),
+            result_type=AgentJobResult,
+            task_queue=JOB_DISPATCH_QUEUE,
+            start_to_close_timeout=_ACTIVITY_TIMEOUT,
+            retry_policy=_RETRY,
         )
+        if result.status != JobStatus.AWAITING_HUMAN.value:
+            await self._cleanup(result.job_name)
+        return result
 
     async def _post_review_findings_activity(
         self, project_id: str, pr_url: str, review: dict, result: AgentJobResult
@@ -562,20 +711,44 @@ class DevLoopWorkflow(_WorkflowCommon, PhaseOps):
 
         Returns the commit count extracted from the ``AgentJobResult`` so that
         CICycle can report it back to the workflow (#188).
+
+        Calls ``workflow.execute_activity`` directly to avoid infinite recursion
+        through the PhaseOps delegation layer.
         """
-        result = await self._dispatch(
-            project_id,
-            spec,
-            issue_number=issue_number,
-            poll_interval_seconds=poll_interval_seconds,
+        result = await workflow.execute_activity(
+            "dispatch_agent_job",
+            DispatchInput(
+                task_spec=spec,
+                project_id=project_id,
+                issue_number=issue_number,
+                poll_interval_seconds=poll_interval_seconds,
+            ),
+            result_type=AgentJobResult,
+            task_queue=JOB_DISPATCH_QUEUE,
+            start_to_close_timeout=_ACTIVITY_TIMEOUT,
+            retry_policy=_RETRY,
         )
         return result.commits or 0
 
     async def _request_reviewer_activity(
-        self, project_id: str, pr_number: Optional[int]
+        self, project_id: str, pr_number: int | None
     ) -> ReviewerRequestResult:
-        """Real ``request_github_reviewer`` activity — adapter for Notifier."""
-        return await self._request_reviewer(project_id, pr_number or 0)
+        """Real ``request_github_reviewer`` activity — adapter for Notifier.
+
+        Calls ``workflow.execute_activity`` directly to avoid infinite recursion
+        through the PhaseOps delegation layer.
+        """
+        return await workflow.execute_activity(
+            "request_github_reviewer",
+            RequestReviewerInput(
+                project_id=project_id,
+                pr_number=pr_number,
+                reviewer="",
+            ),
+            result_type=ReviewerRequestResult,
+            start_to_close_timeout=timedelta(minutes=2),
+            retry_policy=_RETRY,
+        )
 
     async def _answer_via_agent(
         self, inp: DevLoopInput, issue_no: int, question: str, branch: str
@@ -587,7 +760,7 @@ class DevLoopWorkflow(_WorkflowCommon, PhaseOps):
         it can investigate the codebase before answering; its
         ``AgentJobResult.summary`` is returned as the best-informed answer.
         """
-        await self._comment(
+        await self._comment_activity(
             inp.project_id,
             issue_no,
             "⏳ queued — answering agent question",
@@ -599,14 +772,21 @@ class DevLoopWorkflow(_WorkflowCommon, PhaseOps):
             branch=branch,
             extra={"question": question},
         )
-        answer_result = await self._dispatch(
-            inp.project_id,
-            spec,
-            issue_number=issue_no,
-            poll_interval_seconds=inp.poll_interval_seconds,
+        answer_result = await workflow.execute_activity(
+            "dispatch_agent_job",
+            DispatchInput(
+                task_spec=spec,
+                project_id=inp.project_id,
+                issue_number=issue_no,
+                poll_interval_seconds=inp.poll_interval_seconds,
+            ),
+            result_type=AgentJobResult,
+            task_queue=JOB_DISPATCH_QUEUE,
+            start_to_close_timeout=_ACTIVITY_TIMEOUT,
+            retry_policy=_RETRY,
         )
         answer = answer_result.summary or "proceed with your best guess"
-        await self._comment(
+        await self._comment_activity(
             inp.project_id,
             issue_no,
             f"🤔 Agent asked: {question} → Auto-answered by agent: {answer}",

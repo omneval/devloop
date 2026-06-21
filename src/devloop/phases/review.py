@@ -132,19 +132,20 @@ class ReviewPhase:
     ) -> AgentJobResult:
         """Dispatch the review agent job."""
         if cb.dispatch_review is not None:
-            return await cb.dispatch_review(
+            result = await cb.dispatch_review(
                 project_id, spec, issue_number, poll_interval_seconds
             )
-        ops = PhaseOps()
-        result = await ops.dispatch_helper(
-            project_id,
-            spec,
-            issue_number,
-            poll_interval_seconds,
-            dispatch_callback=cb.dispatch_review,
-            activity_name="dispatch_agent_job",
-            task_queue=JOB_DISPATCH_QUEUE,
-        )
+        else:
+            ops = PhaseOps()
+            result = await ops.dispatch_helper(
+                project_id,
+                spec,
+                issue_number,
+                poll_interval_seconds,
+                dispatch_callback=cb.dispatch_review,
+                activity_name="dispatch_agent_job",
+                task_queue=JOB_DISPATCH_QUEUE,
+            )
         if result.status != "awaiting_human":
             await ops._phase_cleanup(result.job_name)
         return result

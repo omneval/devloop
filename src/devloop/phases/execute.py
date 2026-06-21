@@ -234,18 +234,19 @@ class ExecutePhase:
     ) -> AgentJobResult:
         """Dispatch the execute agent job (or use injected callback)."""
         if cb.dispatch_execute is not None:
-            return await cb.dispatch_execute(
+            result = await cb.dispatch_execute(
                 project_id, spec, issue_number, poll_interval_seconds
             )
-        ops = PhaseOps()
-        result = await ops.dispatch_helper(
-            project_id,
-            spec,
-            issue_number,
-            poll_interval_seconds,
-            dispatch_callback=cb.dispatch_execute,
-            task_queue=JOB_DISPATCH_QUEUE,
-        )
+        else:
+            ops = PhaseOps()
+            result = await ops.dispatch_helper(
+                project_id,
+                spec,
+                issue_number,
+                poll_interval_seconds,
+                dispatch_callback=cb.dispatch_execute,
+                task_queue=JOB_DISPATCH_QUEUE,
+            )
         if result.status != JobStatus.AWAITING_HUMAN.value:
             await self._cleanup(result.job_name, cb)
         return result
