@@ -490,6 +490,8 @@ class TestPhasePipelineConsecutiveZeroCommits:
         # Should have completed all rounds (up to the empty plan cap).
         assert len(state.plan_calls) >= 4
 
+
+class TestPhasePipelineFixPass:
     """Pipeline stops after review_fix_max_iterations fix passes."""
 
     async def test_max_fix_passes(self) -> None:
