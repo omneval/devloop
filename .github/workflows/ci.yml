@@ -51,6 +51,12 @@ jobs:
         with:
           version: "0.11.18"
 
+      - name: Cache Temporal test server binary
+        uses: actions/cache@v4
+        with:
+          path: .temporal-cache
+          key: temporal-test-server-{{ runner.os }}
+
       - name: Install dependencies
         run: uv sync --all-groups
 

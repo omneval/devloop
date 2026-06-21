@@ -13,8 +13,9 @@ from dataclasses import dataclass, field
 
 import pytest
 from temporalio import activity
-from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import Worker
+
+from tests.conftest import time_skipping_env
 
 from devloop.shared import JOB_DISPATCH_QUEUE, ORCHESTRATION_QUEUE, PublishSummaryInput
 from devloop.summarization import SummarizationWorkflow, SummarizeInput, SummarizeResult
@@ -63,7 +64,7 @@ def reset_mocks():
 
 
 async def _run(inp: SummarizeInput):
-    async with await WorkflowEnvironment.start_time_skipping() as env:
+    async with time_skipping_env() as (env, _client):
         async with Worker(
             env.client,
             task_queue=ORCHESTRATION_QUEUE,

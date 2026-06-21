@@ -228,3 +228,4 @@ __marimo__/
 charts/devloop/charts/*.tgz
 agents/projects.yaml
 minikube/
+.temporal-cache/

@@ -14,8 +14,9 @@ from dataclasses import asdict as dataclasses_asdict, dataclass, field
 import pytest
 from temporalio import activity
 from temporalio.client import Client
-from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import Worker
+
+from tests.conftest import time_skipping_env
 
 from devloop.github import RequestReviewerInput, ReviewerRequestResult
 from devloop.pr_comment import PRCommentInput, PRCommentWorkflow
@@ -152,7 +153,7 @@ async def _run_pr_comment(client: Client, inp: PRCommentInput):
 
 async def _env_and_run(inp: PRCommentInput):
     acts = _make_activities()
-    async with await WorkflowEnvironment.start_time_skipping() as env:
+    async with time_skipping_env() as (env, _client):
         async with (
             Worker(
                 env.client,

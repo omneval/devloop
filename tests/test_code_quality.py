@@ -16,8 +16,9 @@ from temporalio.client import (
     Schedule,
     ScheduleAlreadyRunningError,
 )
-from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import Worker
+
+from tests.conftest import time_skipping_env
 
 from devloop.code_quality import CodeQualityInput, CodeQualityWorkflow
 from devloop.projects import ProjectConfig
@@ -157,7 +158,7 @@ async def _run_workflow(
 ):
     """Run CodeQualityWorkflow with fake activities in a time-skipping env."""
     acts = _make_activities(calls, scan_plan, improve_summary)
-    async with await WorkflowEnvironment.start_time_skipping() as env:
+    async with time_skipping_env() as (env, _client):
         async with Worker(
             env.client,
             task_queue=ORCHESTRATION_QUEUE,

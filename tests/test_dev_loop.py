@@ -9,8 +9,9 @@ from dataclasses import asdict as dataclasses_asdict, dataclass, field
 import pytest
 from temporalio import activity
 from temporalio.client import Client
-from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import Worker
+
+from tests.conftest import time_skipping_env
 
 from devloop import dev_loop_logic as logic
 from devloop.dev_loop import DevLoopInput, DevLoopWorkflow
@@ -305,7 +306,7 @@ async def _env_and_run(inp: DevLoopInput, replies: list[str] | None = None):
     for backwards compatibility with older call sites — the human-reply loop
     has been replaced by Phase.ANSWER agent jobs (#77)."""
     acts = _make_activities()
-    async with await WorkflowEnvironment.start_time_skipping() as env:
+    async with time_skipping_env() as (env, _client):
         async with (
             Worker(
                 env.client,
@@ -493,7 +494,7 @@ async def test_enqueue_issue_signal_picks_up_second_issue(reset_mocks):
     ]
 
     acts = _make_activities()
-    async with await WorkflowEnvironment.start_time_skipping() as env:
+    async with time_skipping_env() as (env, _client):
         async with (
             Worker(
                 env.client,
