@@ -370,9 +370,7 @@ class TestPhaseOpsRequestReviewer:
         """PhaseOps.request_reviewer invokes the callback directly."""
         mock_result = MagicMock(requested=True, reason=None)
         cb = AsyncMock(return_value=mock_result)
-        result = await PhaseOps.request_reviewer(
-            PhaseOps(), "proj", 42, callback=cb
-        )
+        result = await PhaseOps.request_reviewer(PhaseOps(), "proj", 42, callback=cb)
         cb.assert_awaited_once_with("proj", 42)
         assert result.requested is True
 

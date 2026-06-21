@@ -277,9 +277,7 @@ class CICycle:
     async def _cleanup(self, job_name: str, cb: PhaseOps) -> None:
         """Delete the output ConfigMap for a completed job — fire-and-forget."""
         if cb._phase_cleanup is not None:
-            await cb._phase_cleanup(
-                job_name
-            )
+            await cb._phase_cleanup(job_name)
             return
         if not job_name:
             return

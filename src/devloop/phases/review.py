@@ -146,10 +146,9 @@ class ReviewPhase:
             task_queue=JOB_DISPATCH_QUEUE,
         )
         if result.status != "awaiting_human":
-            await ops._phase_cleanup(
-                result.job_name
-            )
+            await ops._phase_cleanup(result.job_name)
         return result
+
     async def _post_review_findings(
         self,
         project_id: str,

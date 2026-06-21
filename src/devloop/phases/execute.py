@@ -249,6 +249,7 @@ class ExecutePhase:
         if result.status != JobStatus.AWAITING_HUMAN.value:
             await self._cleanup(result.job_name, cb)
         return result
+
     async def _answer_questions(
         self,
         project_id: str,

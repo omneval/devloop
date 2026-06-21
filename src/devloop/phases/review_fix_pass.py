@@ -153,6 +153,7 @@ class ReviewFixPass:
         if cb and cb.kpi_bump is not None:
             await cb.kpi_bump(name, value)
 
+
 def _has_commits(result: Any) -> bool:
     """Check if a dispatch result has non-zero commits.
 
@@ -218,6 +219,8 @@ class ReviewFixPassCallbacks(PhaseOps):
     @property
     def phaseops(self) -> PhaseOps:
         return self
+
+
 # Re-export for convenience.
 PhaseOpsCallbacks = PhaseOps  # noqa: F401
 ReviewFixPassCallbacks = ReviewFixPassCallbacks  # noqa: F401

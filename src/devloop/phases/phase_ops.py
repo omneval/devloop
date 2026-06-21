@@ -36,7 +36,12 @@ from ..github import (
     RequestReviewerInput,
     ReviewerRequestResult,
 )
-from .._constants import JOB_DISPATCH_QUEUE
+from .._constants import (
+    JOB_DISPATCH_QUEUE,
+    _ACTIVITY_TIMEOUT,
+    _GITHUB_COMMENT_TIMEOUT,
+    _RETRY,
+)
 
 
 # ── Core I/O operations (shared by every phase) ────────────────────────── #
@@ -183,14 +188,18 @@ class PhaseOps:
         ``comment``.  If both are provided, ``post_comment`` takes
         precedence (it is the older name used by tests).
         """
-        self._phase_comment_callback: Optional[_PostCommentCallback] = post_comment if post_comment is not None else comment
+        self._phase_comment_callback: Optional[_PostCommentCallback] = (
+            post_comment if post_comment is not None else comment
+        )
         self._phase_cleanup_callback: Optional[_CleanupCallback] = cleanup
         self.dispatch = dispatch
         self.kpi_bump = kpi_bump
         self.kpi_take = kpi_take
         self.emit_kpis = emit_kpis
         self.poll_ci = poll_ci
-        self._phase_request_reviewer: Optional[_RequestReviewerCallback] = request_reviewer
+        self._phase_request_reviewer: Optional[_RequestReviewerCallback] = (
+            request_reviewer
+        )
         self.dispatch_execute = dispatch_execute
         self.answer_question = answer_question
         self.dispatch_review = dispatch_review
@@ -262,9 +271,7 @@ class PhaseOps:
         issue_number: int,
         body: str,
         *,
-        callback: Optional[
-            Callable[[str, int, str], Coroutine[Any, Any, None]]
-        ] = None,
+        callback: Optional[Callable[[str, int, str], Coroutine[Any, Any, None]]] = None,
     ) -> None:
         """Post a GitHub Issue / PR comment.
 
@@ -427,3 +434,149 @@ class PhaseOps:
             start_to_close_timeout=timedelta(seconds=30),
             retry_policy=RetryPolicy(maximum_attempts=1),
         )
+
+    # ------------------------------------------------------------------
+    # _comment — injectable callback with Temporal activity fallback
+    # ------------------------------------------------------------------
+
+    async def _comment(
+        self,
+        project_id: str,
+        issue_number: int,
+        body: str,
+    ) -> None:
+        """Post a GitHub Issue/PR comment via the injectable ``comment``
+        callback, falling back to the ``post_github_comment`` Temporal
+        activity when the callback is unset.
+        """
+        if self.comment is not None:
+            await self.comment(project_id, issue_number, body)
+            return
+        await workflow.execute_activity(
+            "post_github_comment",
+            GithubNotificationInput(
+                issue_number=issue_number,
+                project_id=project_id,
+                body=body,
+            ),
+            start_to_close_timeout=_GITHUB_COMMENT_TIMEOUT,
+            retry_policy=_RETRY,
+        )
+
+    # ------------------------------------------------------------------
+    # _dispatch — injectable callback with Temporal activity fallback
+    # ------------------------------------------------------------------
+
+    async def _dispatch(
+        self,
+        project_id: str,
+        spec: TaskSpec,
+        issue_number: int = 0,
+        poll_interval_seconds: float = 5.0,
+    ) -> AgentJobResult:
+        """Dispatch an Agent Execution Job via the injectable ``dispatch``
+        callback, falling back to the ``dispatch_agent_job`` Temporal
+        activity when the callback is unset.
+        """
+        if self.dispatch is not None:
+            return await self.dispatch(
+                project_id, spec, issue_number, poll_interval_seconds
+            )
+        return await workflow.execute_activity(
+            "dispatch_agent_job",
+            DispatchInput(
+                project_id,
+                issue_number,
+                spec,
+                poll_interval_seconds=poll_interval_seconds,
+            ),
+            result_type=AgentJobResult,
+            start_to_close_timeout=_ACTIVITY_TIMEOUT,
+            retry_policy=_RETRY,
+            task_queue=JOB_DISPATCH_QUEUE,
+        )
+
+    # ------------------------------------------------------------------
+    # _cleanup — injectable callback with Temporal activity fallback
+    # ------------------------------------------------------------------
+
+    async def _cleanup(
+        self,
+        job_name: str,
+    ) -> None:
+        """Delete the output ConfigMap for a completed job via the
+        injectable ``cleanup`` callback, falling back to the
+        ``cleanup_configmap`` Temporal activity when the callback is unset.
+
+        Fire-and-forget: failures are logged, never raised.
+        """
+        if self.cleanup is not None:
+            await self.cleanup(job_name)
+            return
+        if not job_name:
+            return
+        try:
+            await workflow.execute_activity(
+                "cleanup_configmap",
+                job_name,
+                start_to_close_timeout=timedelta(seconds=30),
+                retry_policy=RetryPolicy(maximum_attempts=1),
+            )
+        except Exception:  # noqa: BLE001
+            workflow.logger.warning("cleanup_configmap failed for %s", job_name)
+
+    # ------------------------------------------------------------------
+    # _request_reviewer — injectable callback with Temporal activity fallback
+    # ------------------------------------------------------------------
+
+    async def _request_reviewer(
+        self,
+        project_id: str,
+        pr_number: int | None,
+    ) -> ReviewerRequestResult:
+        """Request a GitHub PR reviewer via the injectable
+        ``request_reviewer`` callback, falling back to the
+        ``request_github_reviewer`` Temporal activity when the callback
+        is unset.
+        """
+        if self.request_reviewer is not None:
+            return await self.request_reviewer(project_id, pr_number)
+        return await workflow.execute_activity(
+            "request_github_reviewer",
+            RequestReviewerInput(
+                project_id=project_id,
+                pr_number=pr_number,
+                reviewer="",
+            ),
+            result_type=ReviewerRequestResult,
+            start_to_close_timeout=_GITHUB_COMMENT_TIMEOUT,
+            retry_policy=_RETRY,
+        )
+
+    # ------------------------------------------------------------------
+    # _emit_kpis — injectable callback with Temporal activity fallback
+    # ------------------------------------------------------------------
+
+    async def _emit_kpis(
+        self,
+        inp: WorkflowKpiInput,
+    ) -> None:
+        """Emit workflow KPIs via the injectable ``emit_kpis`` callback,
+        falling back to the ``emit_workflow_kpis`` Temporal activity when
+        the callback is unset.
+
+        Strictly best-effort: a telemetry hiccup must never fail or
+        retry-storm the workflow.
+        """
+        if self.emit_kpis is not None:
+            await self.emit_kpis(inp)
+            return
+        try:
+            await workflow.execute_activity(
+                "emit_workflow_kpis",
+                inp,
+                start_to_close_timeout=timedelta(minutes=1),
+                retry_policy=RetryPolicy(maximum_attempts=1),
+            )
+        except Exception:  # noqa: BLE001
+            workflow.logger.warning("emit_workflow_kpis failed (ignored)")

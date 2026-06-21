@@ -92,7 +92,7 @@ class Notifier:
         if cb._phase_request_reviewer is not None:
             return await cb._phase_request_reviewer(  # ty: ignore[missing-argument]
                 project_id,  # ty: ignore[invalid-argument-type]
-                pr_number  # ty: ignore[invalid-argument-type]
+                pr_number,  # ty: ignore[invalid-argument-type]
             )
         return None
 
@@ -125,6 +125,7 @@ def _as_int(value: Any) -> int:
         return int(value)
     except (TypeError, ValueError):
         return 0
+
 
 class NotifierCallbacks(PhaseOps):
     """Backward-compatible shim that delegates to a ``PhaseOps`` instance.

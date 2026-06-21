@@ -8,8 +8,17 @@ from temporalio import workflow
 from temporalio.common import RetryPolicy
 
 from ._workflow_common import _WorkflowCommon
-from .execution import AgentJobResult, TaskSpec
-from .github import ReviewerRequestResult
+from .execution import (
+    AgentJobResult,
+    DispatchInput,
+    TaskSpec,
+    WorkflowKpiInput,
+)
+from .github import (
+    GithubNotificationInput,
+    RequestReviewerInput,
+    ReviewerRequestResult,
+)
 from .phases.cycle import CICycle, CICycleCallbacks as _CICycleCallbacks
 from .phases.notifier import Notifier, NotifierCallbacks as _NotifierCallbacks
 from .phases.phase_ops import PhaseOps
@@ -17,6 +26,7 @@ from .phases.pr_comment import (
     PRCommentPhase,
     PRCommentPhaseCallbacks as _PhaseCallbacks,
 )
+from ._constants import JOB_DISPATCH_QUEUE
 
 
 @dataclass
@@ -129,11 +139,69 @@ class PRCommentWorkflow(_WorkflowCommon, PhaseOps):
 
     # ---- PhaseOps adapters ----------------------------------------------- #
 
+    async def _comment(
+        self,
+        project_id: str,
+        issue_number: int,
+        body: str,
+    ) -> None:
+        """Delegate to PhaseOps._comment so PRCommentWorkflow code paths
+        exercise the injectable callback protocol."""
+        return await PhaseOps._comment(self, project_id, issue_number, body)
+
+    async def _dispatch(
+        self,
+        project_id: str,
+        spec: TaskSpec,
+        issue_number: int = 0,
+        poll_interval_seconds: float = 5.0,
+    ) -> AgentJobResult:
+        """Delegate to PhaseOps._dispatch so PRCommentWorkflow code paths
+        exercise the injectable callback protocol."""
+        return await PhaseOps._dispatch(
+            self, project_id, spec, issue_number, poll_interval_seconds
+        )
+
+    async def _cleanup(self, job_name: str) -> None:
+        """Delegate to PhaseOps._cleanup so PRCommentWorkflow code paths
+        exercise the injectable callback protocol."""
+        return await PhaseOps._cleanup(self, job_name)
+
+    async def _request_reviewer(
+        self,
+        project_id: str,
+        pr_number: int | None,
+    ) -> ReviewerRequestResult:
+        """Delegate to PhaseOps._request_reviewer so PRCommentWorkflow code
+        paths exercise the injectable callback protocol."""
+        return await PhaseOps._request_reviewer(self, project_id, pr_number)
+
+    async def _emit_kpis(
+        self,
+        inp: "WorkflowKpiInput",
+    ) -> None:
+        """Delegate to PhaseOps._emit_kpis so PRCommentWorkflow code paths
+        exercise the injectable callback protocol."""
+        return await PhaseOps._emit_kpis(self, inp)
+
     async def _comment_activity(
         self, project_id: str, issue_number: int, body: str
     ) -> None:
-        """Real ``post_github_comment`` activity — adapter for PhaseOps.comment."""
-        return await self._comment(project_id, issue_number, body)
+        """Real ``post_github_comment`` activity — adapter for PhaseOps.comment.
+
+        Called from within PhaseOps._comment when ``self.comment`` callback is
+        set (which it is, in ``__init__``).
+        """
+        return await workflow.execute_activity(
+            "post_github_comment",
+            GithubNotificationInput(
+                issue_number=issue_number,
+                project_id=project_id,
+                body=body,
+            ),
+            start_to_close_timeout=timedelta(seconds=60),
+            retry_policy=RetryPolicy(maximum_attempts=3),
+        )
 
     async def _dispatch_activity(
         self,
@@ -142,19 +210,44 @@ class PRCommentWorkflow(_WorkflowCommon, PhaseOps):
         issue_number: int = 0,
         poll_interval_seconds: float = 5.0,
     ) -> AgentJobResult:
-        """Real ``dispatch_agent_job`` activity — adapter for PhaseOps.dispatch."""
-        return await self._dispatch(
-            project_id,
-            spec,
-            issue_number=issue_number,
-            poll_interval_seconds=poll_interval_seconds,
+        """Real ``dispatch_agent_job`` activity — adapter for PhaseOps.dispatch.
+
+        Called from within PhaseOps._dispatch when ``self.dispatch`` callback is
+        set (which it is, in ``__init__``).
+        """
+        return await workflow.execute_activity(
+            "dispatch_agent_job",
+            DispatchInput(
+                project_id,
+                issue_number,
+                spec,
+                poll_interval_seconds=poll_interval_seconds,
+            ),
+            result_type=AgentJobResult,
+            start_to_close_timeout=timedelta(minutes=5),
+            retry_policy=RetryPolicy(maximum_attempts=3),
+            task_queue=JOB_DISPATCH_QUEUE,
         )
 
     async def _request_reviewer_activity(
         self, project_id: str, pr_number: int | None
     ) -> ReviewerRequestResult:
-        """Real ``request_github_reviewer`` activity — adapter for PhaseOps.request_reviewer."""
-        return await self._request_reviewer(project_id, pr_number)
+        """Real ``request_github_reviewer`` activity — adapter for PhaseOps.request_reviewer.
+
+        Called from within PhaseOps._request_reviewer when ``self.request_reviewer``
+        callback is set (which it is, in ``__init__``).
+        """
+        return await workflow.execute_activity(
+            "request_github_reviewer",
+            RequestReviewerInput(
+                project_id=project_id,
+                pr_number=pr_number,
+                reviewer="",
+            ),
+            result_type=ReviewerRequestResult,
+            start_to_close_timeout=timedelta(seconds=60),
+            retry_policy=RetryPolicy(maximum_attempts=3),
+        )
 
     @workflow.run
     async def run(self, inp: PRCommentInput) -> PRCommentResult:
