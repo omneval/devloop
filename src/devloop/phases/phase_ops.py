@@ -188,17 +188,18 @@ class PhaseOps:
         ``comment``.  If both are provided, ``post_comment`` takes
         precedence (it is the older name used by tests).
         """
-        self._phase_comment_callback: Optional[_PostCommentCallback] = (
-            post_comment if post_comment is not None else comment
-        )
-        self._phase_cleanup_callback: Optional[_CleanupCallback] = cleanup
+        self.comment = post_comment if post_comment is not None else comment
+        self._phase_comment_callback: Optional[_PostCommentCallback] = self.comment
+        self.cleanup = cleanup
+        self._phase_cleanup_callback: Optional[_CleanupCallback] = self.cleanup
         self.dispatch = dispatch
         self.kpi_bump = kpi_bump
         self.kpi_take = kpi_take
         self.emit_kpis = emit_kpis
         self.poll_ci = poll_ci
+        self.request_reviewer = request_reviewer
         self._phase_request_reviewer: Optional[_RequestReviewerCallback] = (
-            request_reviewer
+            self.request_reviewer
         )
         self.dispatch_execute = dispatch_execute
         self.answer_question = answer_question

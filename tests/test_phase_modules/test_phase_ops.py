@@ -172,19 +172,19 @@ class TestPhaseOpsAsInt:
 
 
 class TestPhaseOpsComment:
-    """PhaseOps.comment — posts a GitHub Issue / PR comment."""
+    """PhaseOps._comment — posts a GitHub Issue / PR comment."""
 
     @pytest.mark.asyncio
     async def test_comment_calls_callback_when_provided(self) -> None:
-        """PhaseOps.comment invokes the callback directly."""
+        """PhaseOps._comment invokes the injectable callback field."""
         cb = AsyncMock()
-        # Use the class to call the method (instance attrs shadow method names).
-        await PhaseOps.comment(PhaseOps(), "proj", 42, "hello", callback=cb)
+        ops = PhaseOps(comment=cb)
+        await ops._comment("proj", 42, "hello")
         cb.assert_awaited_once_with("proj", 42, "hello")
 
     @pytest.mark.asyncio
     async def test_comment_uses_temporal_activity_when_no_callback(self) -> None:
-        """PhaseOps.comment falls through to workflow.execute_activity."""
+        """PhaseOps._comment falls through to workflow.execute_activity."""
         ops = PhaseOps()
         activity_args: list[tuple] = []
 
@@ -196,7 +196,7 @@ class TestPhaseOpsComment:
             "devloop.phases.phase_ops.workflow.execute_activity",
             fake_execute_activity,
         ):
-            await PhaseOps.comment(ops, "proj", 42, "hello")
+            await ops._comment("proj", 42, "hello")
 
         assert len(activity_args) == 1
         name, payload, kwargs = activity_args[0]
@@ -208,18 +208,20 @@ class TestPhaseOpsComment:
 
 
 class TestPhaseOpsCleanup:
-    """PhaseOps.cleanup — deletes output ConfigMap."""
+    """PhaseOps._cleanup — deletes output ConfigMap."""
 
     @pytest.mark.asyncio
     async def test_cleanup_calls_callback_when_provided(self) -> None:
-        """PhaseOps.cleanup invokes the callback directly."""
+        """PhaseOps._cleanup invokes the injectable callback field."""
         cb = AsyncMock()
-        await PhaseOps.cleanup(PhaseOps(), "my-job", callback=cb)
+        ops = PhaseOps(cleanup=cb)
+        await ops._cleanup("my-job")
         cb.assert_awaited_once_with("my-job")
 
     @pytest.mark.asyncio
     async def test_cleanup_uses_temporal_when_no_callback(self) -> None:
-        """PhaseOps.cleanup falls through to workflow.execute_activity."""
+        """PhaseOps._cleanup falls through to workflow.execute_activity."""
+        ops = PhaseOps()
         activity_called = []
 
         async def fake_act(name, payload, **kwargs):  # noqa: ANN001, ANN002
@@ -230,7 +232,7 @@ class TestPhaseOpsCleanup:
             "devloop.phases.phase_ops.workflow.execute_activity",
             fake_act,
         ):
-            await PhaseOps.cleanup(PhaseOps(), "my-job", callback=None)
+            await ops._cleanup("my-job")
 
         assert len(activity_called) == 1
         name, payload, kwargs = activity_called[0]
@@ -363,21 +365,23 @@ class TestPhaseOpsPoll:
 
 
 class TestPhaseOpsRequestReviewer:
-    """PhaseOps.request_reviewer — requests a GitHub PR reviewer."""
+    """PhaseOps._request_reviewer — requests a GitHub PR reviewer."""
 
     @pytest.mark.asyncio
     async def test_request_reviewer_calls_callback_when_provided(self) -> None:
-        """PhaseOps.request_reviewer invokes the callback directly."""
+        """PhaseOps._request_reviewer invokes the injectable callback field."""
         mock_result = MagicMock(requested=True, reason=None)
         cb = AsyncMock(return_value=mock_result)
-        result = await PhaseOps.request_reviewer(PhaseOps(), "proj", 42, callback=cb)
+        ops = PhaseOps(request_reviewer=cb)
+        result = await ops._request_reviewer("proj", 42)
         cb.assert_awaited_once_with("proj", 42)
         assert result.requested is True
 
     @pytest.mark.asyncio
     async def test_request_reviewer_uses_temporal_when_no_callback(self) -> None:
-        """PhaseOps.request_reviewer falls through to workflow.execute_activity."""
+        """PhaseOps._request_reviewer falls through to workflow.execute_activity."""
         activity_called = []
+        ops = PhaseOps()
 
         async def fake_act(name, payload, **kwargs):  # noqa: ANN001, ANN002
             activity_called.append((name, payload, kwargs))
@@ -387,9 +391,7 @@ class TestPhaseOpsRequestReviewer:
             "devloop.phases.phase_ops.workflow.execute_activity",
             fake_act,
         ):
-            result = await PhaseOps.request_reviewer(
-                PhaseOps(), "proj", 42, callback=None
-            )
+            result = await ops._request_reviewer("proj", 42)
 
         assert len(activity_called) == 1
         name, payload, kwargs = activity_called[0]
