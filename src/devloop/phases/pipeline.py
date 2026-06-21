@@ -152,6 +152,12 @@ class PhasePipeline:
         """
         queued: list[int] = []
         verdicts: dict[int, str] = {}
+        # Guard against the same issue repeatedly producing no commits —
+        # without this the pipeline could re-plan the same issue for up to
+        # max_iterations rounds, each round dispatching agent jobs and posting
+        # GitHub comments (issue #204).
+        _zero_commit_issue: int = 0
+        _zero_commit_count: int = 0
 
         for rnd in range(1, inp.max_iterations + 1):
             plan = await _run_fn(plan_phase, inp, rnd)
@@ -176,11 +182,28 @@ class PhasePipeline:
                 )
 
             issue = issues[0]  # sequential: one issue per round
+            issue_id = _as_int(issue.get("id"))
             exec_result = await _run_fn(execute_phase, inp, issue)
             if not exec_result.get("commits"):
+                # Track consecutive zero-commit rounds for this issue.
+                # After 2 consecutive failures the pipeline breaks — the
+                # issue clearly cannot make progress and will remain
+                # agent-ready for a human to pick up (issue #204).
+                if issue_id == _zero_commit_issue:
+                    _zero_commit_count += 1
+                else:
+                    _zero_commit_issue = issue_id
+                    _zero_commit_count = 1
+                if _zero_commit_count >= 2:
+                    # Two attempts with zero commits — give up on this
+                    # issue and return so the caller can try another.
+                    break
                 # No commits — skip to next round (execute phase handles
                 # failure comments internally).
                 continue
+            # Reset zero-commit tracking on success.
+            _zero_commit_issue = 0
+            _zero_commit_count = 0
 
             review = await _run_fn(review_phase, inp, issue, exec_result)
             verdict = (review or {}).get("verdict")

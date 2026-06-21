@@ -397,7 +397,98 @@ class TestPhasePipelineFixPassNoCommits:
         assert len(state.review_calls) == 1  # no re-review
 
 
-class TestPhasePipelineMaxFixPasses:
+class TestPhasePipelineConsecutiveZeroCommits:
+    """Pipeline stops re-planning an issue after 2 consecutive zero-commit rounds."""
+
+    async def test_breaks_on_two_consecutive_zero_commits(self) -> None:
+        """When the same issue produces zero commits twice, the pipeline
+        breaks out of the round loop instead of looping for max_iterations."""
+        state = _MockPhases()
+        plan_rounds: list[int] = []
+
+        async def plan_phase(inp, rnd):
+            state.plan_calls.append((inp, rnd))
+            # Issue #42 is available in rounds 1-10 (but should be abandoned
+            # after 2 zero-commit rounds)
+            if len(plan_rounds) < 10:
+                plan_rounds.append(rnd)
+                return {"issues": [{"id": 42, "title": "test"}]}
+            # After the pipeline breaks, the plan is still called for the
+            # next round — this verifies the break actually happened.
+            return {"issues": []}
+
+        async def execute_phase(inp, issue):
+            state.execute_calls.append((inp, issue))
+            return {"commits": 0, "branch": "", "pr_url": ""}
+
+        pipeline = PhasePipeline()
+        # max_iterations=10 would normally loop 10 rounds, but our guard
+        # should break after round 2 (2 consecutive zero commits).
+        inp = DevLoopInput(project_id="test", max_iterations=10)
+        result = await pipeline.run(
+            inp,
+            plan_phase=plan_phase,
+            execute_phase=execute_phase,
+            review_phase=lambda i, e, r: {"verdict": "lgtm"},
+            fix_pass=lambda i, e, r, v: False,
+            notifier=lambda i, e, r: None,
+        )
+        assert result.status == "completed"
+        # Only 2 plan calls: round 1 + round 2, then break.
+        assert len(state.plan_calls) == 2
+        # Only 2 execute calls: same two rounds.
+        assert len(state.execute_calls) == 2
+        # No review/notify because we broke before executing the full round.
+        assert len(state.review_calls) == 0
+        assert len(state.notify_calls) == 0
+
+    async def test_resets_on_success_between_fails(self) -> None:
+        """When a different issue succeeds between zero-commit attempts,
+        the counter resets — back-to-back zero commits on a single issue
+        is what triggers the break, not zero commits with interleaved
+        successes on other issues."""
+        state = _MockPhases()
+        plan_rnds: list[int] = []
+
+        async def plan_phase(inp, rnd):
+            state.plan_calls.append((inp, rnd))
+            plan_rnds.append(rnd)
+            if len(plan_rnds) >= 6:
+                return {"issues": []}
+            # Rounds 1,3,5: #42 (fails); rounds 2,4: #99 (succeeds)
+            if rnd % 2 == 0:
+                return {"issues": [{"id": 99, "title": "99"}]}
+            return {"issues": [{"id": 42, "title": "42"}]}
+
+        async def execute_phase(inp, issue):
+            state.execute_calls.append((inp, issue))
+            if issue["id"] == 99:
+                return {"commits": 1, "branch": "main", "pr_url": "https://pr/99"}
+            return {"commits": 0, "branch": "", "pr_url": ""}
+
+        async def review_phase(inp, issue, exec_result):
+            state.review_calls.append((inp, issue, exec_result))
+            return {"verdict": "lgtm"}
+
+        async def notifier(inp, issue, exec_result):
+            state.notify_calls.append((inp, issue, exec_result))
+
+        pipeline = PhasePipeline()
+        inp = DevLoopInput(project_id="test", max_iterations=10)
+        result = await pipeline.run(
+            inp,
+            plan_phase=plan_phase,
+            execute_phase=execute_phase,
+            review_phase=review_phase,
+            fix_pass=lambda i, e, r, v: False,
+            notifier=notifier,
+        )
+        # Issue #99 succeeds on every even round, resetting the counter
+        # before #42 can accumulate 2 consecutive zeros.
+        assert result.status == "completed"
+        assert 99 in result.queued_for_review
+        # Should have completed all rounds (up to the empty plan cap).
+        assert len(state.plan_calls) >= 4
     """Pipeline stops after review_fix_max_iterations fix passes."""
 
     async def test_max_fix_passes(self) -> None:
