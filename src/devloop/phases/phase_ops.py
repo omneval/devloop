@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import re
 from datetime import timedelta
-from typing import Any, Callable, Coroutine, Optional
+from typing import Any, Callable, Coroutine, Optional, Union
 
 from temporalio import workflow
 from temporalio.common import RetryPolicy

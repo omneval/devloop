@@ -60,10 +60,10 @@ class Notifier:
         pr_url = exec_result.get("pr_url", "")
         pr_number = ops.pr_number_from_url(pr_url)
 
-        reviewer_result = await ops._phase_request_reviewer(  # ty: ignore[missing-argument]
+        reviewer_result = await ops._phase_request_reviewer(
             inp.project_id,
-            pr_number,  # ty: ignore[invalid-argument-type]
-            callback=cb._phase_request_reviewer_callback,  # ty: ignore[invalid-argument-type]
+            pr_number,
+            callback=cb._phase_request_reviewer_callback,
         )
         if reviewer_result.requested:
             reviewer_note = "Reviewer has been tagged."
@@ -92,7 +92,7 @@ class Notifier:
         if cb._phase_request_reviewer_callback is not None:
             return await cb._phase_request_reviewer_callback(  # ty: ignore[missing-argument]
                 project_id,  # ty: ignore[invalid-argument-type]
-                pr_number,  # ty: ignore[invalid-argument-type]
+                pr_number,
             )
         return None
 

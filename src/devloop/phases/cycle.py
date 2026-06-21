@@ -20,7 +20,7 @@ from temporalio.common import RetryPolicy
 from ..cichecks import CIChecksResult, PollCIChecksInput
 from ..execution import AgentJobResult, DispatchInput, TaskSpec
 from ..github import GithubNotificationInput
-from ..phases.phase_ops import PhaseOps
+from ..phases.phase_ops import PhaseOps, _DispatchFixCallback
 from ..shared import JOB_DISPATCH_QUEUE, Phase
 
 # Bounded backoff for "CI still pending" re-polls within a single ci_fix
@@ -39,9 +39,6 @@ class CICycleResult:
 
 # Type aliases for injectable callbacks.
 _PollCiCallback = Callable[[str, int], Coroutine[Any, Any, CIChecksResult]]
-_DispatchFixCallback = Callable[
-    [str, int, dict, float], Coroutine[Any, Any, int]
-]  # returns commits count
 _PostCommentCallback = Callable[[str, int, str], Coroutine[None, None, None]]
 _KpiBumpCallback = Callable[[str, int], Coroutine[None, None, None]]
 _CleanupCallback = Callable[[str], Coroutine[None, None, None]]
@@ -164,15 +161,10 @@ class CICycle:
             )
 
             if cb.dispatch_fix is not None:
-                _result = await ops.dispatch_helper(
-                    project_id,
-                    TaskSpec(**spec_dict),
-                    issue_no,
-                    poll_interval_seconds,
-                    dispatch_callback=cb.dispatch_fix,
+                # dispatch_fix callback returns an int (commit count)
+                commits = await cb.dispatch_fix(
+                    project_id, TaskSpec(**spec_dict), issue_no, poll_interval_seconds
                 )
-                # dispatch_fix callback returns an int, not AgentJobResult
-                commits = _result if isinstance(_result, int) else _result.commits
             else:
                 _result = await ops.dispatch_helper(
                     project_id,

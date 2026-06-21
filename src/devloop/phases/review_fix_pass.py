@@ -92,19 +92,21 @@ class ReviewFixPass:
                 "pr_number": pr_number,
             },
         )
-        result = await ops.dispatch_helper(
+        # Use the _dispatch_fix helper which calls the dispatch_fix callback
+        # directly (cb.dispatch_fix returns an int, not AgentJobResult).
+        commits = await self._dispatch_fix(
             inp.project_id,
             spec,
-            issue_number=issue_no,
-            poll_interval_seconds=inp.poll_interval_seconds,
-            dispatch_callback=cb.dispatch_fix,  # ty: ignore[invalid-argument-type]
+            issue_no,
+            inp.poll_interval_seconds,
+            cb,
         )
-        if not _has_commits(result):
+        if not commits:
             return False
         await ops._phase_comment(
             inp.project_id,
             issue_no,
-            f"🔧 Fix pass pushed {_commits_count(result)} commit(s) addressing review findings.",
+            f"🔧 Fix pass pushed {commits} commit(s) addressing review findings.",
             callback=cb.post_comment,
         )
         return True
@@ -147,30 +149,6 @@ class ReviewFixPass:
         """Record a KPI metric."""
         if cb and cb.kpi_bump is not None:
             await cb.kpi_bump(name, value)
-
-
-def _has_commits(result: Any) -> bool:
-    """Check if a dispatch result has non-zero commits.
-
-    ``PhaseOps.dispatch_fix`` returns an ``int`` directly (#188).
-    """
-    if isinstance(result, int):
-        return result > 0
-    return getattr(result, "commits", 0) > 0 or (
-        isinstance(result, dict) and result.get("commits", 0) > 0
-    )
-
-
-def _commits_count(result: Any) -> int:
-    """Get the commit count from a dispatch result.
-
-    ``PhaseOps.dispatch_fix`` returns an ``int`` directly (#188).
-    """
-    if isinstance(result, int):
-        return result
-    if isinstance(result, dict):
-        return result.get("commits", 0)
-    return getattr(result, "commits", 0)
 
 
 def _as_int(value: Any) -> int:

@@ -17,10 +17,10 @@ class TestReviewFixPass:
         """ReviewFixPass returns True when fix produces commits."""
         phase = ReviewFixPass()
         callbacks = ReviewFixPassCallbacks(
-            dispatch_fix=AsyncMock(return_value=MagicMock(commits=2, branch="feat/1")),
+            dispatch_fix=AsyncMock(return_value=2),
             post_comment=AsyncMock(),
         )
-        inp = MagicMock(poll_interval_seconds=5.0)
+        inp = MagicMock(poll_interval_seconds=5.0, project_id="test")
         issue = {"id": "42"}
         exec_result = {"pr_url": "https://github.com/p/r/1", "branch": "feat/1"}
         review = {"summary": "Missing tests"}
@@ -44,7 +44,7 @@ class TestReviewFixPass:
             dispatch_fix=AsyncMock(),
             post_comment=AsyncMock(),
         )
-        inp = MagicMock(poll_interval_seconds=5.0)
+        inp = MagicMock(poll_interval_seconds=5.0, project_id="test")
         issue = {"id": "42"}
         exec_result = {"pr_url": "https://github.com/p/r/1", "branch": "feat/1"}
         review = {"summary": ""}
@@ -65,10 +65,10 @@ class TestReviewFixPass:
         """ReviewFixPass returns False when fix produces zero commits."""
         phase = ReviewFixPass()
         callbacks = ReviewFixPassCallbacks(
-            dispatch_fix=AsyncMock(return_value=MagicMock(commits=0, branch="")),
+            dispatch_fix=AsyncMock(return_value=0),
             post_comment=AsyncMock(),
         )
-        inp = MagicMock(poll_interval_seconds=5.0)
+        inp = MagicMock(poll_interval_seconds=5.0, project_id="test")
         issue = {"id": "42"}
         exec_result = {"pr_url": "https://github.com/p/r/1", "branch": "feat/1"}
         review = {"summary": "Missing tests"}
