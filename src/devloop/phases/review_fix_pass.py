@@ -14,7 +14,6 @@ worthwhile), False when it failed or changed nothing.
 
 from __future__ import annotations
 
-from dataclasses import asdict
 from typing import Any, Optional
 
 from .phase_ops import (
@@ -118,14 +117,10 @@ class ReviewFixPass:
         poll_interval_seconds: float,
         cb: PhaseOps,
     ) -> int:
-        """Dispatch the fix agent job via the PhaseOps protocol.
-
-        Serialises *spec* to a dict because the ``PhaseOps.dispatch_fix``
-        callback signature expects `(str, int, dict, float) -> int` (#188).
-        """
+        """Dispatch the fix agent job via the PhaseOps protocol."""
         if cb.dispatch_fix is not None:
             return await cb.dispatch_fix(
-                project_id, issue_number, asdict(spec), poll_interval_seconds
+                project_id, spec, issue_number, poll_interval_seconds
             )
         # Default path: return 0 commits so the caller sees "no changes".
         return 0

@@ -164,9 +164,15 @@ class CICycle:
             )
 
             if cb.dispatch_fix is not None:
-                commits = await cb.dispatch_fix(
-                    project_id, issue_no, spec_dict, poll_interval_seconds
+                _result = await ops.dispatch_helper(
+                    project_id,
+                    TaskSpec(**spec_dict),
+                    issue_no,
+                    poll_interval_seconds,
+                    dispatch_callback=cb.dispatch_fix,
                 )
+                # dispatch_fix callback returns an int, not AgentJobResult
+                commits = _result if isinstance(_result, int) else _result.commits
             else:
                 _result = await ops.dispatch_helper(
                     project_id,
@@ -255,7 +261,7 @@ class CICycle:
         """
         if cb.dispatch_fix is not None:
             return await cb.dispatch_fix(
-                project_id, issue_no, spec_dict, poll_interval_seconds
+                project_id, TaskSpec(**spec_dict), issue_no, poll_interval_seconds
             )
         # Fallback: call the real Temporal dispatch.
         result = await workflow.execute_activity(

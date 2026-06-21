@@ -393,20 +393,18 @@ class PRCommentWorkflow(_WorkflowCommon, PhaseOps):
         )
 
     async def _cb_dispatch_fix(
-        self, project_id: str, issue_no: int, spec: dict, poll: float
+        self,
+        project_id: str,
+        spec: TaskSpec,
+        issue_number: int,
+        poll_interval_seconds: float,
     ) -> int:
         """Real ``dispatch_agent_job`` activity — adapter for CICycle."""
         result = await self._dispatch(
             project_id,
-            TaskSpec(
-                phase="ci_fix",
-                project_id=project_id,
-                issue_number=issue_no,
-                branch=spec.get("branch", ""),
-                extra=spec.get("extra", {}),
-            ),
-            issue_number=issue_no,
-            poll_interval_seconds=poll,
+            spec,
+            issue_number=issue_number,
+            poll_interval_seconds=poll_interval_seconds,
         )
         return result.commits or 0
 

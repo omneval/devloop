@@ -38,7 +38,7 @@ jobs:
   test:
     name: Test SDK
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6
         with:
@@ -51,31 +51,16 @@ jobs:
         with:
           version: "0.11.18"
 
-      - name: Cache Temporal test server binary
-        id: cache-server
-        uses: actions/cache@v4
-        with:
-          path: .temporal-cache
-          key: temporal-test-server-{{ runner.os }}
-
       - name: Install dependencies
         run: uv sync --all-groups
 
-      # Pre-download the Temporal test server binary so tests don't hang on
-      # first-run download from dl.temporal.io (issue #204).  The conftest
-      # helper already passes download_dest_dir=".temporal-cache" to the SDK
-      # so the binary is re-used across tests.  If the cache was restored this
-      # step completes instantly (binary already present).
-      - name: Warm Temporal test server cache
-        run: |
-          uv run python -c "
-            from tests.conftest import time_skipping_env
-            import asyncio
-            asyncio.run(time_skipping_env().__aenter__())
-            asyncio.run(time_skipping_env().__aexit__(None, None, None))
-          "
-
+      # TEMPORAL_TEST_SERVER_DOWNLOAD=false (set in conftest.py) prevents the
+      # Rust SDK from downloading the test-server binary from dl.temporal.io,
+      # which hangs on first-run CI runners (issue #204).  The SDK ships an
+      # embedded dev server that works with no network access.
       - name: Test
+        env:
+          TEMPORAL_TEST_SERVER_DOWNLOAD: false
         run: uv run pytest tests
 
   agent-base-test:

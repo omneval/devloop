@@ -73,9 +73,10 @@ _PostReviewFindingsCallback = Callable[
 
 # ── CICycle/ReviewFixPass-specific ─────────────────────────────────────── #
 
-# dispatch_fix has the same shape as the old CICycle._Callbacks.dispatch_fix
+# dispatch_fix — same positional shape as _DispatchCallback but returns
+# commit count instead of AgentJobResult (#188).
 _DispatchFixCallback = Callable[
-    [str, int, dict, float], Coroutine[Any, Any, int]
+    [str, TaskSpec, int, float], Coroutine[Any, Any, int]
 ]  # returns commits count
 
 # ── PlanPhase-specific ──────────────────────────────────────────────────── #
@@ -144,8 +145,8 @@ class PhaseOps:
 
     # ── CICycle / ReviewFixPass-specific ─────────────────────────────── #
 
-    #: Dispatch a CI fix agent job.  Signature differs from ``dispatch``
-    #: because CICycle passes a spec *dict* rather than a ``TaskSpec``.
+    #: Dispatch a CI fix agent job.  Same positional shape as ``dispatch``
+    #: but returns an int (commit count) rather than ``AgentJobResult``.
     dispatch_fix: Optional[_DispatchFixCallback] = None
 
     # ── PlanPhase-specific ───────────────────────────────────────────── #

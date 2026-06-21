@@ -554,8 +554,8 @@ class DevLoopWorkflow(_WorkflowCommon, PhaseOps):
     async def _dispatch_fix_activity(
         self,
         project_id: str,
-        issue_no: int,
-        spec_dict: dict,
+        spec: TaskSpec,
+        issue_number: int,
         poll_interval_seconds: float,
     ) -> int:
         """Real ``dispatch_agent_job`` for fix pass — adapter for CICycle.
@@ -565,8 +565,8 @@ class DevLoopWorkflow(_WorkflowCommon, PhaseOps):
         """
         result = await self._dispatch(
             project_id,
-            TaskSpec(**spec_dict),
-            issue_number=issue_no,
+            spec,
+            issue_number=issue_number,
             poll_interval_seconds=poll_interval_seconds,
         )
         return result.commits or 0
