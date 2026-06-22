@@ -14,7 +14,7 @@ The four sub-protocols:
 - :class:`PlanPhaseOps` — comment, plan_issue, dispatch_plan, drop_issues_in_review
 
 The ``DevLoopWorkflow`` and ``PRCommentWorkflow`` implement this protocol by
-delegating to their Temporal activity methods wrapped in ``async def`` callables.
+delegating to their PhaseOps methods wrapped in ``async def`` callables.
 """
 
 from __future__ import annotations
@@ -656,3 +656,23 @@ class PhaseOps:
             )
         except Exception:  # noqa: BLE001
             workflow.logger.warning("emit_workflow_kpis failed (ignored)")
+
+    # ------------------------------------------------------------------
+    # _kpi_bump / _kpi_take — per-issue KPI counter helpers
+    # ------------------------------------------------------------------
+
+    def _kpi_bump(self, key: str, n: int = 1) -> None:
+        """Increment a per-issue KPI counter (lazily initialised — the mixin
+        has no __init__). Counters are plain workflow state, so they replay
+        deterministically."""
+        counters = getattr(self, "_kpi_counters", None)
+        if counters is None:
+            counters = {}
+            self._kpi_counters = counters
+        counters[key] = counters.get(key, 0) + n
+
+    def _kpi_take(self) -> dict:
+        """Return and reset the accumulated counters (one issue's worth)."""
+        counters = getattr(self, "_kpi_counters", None) or {}
+        self._kpi_counters = {}
+        return counters

@@ -13,7 +13,7 @@ no_god_files = true         # Prevent files from becoming too large/complex
 
 [[layers]]
 name = "core"
-paths = ["src/devloop/shared.py", "src/devloop/_constants.py", "src/devloop/_workflow_common.py"]
+paths = ["src/devloop/shared.py", "src/devloop/_constants.py"]
 order = 0
 
 [[layers]]
