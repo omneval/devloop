@@ -109,7 +109,11 @@ class TestPhaseOpsProtocol:
         instance = PhaseOps.default()
         sig = inspect.signature(PhaseOps.__init__)
         params = {p for p in sig.parameters if p != "self"}
+        # The four sub-protocol params are set to their instances (not None).
+        sub_protocol_params = {"execute_ops", "review_ops", "ci_ops", "plan_ops"}
         for attr in params:
+            if attr in sub_protocol_params:
+                continue
             assert getattr(instance, attr) is None, (
                 f"Expected {attr} to be None in default()"
             )
