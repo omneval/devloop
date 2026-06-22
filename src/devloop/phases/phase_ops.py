@@ -1,14 +1,17 @@
 """Unified PhaseOps callback protocol for all phase modules.
 
 Promotes the informal ``_WorkflowCommon`` mixin into a formal ``PhaseOps`` seam
-that every phase module references for its I/O operations.  Rather than each
-phase defining its own callback dataclass, all phases share one protocol that
-covers every operation — ``comment``, ``cleanup``, ``dispatch``, ``kpi_bump``,
-``poll_ci``, ``request_reviewer``, and all phase-specific operations.
+that every phase module references for its I/O operations.  The monolithic
+protocol is split into four focused per-phase sub-protocols that each expose
+only the callbacks their phase actually needs, while PhaseOps itself retains
+all 17 fields for backward compatibility and delegates to the sub-protocols.
 
-Each field is an optional callable.  When a field is ``None`` the phase falls
-back to its default Temporal activity path.  Phases simply reference the fields
-they need and leave the rest as ``None``.
+The four sub-protocols:
+
+- :class:`ExecutePhaseOps` — comment, dispatch_execute, answer_question, kpi_bump
+- :class:`ReviewPhaseOps` — comment, dispatch_review, post_review_findings, cleanup
+- :class:`CICycleOps` — comment, dispatch_fix, poll_ci, kpi_bump, cleanup
+- :class:`PlanPhaseOps` — comment, plan_issue, dispatch_plan, drop_issues_in_review
 
 The ``DevLoopWorkflow`` and ``PRCommentWorkflow`` implement this protocol by
 delegating to their PhaseOps methods wrapped in ``async def`` callables.
@@ -18,7 +21,13 @@ from __future__ import annotations
 
 import re
 from datetime import timedelta
-from typing import Any, Callable, Coroutine, Optional
+from typing import TYPE_CHECKING, Any, Callable, Coroutine, Optional
+
+if TYPE_CHECKING:
+    from .ci_cycle_ops import CICycleOps
+    from .execute_phase_ops import ExecutePhaseOps
+    from .plan_phase_ops import PlanPhaseOps
+    from .review_phase_ops import ReviewPhaseOps
 
 from temporalio import workflow
 from temporalio.common import RetryPolicy
@@ -93,6 +102,13 @@ class PhaseOps:
     Every field is an optional callable.  When a field is ``None`` the
     calling phase falls back to its default Temporal activity path.
     Phases only reference the fields they actually need.
+
+    PhaseOps is the *composite* protocol.  It packages the four focused
+    sub-protocols (``execute_ops``, ``review_ops``, ``ci_ops``, ``plan_ops``)
+    so each phase can reference its own thin interface.  All 17 fields are
+    retained on PhaseOps itself for backward compatibility — callers that
+    reference ``phase_ops.comment`` or ``phase_ops.execute_ops.comment``
+    both get the same value.
     """
 
     # ── Core operations (shared by every phase) ──────────────────────── #
@@ -160,6 +176,20 @@ class PhaseOps:
     #: Drop issues that already have an open agent PR.
     drop_issues_in_review: Optional[_DropInReviewCallback] = None
 
+    # ── Sub-protocol references ──────────────────────────────────────── #
+
+    #: Focused execute-phase sub-protocol.
+    execute_ops: ExecutePhaseOps  # type: ignore[annotation]
+
+    #: Focused review-phase sub-protocol.
+    review_ops: ReviewPhaseOps  # type: ignore[annotation]
+
+    #: Focused CI-fix-cycle sub-protocol.
+    ci_ops: CICycleOps  # type: ignore[annotation]
+
+    #: Focused plan-phase sub-protocol.
+    plan_ops: PlanPhaseOps  # type: ignore[annotation]
+
     def __init__(
         self,
         comment: Optional[_PostCommentCallback] = None,
@@ -182,13 +212,24 @@ class PhaseOps:
         drop_issues_in_review: Optional[_DropInReviewCallback] = None,
         # ── Backward-compatible aliases ──────────────────────────── #
         post_comment: Optional[_PostCommentCallback] = None,
+        # ── Sub-protocol injection (advanced) ────────────────────── #
+        execute_ops: Optional[ExecutePhaseOps] = None,
+        review_ops: Optional[ReviewPhaseOps] = None,
+        ci_ops: Optional[CICycleOps] = None,
+        plan_ops: Optional[PlanPhaseOps] = None,
     ) -> None:
         """Initialize PhaseOps fields.
 
         ``post_comment`` is accepted as a backward-compatible alias for
         ``comment``.  If both are provided, ``post_comment`` takes
         precedence (it is the older name used by tests).
+
+        When *execute_ops*, *review_ops*, *ci_ops*, or *plan_ops* are
+        supplied explicitly those instances are used as the sub-protocol
+        references.  Otherwise PhaseOps creates them from the individual
+        callback fields (the same values that the caller passed).
         """
+        # Resolve comment from post_comment alias (backward compat).
         self.comment = post_comment if post_comment is not None else comment
         self._phase_comment_callback: Optional[_PostCommentCallback] = self.comment
         self.cleanup = cleanup
@@ -210,6 +251,39 @@ class PhaseOps:
         self.plan_issue = plan_issue
         self.dispatch_plan = dispatch_plan
         self.drop_issues_in_review = drop_issues_in_review
+
+        # Build sub-protocols from individual fields (or use injected ones).
+        # Deferred imports avoid circular module dependencies.
+        from .execute_phase_ops import ExecutePhaseOps
+        from .review_phase_ops import ReviewPhaseOps
+        from .ci_cycle_ops import CICycleOps
+        from .plan_phase_ops import PlanPhaseOps
+
+        self.execute_ops = execute_ops or ExecutePhaseOps(
+            comment=self.comment,
+            dispatch_execute=self.dispatch_execute,
+            answer_question=self.answer_question,
+            kpi_bump=self.kpi_bump,
+        )
+        self.review_ops = review_ops or ReviewPhaseOps(
+            comment=self.comment,
+            dispatch_review=self.dispatch_review,
+            post_review_findings=self.post_review_findings,
+            cleanup=self.cleanup,
+        )
+        self.ci_ops = ci_ops or CICycleOps(
+            comment=self.comment,
+            dispatch_fix=self.dispatch_fix,
+            poll_ci=self.poll_ci,
+            kpi_bump=self.kpi_bump,
+            cleanup=self.cleanup,
+        )
+        self.plan_ops = plan_ops or PlanPhaseOps(
+            comment=self.comment,
+            plan_issue=self.plan_issue,
+            dispatch_plan=self.dispatch_plan,
+            drop_issues_in_review=self.drop_issues_in_review,
+        )
 
     @property
     def post_comment(self) -> Optional[_PostCommentCallback]:
