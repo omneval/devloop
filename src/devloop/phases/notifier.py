@@ -90,8 +90,8 @@ class Notifier:
     ) -> Any:
         """Request a GitHub PR reviewer (or use injected callback)."""
         if cb._phase_request_reviewer_callback is not None:
-            return await cb._phase_request_reviewer_callback(  # ty: ignore[missing-argument]
-                project_id,  # ty: ignore[invalid-argument-type]
+            return await cb._phase_request_reviewer_callback(
+                project_id,
                 pr_number,
             )
         return None

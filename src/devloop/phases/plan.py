@@ -72,11 +72,15 @@ class PlanPhase:
             A plan dict with an ``issues`` list, or ``None`` on failure.
         """
         cb = callbacks or PhaseOps.default()
+        # Use plan_ops sub-protocol with fallback to top-level PhaseOps fields.
+        plan_ops = cb.plan_ops
+        _comment_cb = plan_ops.comment or cb.post_comment
 
         if inp.triggering_issue > 0:
             # Lightweight path: single-issue plan via activity (issue #120).
-            if cb.plan_issue is not None:
-                plan = await cb.plan_issue(
+            _plan_issue_cb = plan_ops.plan_issue or cb.plan_issue
+            if _plan_issue_cb is not None:
+                plan = await _plan_issue_cb(
                     PlanIssueInput(
                         project_id=inp.project_id,
                         issue_number=inp.triggering_issue,
@@ -95,8 +99,9 @@ class PlanPhase:
                 )
         else:
             # Backlog reasoning path: dispatch Plan Agent Execution Job.
-            if cb.dispatch_plan is not None:
-                result = await cb.dispatch_plan(
+            _dispatch_plan_cb = plan_ops.dispatch_plan or cb.dispatch_plan
+            if _dispatch_plan_cb is not None:
+                result = await _dispatch_plan_cb(
                     inp.project_id,
                     TaskSpec(
                         phase="plan",
@@ -128,8 +133,9 @@ class PlanPhase:
             plan = result.plan or {"issues": []}
 
         issues = plan.get("issues") or []
-        if cb.drop_issues_in_review is not None:
-            issues = await cb.drop_issues_in_review(inp, issues)
+        _drop_cb = plan_ops.drop_issues_in_review or cb.drop_issues_in_review
+        if _drop_cb is not None:
+            issues = await _drop_cb(inp, issues)
         else:
             # Default: open_agent_pr_issue_numbers activity.
             in_review = await workflow.execute_activity(
