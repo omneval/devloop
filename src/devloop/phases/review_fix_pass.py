@@ -62,6 +62,11 @@ class ReviewFixPass:
         cb = callbacks or PhaseOps.default()
         ops = PhaseOps()
         issue_no = ops.as_int(issue.get("id"))
+
+        # Use ci_ops sub-protocol with fallback to top-level PhaseOps fields.
+        ci_ops = cb.ci_ops
+        _comment_cb = ci_ops.comment or cb.post_comment
+
         pr_url = exec_result.get("pr_url", "")
         pr_number = ops.pr_number_from_url(pr_url)
         findings = review.get("summary", "")
@@ -78,7 +83,7 @@ class ReviewFixPass:
             inp.project_id,
             issue_no,
             "⏳ queued — agent is addressing automated review findings",
-            callback=cb.post_comment,
+            callback=_comment_cb,
         )
         spec = TaskSpec(
             phase="pr_comment",
@@ -94,12 +99,14 @@ class ReviewFixPass:
         )
         # Use the _dispatch_fix helper which calls the dispatch_fix callback
         # directly (cb.dispatch_fix returns an int, not AgentJobResult).
+        _dispatch_cb = ci_ops.dispatch_fix or cb.dispatch_fix
         commits = await self._dispatch_fix(
             inp.project_id,
             spec,
             issue_no,
             inp.poll_interval_seconds,
             cb,
+            _dispatch_cb,
         )
         if not commits:
             return False
@@ -107,7 +114,7 @@ class ReviewFixPass:
             inp.project_id,
             issue_no,
             f"🔧 Fix pass pushed {commits} commit(s) addressing review findings.",
-            callback=cb.post_comment,
+            callback=_comment_cb,
         )
         return True
 
@@ -118,12 +125,12 @@ class ReviewFixPass:
         issue_number: int,
         poll_interval_seconds: float,
         cb: PhaseOps,
+        dispatch_callback: Optional[_DispatchFixCallback] = None,
     ) -> int:
         """Dispatch the fix agent job via the PhaseOps protocol."""
-        if cb.dispatch_fix is not None:
-            return await cb.dispatch_fix(
-                project_id, spec, issue_number, poll_interval_seconds
-            )
+        _cb = dispatch_callback or cb.dispatch_fix
+        if _cb is not None:
+            return await _cb(project_id, spec, issue_number, poll_interval_seconds)
         # Default path: return 0 commits so the caller sees "no changes".
         return 0
 
