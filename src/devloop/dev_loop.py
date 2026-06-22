@@ -503,7 +503,7 @@ class DevLoopWorkflow(PhaseOps):
         """Real ``dispatch_agent_job`` for plan — adapter for PlanPhase.
 
         Calls the dispatch activity then cleans up the ConfigMap for non-parked
-        jobs (mirrors the old ``_WorkflowCommon._dispatch`` contract).
+        jobs (mirrors the PhaseOps._dispatch contract).
         """
         result = await workflow.execute_activity(
             "dispatch_agent_job",
@@ -566,7 +566,7 @@ class DevLoopWorkflow(PhaseOps):
         """Real dispatch activity — adapter for ExecutePhase.
 
         Calls the dispatch activity then cleans up the ConfigMap for non-parked
-        jobs (mirrors the old ``_WorkflowCommon._dispatch`` contract).
+        jobs (mirrors the PhaseOps._dispatch contract).
         """
         result = await workflow.execute_activity(
             "dispatch_agent_job",
@@ -648,7 +648,7 @@ class DevLoopWorkflow(PhaseOps):
         """Real ``dispatch_agent_job`` for review — adapter for ReviewPhase.
 
         Calls the dispatch activity then cleans up the ConfigMap for non-parked
-        jobs (mirrors the old ``_WorkflowCommon._dispatch`` contract).
+        jobs (mirrors the PhaseOps._dispatch contract).
         """
         result = await workflow.execute_activity(
             "dispatch_agent_job",

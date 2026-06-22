@@ -7,7 +7,7 @@ from typing import Any, Optional
 from temporalio import workflow
 from temporalio.common import RetryPolicy
 
-from ._workflow_common import _WorkflowCommon
+
 from .execution import (
     AgentJobResult,
     DispatchInput,
@@ -92,13 +92,13 @@ class PRCommentResult:
 
 
 @workflow.defn
-class PRCommentWorkflow(_WorkflowCommon, PhaseOps):
+class PRCommentWorkflow(PhaseOps):
     """Respond to reviewer feedback on open agent PRs.
 
     Thin adapter — composes PRCommentPhase, CICycle, and Notifier as
     deep phases with injectable callbacks.  All orchestration lives in
-    ``run``; the body wires phase instances, binds its own ``_WorkflowCommon``
-    methods as callbacks, and delegates each phase's ``run()``.
+    ``run``; the body wires phase instances, binds PhaseOps callback
+    methods, and delegates each phase's ``run()``.
 
     The 5 phases are wired with injectable callbacks consistent with the
     PhaseOps pattern (issues #187/#188):
@@ -349,7 +349,7 @@ class PRCommentWorkflow(_WorkflowCommon, PhaseOps):
             exhausted=cycle_result.exhausted,
         )
 
-    # ---- Callback methods bound to _WorkflowCommon helpers --------------- #
+    # ---- Callback methods bound to PhaseOps helpers -------------------- #
 
     async def _cb_post_comment(
         self, project_id: str, issue_number: int, body: str

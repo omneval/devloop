@@ -7,7 +7,8 @@ from dataclasses import dataclass
 from temporalio import workflow
 
 with workflow.unsafe.imports_passed_through():
-    from ._workflow_common import _RETRY, _GITHUB_COMMENT_TIMEOUT, _WorkflowCommon
+    from ._constants import _RETRY, _GITHUB_COMMENT_TIMEOUT
+    from .phases.phase_ops import PhaseOps
     from .shared import (
         CreateGithubIssueInput,
         Phase,
@@ -24,7 +25,7 @@ class CodeQualityInput:
 
 
 @workflow.defn
-class CodeQualityWorkflow(_WorkflowCommon):
+class CodeQualityWorkflow(PhaseOps):
     @workflow.run
     async def run(self, inp: CodeQualityInput) -> None:
         project_id = inp.project_id

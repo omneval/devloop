@@ -73,7 +73,7 @@ def _as_int(value: Any) -> int:
 
 
 # Type aliases for injected callables.
-# Each mirrors the corresponding _WorkflowCommon method signature.
+# Each mirrors the corresponding PhaseOps method signature.
 _PlanPhaseFn = Callable[["DevLoopInput", int], Awaitable[dict | None]]
 _ExecutePhaseFn = Callable[["DevLoopInput", dict], Awaitable[dict]]
 _ReviewPhaseFn = Callable[["DevLoopInput", dict, dict], Awaitable[dict | None]]
