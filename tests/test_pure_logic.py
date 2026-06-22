@@ -51,6 +51,24 @@ def test_pr_number_from_url(url, expected):
     assert dl.pr_number_from_url(url) == expected
 
 
+# ---- review findings fallback rendering (#213) --------------------------- #
+def test_render_review_findings_comment_summary_only():
+    body = dl.render_review_findings_comment("looks good overall", [])
+    assert "looks good overall" in body
+    assert "Agent review" in body
+
+
+def test_render_review_findings_comment_includes_inline():
+    from devloop.github import InlineComment
+
+    body = dl.render_review_findings_comment(
+        "needs a fix", [InlineComment("a.py", 12, "missing null check")]
+    )
+    assert "needs a fix" in body
+    assert "a.py:12" in body
+    assert "missing null check" in body
+
+
 # ---- summary dedup (#24) ------------------------------------------------- #
 def test_should_summarize():
     assert should_summarize("abc", "def", []) is True  # new head

@@ -28,7 +28,7 @@ from typing import Any, Optional
 
 from temporalio import workflow
 
-from devloop.dev_loop_logic import pr_number_from_url
+from devloop.dev_loop_logic import pr_number_from_url, render_review_findings_comment
 from ._constants import _ACTIVITY_TIMEOUT, _RETRY
 from ._workflow_common import _WorkflowCommon
 from .phases.execute import ExecutePhase
@@ -523,9 +523,13 @@ class DevLoopWorkflow(_WorkflowCommon, PhaseOps):
     ) -> None:
         """Post the reviewer's findings to the PR (adapter for ReviewPhase).
 
-        Raises ``RuntimeError`` when findings exist but the PR URL cannot be
-        resolved (unparseable or missing), so the failure surfaces rather than
-        silently dropping review comments.
+        ``create_pr`` opens PRs best-effort (entrypoint.py) — a missing
+        token scope or a pre-existing PR for the branch is logged, not
+        raised, so the branch still lands with ``pr_url == ""``. When that
+        happens here, fall back to a plain issue comment so findings still
+        surface instead of crashing the whole workflow (#54 wanted findings
+        to surface rather than be silently dropped, not a hard failure on
+        this already-tolerated no-PR case).
         """
         summary = review.get("summary", "")
         inline = [
@@ -540,10 +544,12 @@ class DevLoopWorkflow(_WorkflowCommon, PhaseOps):
             return
         pr_number = pr_number_from_url(pr_url)
         if not pr_number:
-            raise RuntimeError(
-                f"cannot post review findings: pr_url '{pr_url}' "
-                f"for project {project_id} is unparseable or missing"
+            await self._comment(
+                project_id,
+                result.issue_number,
+                render_review_findings_comment(summary, inline),
             )
+            return
         await workflow.execute_activity(
             "post_pr_comments",
             PostCommentsInput(project_id, pr_number, summary, inline),

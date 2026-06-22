@@ -13,6 +13,7 @@ from temporalio import workflow
 from temporalio.common import RetryPolicy
 
 from .._constants import _RETRY, JOB_DISPATCH_QUEUE
+from ..dev_loop_logic import render_review_findings_comment
 from ..github import GithubNotificationInput
 from ..phases.phase_ops import PhaseOps
 from ..shared import (
@@ -107,18 +108,13 @@ class ReviewPhase:
             )
 
         # Post the reviewer's findings to the PR.
-        try:
-            await self._post_review_findings(
-                inp.project_id,
-                exec_result.get("pr_url", ""),
-                review or {},
-                result,
-                cb,
-            )
-        except RuntimeError:
-            # _post_review_findings raises when pr_url is unparseable —
-            # re-raise so the caller can decide how to handle.
-            raise
+        await self._post_review_findings(
+            inp.project_id,
+            exec_result.get("pr_url", ""),
+            review or {},
+            result,
+            cb,
+        )
 
         return review or None
 
@@ -157,7 +153,14 @@ class ReviewPhase:
         result: AgentJobResult,
         cb: PhaseOps,
     ) -> None:
-        """Post the reviewer's findings to the PR."""
+        """Post the reviewer's findings to the PR.
+
+        ``create_pr`` opens PRs best-effort — a missing token scope or a
+        pre-existing PR for the branch is logged, not raised, so the branch
+        can land with ``pr_url == ""``. When that happens, fall back to a
+        plain issue comment so findings still surface instead of dropping
+        them or crashing the run.
+        """
         if cb.post_review_findings is not None:
             await cb.post_review_findings(project_id, pr_url, review, result)
             return
@@ -177,10 +180,13 @@ class ReviewPhase:
 
         pr_number = ops.pr_number_from_url(pr_url)
         if not pr_number:
-            raise RuntimeError(
-                f"cannot post review findings: pr_url '{pr_url}' "
-                f"for project {project_id} is unparseable or missing"
+            await ops._phase_comment(
+                project_id,
+                result.issue_number,
+                render_review_findings_comment(summary, inline),
+                callback=cb.post_comment,
             )
+            return
         await workflow.execute_activity(
             "post_pr_comments",
             PostCommentsInput(project_id, pr_number, summary, inline),

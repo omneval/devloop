@@ -862,6 +862,33 @@ async def test_review_no_findings_skips_post(reset_mocks):
     assert "post_pr_comments" not in M.dispatched_phases
 
 
+@pytest.mark.asyncio
+async def test_review_findings_fall_back_to_comment_when_pr_url_missing(reset_mocks):
+    """create_pr opens PRs best-effort (entrypoint.py) — a branch can land
+    with commits but no PR (e.g. missing token scope). The workflow must not
+    crash trying to post inline PR comments in that case; it should fall back
+    to a plain issue comment so the findings still surface (regression for
+    the 'pr_url is unparseable or missing' RuntimeError)."""
+    reset_mocks.plan_rounds = [_one_issue(1)]
+    reset_mocks.dispatch_behavior[("execute", 1)] = AgentJobResult(
+        status=JobStatus.COMPLETE.value,
+        job_name="j1",
+        issue_number=1,
+        branch="agent/issue-1",
+        pr_url="",  # PR creation failed best-effort; branch still pushed
+        commits=1,
+        tests_passed=True,
+    )
+    reset_mocks.review_payload = {
+        "summary": "looks fine, one nit",
+        "inline_comments": [{"file": "a.py", "line": 3, "body": "nit"}],
+    }
+    result = await _env_and_run(DevLoopInput("omneval"), [])
+    assert result.status == "completed"
+    assert "post_pr_comments" not in M.dispatched_phases
+    assert any("looks fine, one nit" in n for n in M.notifications)
+
+
 # --------------------------------------------------------------------------- #
 # Reviewer notification after review (#74)
 # --------------------------------------------------------------------------- #

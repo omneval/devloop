@@ -14,6 +14,9 @@ Exposed utilities
   are unblocked for the round.
 * ``merge_gate_message(issue, pr_url)`` — produce the per-issue Merge-gate
   prompt that asks whether to open a review PR or skip.
+* ``render_review_findings_comment(summary, inline_comments)`` — render
+  reviewer findings as a single plain-text comment, for posting to the issue
+  when no PR exists to anchor inline comments to.
 """
 
 from __future__ import annotations
@@ -76,3 +79,27 @@ def merge_gate_message(issue: dict, pr_url: str) -> str:
         "Reply **approve** to open a review PR (tagging the reviewer for the "
         "final review + merge on GitHub), or anything else to skip."
     )
+
+
+def render_review_findings_comment(summary: str, inline_comments: list) -> str:
+    """Render reviewer findings as a single plain-text comment.
+
+    Used when there is no PR to anchor inline (line-level) comments to —
+    e.g. ``create_pr`` failed best-effort and only pushed the branch (see
+    ``create_pr``'s docstring in ``entrypoint.py``). Each inline comment is
+    rendered as a ``file:line`` bullet so the finding still surfaces instead
+    of being silently dropped. ``inline_comments`` holds ``InlineComment``
+    instances (``.file``, ``.line``, ``.body``).
+    """
+    lines = ["### Agent review", ""]
+    if summary:
+        lines.append(summary)
+    if inline_comments:
+        lines.append("")
+        lines.append(
+            "_No PR was opened for this branch, so inline comments are "
+            "listed here instead:_"
+        )
+        for c in inline_comments:
+            lines.append(f"- `{c.file}:{c.line}` — {c.body}")
+    return "\n".join(lines)
