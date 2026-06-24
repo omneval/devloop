@@ -19,6 +19,7 @@ from ..shared import (
     AgentJobResult,
     JobStatus,
     TaskSpec,
+    as_int,
 )
 
 
@@ -94,7 +95,7 @@ class ExecutePhase:
         """
         cb = callbacks or ExecutePhaseCallbacks.default()
         ops = PhaseOps()
-        issue_no = ops.as_int(issue.get("id"))
+        issue_no = as_int(issue.get("id"))
 
         try:
             project_cfg = get_project(inp.project_id)
@@ -242,10 +243,3 @@ class ExecutePhase:
             return await ops.answer_question(project_id, issue_no, result)
         # Default: no question resolution — return result as-is.
         return result
-
-
-def _as_int(value: Any) -> int:
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return 0

@@ -19,6 +19,7 @@ from ..shared import (
     InlineComment,
     PostCommentsInput,
     TaskSpec,
+    as_int,
 )
 
 
@@ -65,7 +66,7 @@ class ReviewPhase:
         """
         cb = callbacks or PhaseOps.default()
         ops = PhaseOps()
-        issue_no = ops.as_int(issue.get("id"))
+        issue_no = as_int(issue.get("id"))
 
         # Use review_ops sub-protocol with fallback to top-level PhaseOps fields.
         review_ops = cb.review_ops
@@ -151,7 +152,7 @@ class ReviewPhase:
         inline = [
             InlineComment(
                 file=c.get("file", ""),
-                line=ops.as_int(c.get("line")),
+                line=as_int(c.get("line")),
                 body=c.get("body", ""),
             )
             for c in (review.get("inline_comments") or [])
@@ -174,13 +175,6 @@ class ReviewPhase:
             start_to_close_timeout=timedelta(minutes=2),
             retry_policy=_RETRY,
         )
-
-
-def _as_int(value: Any) -> int:
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return 0
 
 
 class ReviewPhaseCallbacks(PhaseOps):

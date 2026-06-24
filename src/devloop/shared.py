@@ -23,6 +23,7 @@ Constants defined *in this file* (not re-exported from sub-modules):
 from __future__ import annotations
 
 import os
+from typing import Any
 
 # execution
 from devloop.execution import (
@@ -68,12 +69,23 @@ JOB_DISPATCH_QUEUE = os.getenv("JOB_DISPATCH_QUEUE", "devloop-job-dispatch")
 KEY_RESULT = "result"
 KEY_HUMAN_ANSWER = "human_answer"
 
+
+def as_int(value: Any) -> int:
+    """Safely convert *value* to ``int``, returning ``0`` on failure."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
 __all__ = [
     # constants
     "ORCHESTRATION_QUEUE",
     "JOB_DISPATCH_QUEUE",
     "KEY_RESULT",
     "KEY_HUMAN_ANSWER",
+    # utilities
+    "as_int",
     # execution
     "TaskSpec",
     "AgentJobResult",

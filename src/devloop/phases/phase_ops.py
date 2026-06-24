@@ -313,17 +313,6 @@ class PhaseOps:
         return cls()
 
     # ------------------------------------------------------------------
-    # as_int
-    # ------------------------------------------------------------------
-
-    def as_int(self, value: Any) -> int:
-        """Safely convert *value* to ``int``, returning ``0`` on failure."""
-        try:
-            return int(value)
-        except (TypeError, ValueError):
-            return 0
-
-    # ------------------------------------------------------------------
     # pr_number_from_url (static)
     # ------------------------------------------------------------------
 

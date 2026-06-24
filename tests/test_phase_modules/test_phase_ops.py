@@ -147,34 +147,6 @@ class TestPhaseOpsReExport:
 # ---------------------------------------------------------------------------
 
 
-class TestPhaseOpsAsInt:
-    """PhaseOps.as_int — safe int conversion."""
-
-    def test_as_int_with_valid_int(self) -> None:
-        """PhaseOps.as_int returns the int as-is."""
-        assert PhaseOps().as_int(42) == 42
-
-    def test_as_int_with_string_number(self) -> None:
-        """PhaseOps.as_int parses a numeric string."""
-        assert PhaseOps().as_int("123") == 123
-
-    def test_as_int_with_non_numeric_string_returns_zero(self) -> None:
-        """PhaseOps.as_int returns 0 for non-numeric strings."""
-        assert PhaseOps().as_int("abc") == 0
-
-    def test_as_int_with_none_returns_zero(self) -> None:
-        """PhaseOps.as_int returns 0 for None."""
-        assert PhaseOps().as_int(None) == 0
-
-    def test_as_int_with_float_string_returns_zero(self) -> None:
-        """PhaseOps.as_int returns 0 for float-like strings (int() raises)."""
-        assert PhaseOps().as_int("3.7") == 0
-
-    def test_as_int_with_float_returns_int(self) -> None:
-        """PhaseOps.as_int converts a float to int."""
-        assert PhaseOps().as_int(3.7) == 3
-
-
 class TestPhaseOpsComment:
     """PhaseOps._comment — posts a GitHub Issue / PR comment."""
 
