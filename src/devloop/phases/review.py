@@ -13,6 +13,7 @@ from temporalio import workflow
 
 from .._constants import _RETRY
 from ..dev_loop_logic import render_review_findings_comment
+from ..phases._utils import callback_or_ops
 from ..phases.phase_ops import PhaseOps
 from ..shared import (
     AgentJobResult,
@@ -69,7 +70,7 @@ class ReviewPhase:
 
         # Use review_ops sub-protocol with fallback to top-level PhaseOps fields.
         review_ops = cb.review_ops
-        _comment_cb = review_ops.comment or cb.post_comment
+        _comment_cb = callback_or_ops(review_ops.comment, cb.post_comment)
 
         spec = TaskSpec(
             phase="review",
@@ -83,7 +84,7 @@ class ReviewPhase:
             "⏳ queued — agent is reviewing this issue",
             callback=_comment_cb,
         )
-        _dispatch_cb = review_ops.dispatch_review or cb.dispatch_review
+        _dispatch_cb = callback_or_ops(review_ops.dispatch_review, cb.dispatch_review)
         result = await ops.dispatch_helper(
             inp.project_id,
             spec,
@@ -110,7 +111,9 @@ class ReviewPhase:
             )
 
         # Post the reviewer's findings to the PR.
-        _post_review_cb = review_ops.post_review_findings or cb.post_review_findings
+        _post_review_cb = callback_or_ops(
+            review_ops.post_review_findings, cb.post_review_findings
+        )
         await self._post_review_findings(
             inp.project_id,
             exec_result.get("pr_url", ""),
@@ -141,7 +144,7 @@ class ReviewPhase:
         plain issue comment so findings still surface instead of dropping
         them or crashing the run.
         """
-        _cb = post_review_findings_callback or cb.post_review_findings
+        _cb = callback_or_ops(post_review_findings_callback, cb.post_review_findings)
         if _cb is not None:
             await _cb(project_id, pr_url, review, result)
             return

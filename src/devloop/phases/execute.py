@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from typing import Any, Callable, Coroutine, Optional
 
+from ..phases._utils import callback_or_ops
 from ..phases.cycle import CICycle
 from ..phases.execute_phase_ops import ExecutePhaseOps
 from ..phases.phase_ops import PhaseOps
@@ -97,14 +98,16 @@ class ExecutePhase:
                 inp.project_id,
                 issue_no,
                 "⏳ queued — agent is working on this issue",
-                callback=exec_ops.comment or cb.comment or cb.post_comment,
+                callback=callback_or_ops(exec_ops.comment, cb.comment, cb.post_comment),
             )
             result = await ops.dispatch_helper(
                 inp.project_id,
                 spec,
                 issue_number=issue_no,
                 poll_interval_seconds=inp.poll_interval_seconds,
-                dispatch_callback=exec_ops.dispatch_execute or cb.dispatch_execute,
+                dispatch_callback=callback_or_ops(
+                    exec_ops.dispatch_execute, cb.dispatch_execute
+                ),
             )
             # Resolve mid-run AWAITING_HUMAN questions.
             result = await self._answer_questions(
@@ -122,7 +125,7 @@ class ExecutePhase:
                 inp.project_id,
                 issue_no,
                 "❌ Parked — execute phase failed: execute_max_iterations must be >= 1",
-                callback=exec_ops.comment or cb.comment or cb.post_comment,
+                callback=callback_or_ops(exec_ops.comment, cb.comment, cb.post_comment),
             )
             return {
                 "issue_id": issue_no,
@@ -137,7 +140,7 @@ class ExecutePhase:
                 inp.project_id,
                 issue_no,
                 f"❌ Parked — execute phase failed: {result.error or 'unknown error'}",
-                callback=exec_ops.comment or cb.comment or cb.post_comment,
+                callback=callback_or_ops(exec_ops.comment, cb.comment, cb.post_comment),
             )
             return {
                 "issue_id": issue_no,
@@ -153,7 +156,7 @@ class ExecutePhase:
                 issue_no,
                 f"❌ Execute exhausted {max_iters} attempts with no commits"
                 " — skipping this round",
-                callback=exec_ops.comment or cb.comment or cb.post_comment,
+                callback=callback_or_ops(exec_ops.comment, cb.comment, cb.post_comment),
             )
             return {
                 "issue_id": issue_no,
@@ -167,7 +170,7 @@ class ExecutePhase:
             inp.project_id,
             issue_no,
             f"✅ Implemented — PR: {result.pr_url or result.branch}",
-            callback=exec_ops.comment or cb.comment or cb.post_comment,
+            callback=callback_or_ops(exec_ops.comment, cb.comment, cb.post_comment),
         )
         exec_result = {
             "issue_id": issue_no,

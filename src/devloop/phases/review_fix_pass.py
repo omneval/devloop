@@ -20,6 +20,7 @@ from .phase_ops import (
     PhaseOps,
     _DispatchFixCallback,
 )
+from ..phases._utils import callback_or_ops
 from ..shared import TaskSpec
 
 
@@ -63,7 +64,7 @@ class ReviewFixPass:
 
         # Use ci_ops sub-protocol with fallback to top-level PhaseOps fields.
         ci_ops = cb.ci_ops
-        _comment_cb = ci_ops.comment or cb.post_comment
+        _comment_cb = callback_or_ops(ci_ops.comment, cb.post_comment)
 
         pr_url = exec_result.get("pr_url", "")
         pr_number = ops.pr_number_from_url(pr_url)
@@ -97,7 +98,7 @@ class ReviewFixPass:
         )
         # Use the _dispatch_fix helper which calls the dispatch_fix callback
         # directly (cb.dispatch_fix returns an int, not AgentJobResult).
-        _dispatch_cb = ci_ops.dispatch_fix or cb.dispatch_fix
+        _dispatch_cb = callback_or_ops(ci_ops.dispatch_fix, cb.dispatch_fix)
         commits = await self._dispatch_fix(
             inp.project_id,
             spec,

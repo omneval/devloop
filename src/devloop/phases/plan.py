@@ -23,6 +23,7 @@ from temporalio import workflow
 from temporalio.common import RetryPolicy
 
 from .._constants import _ACTIVITY_TIMEOUT, _as_int, _RETRY
+from ..phases._utils import callback_or_ops
 from ..shared import (
     AgentJobResult,
     DispatchInput,
@@ -66,11 +67,11 @@ class PlanPhase:
         cb = callbacks or PhaseOps.default()
         # Use plan_ops sub-protocol with fallback to top-level PhaseOps fields.
         plan_ops = cb.plan_ops
-        _comment_cb = plan_ops.comment or cb.post_comment
+        _comment_cb = callback_or_ops(plan_ops.comment, cb.post_comment)
 
         if inp.triggering_issue > 0:
             # Lightweight path: single-issue plan via activity (issue #120).
-            _plan_issue_cb = plan_ops.plan_issue or cb.plan_issue
+            _plan_issue_cb = callback_or_ops(plan_ops.plan_issue, cb.plan_issue)
             if _plan_issue_cb is not None:
                 plan = await _plan_issue_cb(
                     PlanIssueInput(
@@ -91,7 +92,9 @@ class PlanPhase:
                 )
         else:
             # Backlog reasoning path: dispatch Plan Agent Execution Job.
-            _dispatch_plan_cb = plan_ops.dispatch_plan or cb.dispatch_plan
+            _dispatch_plan_cb = callback_or_ops(
+                plan_ops.dispatch_plan, cb.dispatch_plan
+            )
             if _dispatch_plan_cb is not None:
                 result = await _dispatch_plan_cb(
                     inp.project_id,
@@ -125,7 +128,9 @@ class PlanPhase:
             plan = result.plan or {"issues": []}
 
         issues = plan.get("issues") or []
-        _drop_cb = plan_ops.drop_issues_in_review or cb.drop_issues_in_review
+        _drop_cb = callback_or_ops(
+            plan_ops.drop_issues_in_review, cb.drop_issues_in_review
+        )
         if _drop_cb is not None:
             issues = await _drop_cb(inp, issues)
         else:
