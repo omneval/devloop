@@ -10,8 +10,9 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from devloop.phases.execute import ExecutePhase, ExecutePhaseCallbacks
-from devloop.phases.review import ReviewPhase, ReviewPhaseCallbacks
+from devloop.phases.execute import ExecutePhase
+from devloop.phases.phase_ops import PhaseOps
+from devloop.phases.review import ReviewPhase
 from devloop.shared import AgentJobResult, JobStatus
 
 
@@ -38,7 +39,7 @@ class TestExecutePhaseNoIODuplication:
     async def test_run_uses_phaseops_for_comment(self) -> None:
         """ExecutePhase.run delegates commenting to PhaseOps._phase_comment."""
         phase = ExecutePhase()
-        callbacks = ExecutePhaseCallbacks(
+        callbacks = PhaseOps(
             dispatch_execute=AsyncMock(
                 return_value=MagicMock(
                     status=JobStatus.COMPLETE.value,
@@ -75,7 +76,7 @@ class TestExecutePhaseNoIODuplication:
     async def test_run_uses_phaseops_for_cleanup(self) -> None:
         """ExecutePhase.run delegates cleanup to PhaseOps._phase_cleanup."""
         phase = ExecutePhase()
-        callbacks = ExecutePhaseCallbacks(
+        callbacks = PhaseOps(
             dispatch_execute=AsyncMock(
                 return_value=MagicMock(
                     status=JobStatus.COMPLETE.value,
@@ -119,7 +120,7 @@ class TestReviewPhaseNoIODuplication:
     async def test_run_uses_phaseops_for_comment(self) -> None:
         """ReviewPhase.run delegates commenting to PhaseOps._phase_comment."""
         phase = ReviewPhase()
-        callbacks = ReviewPhaseCallbacks(
+        callbacks = PhaseOps(
             dispatch_review=AsyncMock(
                 return_value=AgentJobResult(
                     status="complete",
@@ -161,20 +162,20 @@ class TestPhaseSpecificMethodsRemain:
 
 
 class TestCallbackFieldsRemain:
-    """Callback fields on callbacks classes must remain accessible."""
+    """Callback fields on PhaseOps must remain accessible."""
 
-    def test_execute_phase_callbacks_has_dispatch_execute(self) -> None:
-        """ExecutePhaseCallbacks still exposes dispatch_execute."""
-        assert "dispatch_execute" in dir(ExecutePhaseCallbacks)
+    def test_phaseops_has_dispatch_execute(self) -> None:
+        """PhaseOps exposes dispatch_execute."""
+        assert "dispatch_execute" in dir(PhaseOps)
 
-    def test_execute_phase_callbacks_has_answer_question(self) -> None:
-        """ExecutePhaseCallbacks still exposes answer_question."""
-        assert "answer_question" in dir(ExecutePhaseCallbacks)
+    def test_phaseops_has_answer_question(self) -> None:
+        """PhaseOps exposes answer_question."""
+        assert "answer_question" in dir(PhaseOps)
 
-    def test_review_phase_callbacks_has_dispatch_review(self) -> None:
-        """ReviewPhaseCallbacks still exposes dispatch_review."""
-        assert "dispatch_review" in dir(ReviewPhaseCallbacks)
+    def test_phaseops_has_dispatch_review(self) -> None:
+        """PhaseOps exposes dispatch_review."""
+        assert "dispatch_review" in dir(PhaseOps)
 
-    def test_review_phase_callbacks_has_post_review_findings(self) -> None:
-        """ReviewPhaseCallbacks still exposes post_review_findings."""
-        assert "post_review_findings" in dir(ReviewPhaseCallbacks)
+    def test_phaseops_has_post_review_findings(self) -> None:
+        """PhaseOps exposes post_review_findings."""
+        assert "post_review_findings" in dir(PhaseOps)

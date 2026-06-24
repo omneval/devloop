@@ -9,7 +9,7 @@ and delegates to ``CICycle`` for the CI fix loop.
 
 from __future__ import annotations
 
-from typing import Any, Callable, Coroutine, Optional
+from typing import Any, Optional
 
 from ..phases.cycle import CICycle
 from ..phases.execute_phase_ops import ExecutePhaseOps
@@ -20,46 +20,6 @@ from ..shared import (
     JobStatus,
     TaskSpec,
 )
-
-
-# Type aliases for injectable callbacks.
-_DispatchExecuteCallback = Callable[
-    [str, TaskSpec, int, float], Coroutine[Any, Any, AgentJobResult]
-]
-_AnswerQuestionCallback = Callable[
-    [str, int, AgentJobResult], Coroutine[Any, Any, AgentJobResult]
-]
-_PostCommentCallback = Callable[[str, int, str], Coroutine[Any, Any, None]]
-_KpiBumpCallback = Callable[[str, int], Coroutine[Any, Any, None]]
-
-
-class ExecutePhaseCallbacks(PhaseOps):
-    """Backward-compatible shim that extends the unified ``PhaseOps`` protocol.
-
-    This class exists only for callers that still construct
-    ``ExecutePhaseCallbacks(dispatch_execute=..., ...)`` directly.  It
-    inherits from ``PhaseOps`` so all downstream code uses the unified
-    protocol seamlessly.
-    """
-
-    def __init__(
-        self,
-        dispatch_execute: Optional[_DispatchExecuteCallback] = None,
-        answer_question: Optional[_AnswerQuestionCallback] = None,
-        post_comment: Optional[_PostCommentCallback] = None,
-        kpi_bump: Optional[_KpiBumpCallback] = None,
-    ) -> None:
-        super().__init__(
-            dispatch_execute=dispatch_execute,
-            answer_question=answer_question,
-            post_comment=post_comment,
-            kpi_bump=kpi_bump,
-        )
-
-    @classmethod
-    def default(cls) -> "ExecutePhaseCallbacks":
-        """Return a callbacks instance that delegates to Temporal activities."""
-        return cls()
 
 
 class ExecutePhase:
@@ -92,7 +52,7 @@ class ExecutePhase:
             exec_result dict with ``issue_id``, ``branch``, ``pr_url``,
             ``commits``, ``exhausted`` keys.
         """
-        cb = callbacks or ExecutePhaseCallbacks.default()
+        cb = callbacks or PhaseOps.default()
         ops = PhaseOps()
         issue_no = ops.as_int(issue.get("id"))
 

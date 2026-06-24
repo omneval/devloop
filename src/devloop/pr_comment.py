@@ -18,7 +18,7 @@ from .github import (
     RequestReviewerInput,
     ReviewerRequestResult,
 )
-from .phases.cycle import CICycle, CICycleCallbacks as _CICycleCallbacks
+from .phases.cycle import CICycle
 from .phases.notifier import Notifier, NotifierCallbacks as _NotifierCallbacks
 from .phases.phase_ops import PhaseOps
 from .phases.pr_comment import (
@@ -364,7 +364,7 @@ class PRCommentWorkflow(PhaseOps):
         exec_result: dict,
     ) -> Any:
         """Adapter that binds CICycle callbacks."""
-        callbacks = _CICycleCallbacks.default()
+        callbacks = PhaseOps()
         callbacks.poll_ci = self._cb_poll_ci
         callbacks.dispatch_fix = self._cb_dispatch_fix
         callbacks.post_comment = self._cb_post_comment

@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from devloop.phases.plan import PlanPhase, PlanPhaseCallbacks
+from devloop.phases.plan import PlanPhase
 from devloop.phases.phase_ops import PhaseOps
 
 
@@ -132,7 +132,7 @@ class TestPlanPhaseUsesPlanOpsSubProtocol:
 
         _plan_issue._called = False  # type: ignore[attr-defined]
 
-        callbacks = PlanPhaseCallbacks(plan_issue=_plan_issue)
+        callbacks = PhaseOps(plan_issue=_plan_issue)
         # plan_ops.plan_issue is None (default), so it should fall back.
         callbacks.plan_ops.plan_issue = None
         callbacks.plan_ops.drop_issues_in_review = _drop_issues_empty

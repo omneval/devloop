@@ -13,7 +13,7 @@ from temporalio import workflow
 
 from .._constants import _RETRY
 from ..dev_loop_logic import render_review_findings_comment
-from ..phases.phase_ops import PhaseOps, _PostCommentCallback
+from ..phases.phase_ops import PhaseOps
 from ..shared import (
     AgentJobResult,
     InlineComment,
@@ -181,39 +181,3 @@ def _as_int(value: Any) -> int:
         return int(value)
     except (TypeError, ValueError):
         return 0
-
-
-class ReviewPhaseCallbacks(PhaseOps):
-    """Backward-compatible shim that delegates to a ``PhaseOps`` instance.
-
-    This class exists only for callers that still construct
-    ``ReviewPhaseCallbacks(dispatch_review=..., ...)`` directly.  On
-    construction it creates a ``PhaseOps`` that carries the same fields,
-    so all downstream code uses the unified protocol.
-
-    Subclassing ``PhaseOps`` so that consumers expecting a ``PhaseOps``
-    instance still work.
-    """
-
-    def __init__(
-        self,
-        dispatch_review: Optional[_DispatchReviewCallback] = None,
-        post_review_findings: Optional[_PostReviewFindingsCallback] = None,
-        post_comment: Optional[_PostCommentCallback] = None,
-        **kwargs: Any,
-    ) -> None:
-        PhaseOps.__init__(
-            self,
-            dispatch_review=dispatch_review,
-            post_review_findings=post_review_findings,
-            comment=post_comment,
-            **kwargs,
-        )
-
-    @classmethod
-    def default(cls) -> "ReviewPhaseCallbacks":
-        return cls()
-
-    @property
-    def phaseops(self) -> PhaseOps:
-        return self
