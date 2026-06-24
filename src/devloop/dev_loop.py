@@ -31,7 +31,7 @@ from temporalio.common import RetryPolicy
 
 from devloop.dev_loop_logic import pr_number_from_url, render_review_findings_comment
 from .execution import DispatchInput
-from ._constants import _ACTIVITY_TIMEOUT, _RETRY
+from ._constants import _ACTIVITY_TIMEOUT, _as_int, _RETRY
 from .github import (
     GithubNotificationInput,
     RequestReviewerInput,
@@ -141,13 +141,6 @@ class DevLoopResult:
     queued_for_review: list[int] = field(default_factory=list)
     detail: str = ""
     review_verdicts: dict[int, str] = field(default_factory=dict)
-
-
-def _as_int(value) -> int:
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return 0
 
 
 @workflow.defn

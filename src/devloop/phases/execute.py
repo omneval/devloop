@@ -33,35 +33,6 @@ _PostCommentCallback = Callable[[str, int, str], Coroutine[Any, Any, None]]
 _KpiBumpCallback = Callable[[str, int], Coroutine[Any, Any, None]]
 
 
-class ExecutePhaseCallbacks(PhaseOps):
-    """Backward-compatible shim that extends the unified ``PhaseOps`` protocol.
-
-    This class exists only for callers that still construct
-    ``ExecutePhaseCallbacks(dispatch_execute=..., ...)`` directly.  It
-    inherits from ``PhaseOps`` so all downstream code uses the unified
-    protocol seamlessly.
-    """
-
-    def __init__(
-        self,
-        dispatch_execute: Optional[_DispatchExecuteCallback] = None,
-        answer_question: Optional[_AnswerQuestionCallback] = None,
-        post_comment: Optional[_PostCommentCallback] = None,
-        kpi_bump: Optional[_KpiBumpCallback] = None,
-    ) -> None:
-        super().__init__(
-            dispatch_execute=dispatch_execute,
-            answer_question=answer_question,
-            post_comment=post_comment,
-            kpi_bump=kpi_bump,
-        )
-
-    @classmethod
-    def default(cls) -> "ExecutePhaseCallbacks":
-        """Return a callbacks instance that delegates to Temporal activities."""
-        return cls()
-
-
 class ExecutePhase:
     """Dispatch the Execute Agent Execution Job.
 
@@ -92,7 +63,7 @@ class ExecutePhase:
             exec_result dict with ``issue_id``, ``branch``, ``pr_url``,
             ``commits``, ``exhausted`` keys.
         """
-        cb = callbacks or ExecutePhaseCallbacks.default()
+        cb = callbacks or PhaseOps()
         ops = PhaseOps()
         issue_no = ops.as_int(issue.get("id"))
 
@@ -242,10 +213,3 @@ class ExecutePhase:
             return await ops.answer_question(project_id, issue_no, result)
         # Default: no question resolution — return result as-is.
         return result
-
-
-def _as_int(value: Any) -> int:
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return 0

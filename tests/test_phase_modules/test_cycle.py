@@ -9,7 +9,8 @@ from __future__ import annotations
 
 import pytest
 
-from devloop.phases.cycle import CICycle, _Callbacks
+from devloop.phases.cycle import CICycle
+from devloop.phases.phase_ops import PhaseOps
 from devloop.shared import CICheckFailure, CIChecksResult
 
 
@@ -31,8 +32,8 @@ def state() -> _MockState:
     return _MockState()
 
 
-def _make_callbacks(state: _MockState) -> _Callbacks:
-    """Build the _Callbacks object for the CICycle under test."""
+def _make_callbacks(state: _MockState) -> PhaseOps:
+    """Build the PhaseOps object for the CICycle under test."""
 
     async def _poll_ci(project_id: str, pr_number: int) -> CIChecksResult:
         idx = min(state.ci_poll_index, len(state.ci_poll_results) - 1)
@@ -58,7 +59,7 @@ def _make_callbacks(state: _MockState) -> _Callbacks:
         if name:
             state.cleanup_names.append(name)
 
-    return _Callbacks(
+    return PhaseOps(
         poll_ci=_poll_ci,
         dispatch_fix=_dispatch_fix,
         post_comment=_post_comment,
@@ -188,7 +189,7 @@ class TestCICycleWithPhaseOps:
     """CICycle should accept the unified PhaseOps protocol directly."""
 
     async def test_accepts_phaseops_protocol(self, state: _MockState) -> None:
-        """CICycle accepts a PhaseOps instance directly — no _Callbacks shim
+        """CICycle accepts a PhaseOps instance directly — no shim class
         needed. This proves the unified protocol is the real seam."""
         from devloop.phases.phase_ops import PhaseOps
 

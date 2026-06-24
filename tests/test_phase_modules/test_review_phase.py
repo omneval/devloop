@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from devloop.phases.review import ReviewPhase, ReviewPhaseCallbacks
+from devloop.phases.review import ReviewPhase, PhaseOps
 from devloop.shared import AgentJobResult
 
 
@@ -21,7 +21,7 @@ class TestReviewPhase:
             "verdict": "needs_fixes",
             "summary": "Missing test coverage",
         }
-        callbacks = ReviewPhaseCallbacks(
+        callbacks = PhaseOps(
             dispatch_review=AsyncMock(
                 return_value=AgentJobResult(
                     status="complete",
@@ -53,7 +53,7 @@ class TestReviewPhase:
     async def test_review_no_verdict(self) -> None:
         """ReviewPhase returns review dict when review has content but no verdict."""
         phase = ReviewPhase()
-        callbacks = ReviewPhaseCallbacks(
+        callbacks = PhaseOps(
             dispatch_review=AsyncMock(
                 return_value=AgentJobResult(
                     status="complete",
@@ -85,7 +85,7 @@ class TestReviewPhase:
     async def test_review_none_result(self) -> None:
         """ReviewPhase returns None when review attribute is missing."""
         phase = ReviewPhase()
-        callbacks = ReviewPhaseCallbacks(
+        callbacks = PhaseOps(
             dispatch_review=AsyncMock(
                 return_value=AgentJobResult(
                     status="complete",

@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import TYPE_CHECKING, Any, Callable, Coroutine, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 from temporalio import workflow
 
@@ -23,7 +23,6 @@ from ..cichecks import CIChecksResult
 from ..phases.phase_ops import PhaseOps
 
 if TYPE_CHECKING:
-    from ..execution import TaskSpec
     from .ci_cycle_ops import CICycleOps
 
 # Bounded backoff for "CI still pending" re-polls within a single ci_fix
@@ -38,38 +37,6 @@ class CICycleResult:
 
     exhausted: bool
     commits: int
-
-
-class _Callbacks(PhaseOps):
-    """Backward-compatible shim that extends the unified ``PhaseOps`` protocol.
-
-    This class exists only for callers that still construct
-    ``_Callbacks(poll_ci=..., dispatch_fix=..., ...)`` directly.  It
-    inherits from ``PhaseOps`` so all downstream code uses the unified
-    protocol seamlessly.
-    """
-
-    def __init__(
-        self,
-        poll_ci: Optional[
-            Callable[[str, int], Coroutine[Any, Any, CIChecksResult]]
-        ] = None,
-        dispatch_fix: Optional[
-            Callable[[str, "TaskSpec", int, float], Coroutine[Any, Any, int]]
-        ] = None,
-        post_comment: Optional[
-            Callable[[str, int, str], Coroutine[None, None, None]]
-        ] = None,
-        kpi_bump: Optional[Callable[[str, int], Coroutine[None, None, None]]] = None,
-        cleanup: Optional[Callable[[str], Coroutine[None, None, None]]] = None,
-    ) -> None:
-        super().__init__(
-            poll_ci=poll_ci,
-            dispatch_fix=dispatch_fix,
-            post_comment=post_comment,
-            kpi_bump=kpi_bump,
-            cleanup=cleanup,
-        )
 
 
 class CICycle:
@@ -268,7 +235,3 @@ class CICycle:
             body,
             callback=ci_ops.comment or callbacks.post_comment,
         )
-
-
-# Re-export for convenience.
-CICycleCallbacks = _Callbacks

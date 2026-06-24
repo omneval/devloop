@@ -1,5 +1,8 @@
+from __future__ import annotations
+
 import os
 from datetime import timedelta
+from typing import Any
 
 from temporalio.common import RetryPolicy
 
@@ -15,3 +18,11 @@ _ACTIVITY_TIMEOUT = timedelta(
 )
 
 JOB_DISPATCH_QUEUE = os.getenv("JOB_DISPATCH_QUEUE", "devloop-job-dispatch")
+
+
+def _as_int(value: Any) -> int:
+    """Safely convert *value* to ``int``, returning ``0`` on failure."""
+    try:
+        return int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return 0

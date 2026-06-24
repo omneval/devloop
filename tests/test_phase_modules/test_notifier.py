@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from devloop.phases.notifier import Notifier, NotifierCallbacks
+from devloop.phases.notifier import Notifier, PhaseOps
 
 
 class TestNotifier:
@@ -16,7 +16,7 @@ class TestNotifier:
     async def test_success_tagged_reviewer(self) -> None:
         """Notifier posts comment when reviewer is successfully tagged."""
         notifier = Notifier()
-        callbacks = NotifierCallbacks(
+        callbacks = PhaseOps(
             request_reviewer=AsyncMock(
                 return_value=MagicMock(requested=True, reason=None)
             ),
@@ -43,7 +43,7 @@ class TestNotifier:
     async def test_no_reviewer_configured(self) -> None:
         """Notifier posts 'no reviewer requested' when reviewer is skipped."""
         notifier = Notifier()
-        callbacks = NotifierCallbacks(
+        callbacks = PhaseOps(
             request_reviewer=AsyncMock(
                 return_value=MagicMock(requested=False, reason="no config")
             ),
@@ -70,7 +70,7 @@ class TestNotifier:
     async def test_exhausted_uses_warning_comment(self) -> None:
         """Notifier includes CI warning when exhausted=True."""
         notifier = Notifier()
-        callbacks = NotifierCallbacks(
+        callbacks = PhaseOps(
             request_reviewer=AsyncMock(
                 return_value=MagicMock(requested=True, reason=None)
             ),

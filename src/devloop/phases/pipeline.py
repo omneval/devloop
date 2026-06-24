@@ -24,6 +24,7 @@ from __future__ import annotations
 import inspect
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Optional
 
+from .._constants import _as_int
 from ..shared import WorkflowKpiInput
 
 if TYPE_CHECKING:
@@ -63,13 +64,6 @@ async def _run_fn(fn, *args):
     if inspect.isawaitable(result):
         return await result
     return result
-
-
-def _as_int(value: Any) -> int:
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return 0
 
 
 # Type aliases for injected callables.
