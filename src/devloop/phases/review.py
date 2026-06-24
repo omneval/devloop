@@ -15,12 +15,8 @@ from .._constants import _RETRY
 from ..dev_loop_logic import render_review_findings_comment
 from ..phases._utils import callback_or_ops
 from ..phases.phase_ops import PhaseOps
-from ..shared import (
-    AgentJobResult,
-    InlineComment,
-    PostCommentsInput,
-    TaskSpec,
-)
+from ..execution import AgentJobResult, TaskSpec
+from ..github import InlineComment, PostCommentsInput
 
 
 # Type aliases for injectable callbacks.

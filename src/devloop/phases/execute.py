@@ -16,11 +16,8 @@ from ..phases.cycle import CICycle
 from ..phases.execute_phase_ops import ExecutePhaseOps
 from ..phases.phase_ops import PhaseOps
 from ..projects import get_project
-from ..shared import (
-    AgentJobResult,
-    JobStatus,
-    TaskSpec,
-)
+from ..execution import AgentJobResult, TaskSpec
+from ..phases import JobStatus
 
 
 # Type aliases for injectable callbacks.

@@ -29,8 +29,8 @@ from .._constants import (
 from ..dev_loop_logic import pr_number_from_url
 
 if TYPE_CHECKING:
+    from ..execution import AgentJobResult, TaskSpec
     from ..pr_comment import PRCommentInput, PRCommentResult
-    from ..shared import AgentJobResult, TaskSpec
 
 
 # Type aliases for injectable callbacks.
@@ -87,9 +87,8 @@ class PRCommentPhase:
             The result with ``exec_result`` dict (with issue_id, branch,
             pr_url, commits), or an error if the phase failed.
         """
-        from ..shared import JobStatus, Phase, TaskSpec
-
-        # Lazy import PRCommentResult to avoid circular import.
+        # Lazy imports to avoid circular dependencies.
+        from ..phases import JobStatus, Phase
         from ..pr_comment import PRCommentResult
 
         cb = callbacks or _Callbacks.default()
@@ -196,7 +195,7 @@ class PRCommentPhase:
 
     async def _get_branch(self, project_id: str, pr_number: int, cb: _Callbacks) -> str:
         """Resolve a PR's branch via callback or default activity."""
-        from ..shared import GetPRBranchInput
+        from ..github import GetPRBranchInput
 
         if cb.get_branch is not None:
             return await cb.get_branch(project_id, pr_number)
@@ -218,11 +217,8 @@ class PRCommentPhase:
         cb: _Callbacks,
     ) -> "AgentJobResult":
         """Dispatch the PR comment agent job (or use injected callback)."""
-        from ..shared import (
-            JOB_DISPATCH_QUEUE,
-            AgentJobResult,
-            DispatchInput,
-        )
+        from ..execution import AgentJobResult, DispatchInput
+        from ..shared import JOB_DISPATCH_QUEUE
 
         if cb.dispatch is not None:
             return await cb.dispatch(
@@ -247,7 +243,7 @@ class PRCommentPhase:
         self, project_id: str, issue_number: int, body: str, cb: _Callbacks
     ) -> None:
         """Post a GitHub Issue/PR comment."""
-        from ..shared import GithubNotificationInput
+        from ..github import GithubNotificationInput
 
         if cb.post_comment is not None:
             await cb.post_comment(project_id, issue_number, body)

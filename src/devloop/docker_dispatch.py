@@ -19,11 +19,8 @@ from pathlib import Path
 
 from temporalio.exceptions import ApplicationError
 
-from .shared import (
-    AgentJobResult,
-    DispatchInput,
-    JobStatus,
-)
+from .execution import AgentJobResult, DispatchInput
+from .phases import JobStatus
 from .projects import get_project
 
 log = logging.getLogger(__name__)

@@ -15,16 +15,14 @@ from tests.conftest import time_skipping_env
 
 from devloop import dev_loop_logic as logic
 from devloop.dev_loop import DevLoopInput, DevLoopWorkflow
-from devloop.shared import (
-    JOB_DISPATCH_QUEUE,
-    ORCHESTRATION_QUEUE,
-    AgentJobResult,
-    CICheckFailure,
-    CIChecksResult,
+from devloop.execution import AgentJobResult
+from devloop.github import (
     GithubNotificationInput,
-    JobStatus,
     ReviewerRequestResult,
 )
+from devloop.shared import JOB_DISPATCH_QUEUE, ORCHESTRATION_QUEUE
+from devloop.cichecks import CICheckFailure, CIChecksResult
+from devloop.phases.enums import JobStatus
 
 
 # --------------------------------------------------------------------------- #
@@ -789,7 +787,7 @@ def test_from_env_does_not_read_question_timeout_seconds(monkeypatch):
 # --------------------------------------------------------------------------- #
 def test_phase_enum_has_answer():
     """Phase.ANSWER replaces the old chat-based human-reply loop."""
-    from devloop.shared import Phase
+    from devloop.phases.enums import Phase
 
     assert Phase.ANSWER.value == "answer"
 
@@ -821,7 +819,7 @@ def test_from_env_max_questions_per_phase_falls_back_to_default(monkeypatch):
 # --------------------------------------------------------------------------- #
 def test_phase_enum_no_merge():
     """Phase.MERGE must be removed from the Phase enum."""
-    from devloop.shared import Phase
+    from devloop.phases.enums import Phase
 
     assert not hasattr(Phase, "MERGE")
     # Other phases still present
@@ -933,7 +931,7 @@ async def test_notify_reviewer_does_not_claim_tagged_when_no_reviewer_configured
 # --------------------------------------------------------------------------- #
 def test_phase_enum_has_ci_fix_no_remediation():
     """Phase.CI_FIX replaces the removed Phase.REMEDIATION."""
-    from devloop.shared import Phase
+    from devloop.phases.enums import Phase
 
     assert Phase.CI_FIX.value == "ci_fix"
     assert not hasattr(Phase, "REMEDIATION")

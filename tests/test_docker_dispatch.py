@@ -14,7 +14,7 @@ from temporalio.testing import ActivityEnvironment
 
 from devloop import docker_dispatch
 from devloop.projects import ProjectConfig, _REGISTRY
-from devloop.shared import DispatchInput, TaskSpec
+from devloop.execution import DispatchInput, TaskSpec
 
 _PROJECT = ProjectConfig(
     id="testproj",
@@ -270,7 +270,7 @@ async def test_dispatch_agent_job_uses_k8s_when_env_unset():
     """dispatch_agent_job should use the K8s path when JOB_RUNNER is not
     set to 'docker'."""
     from devloop import k8s_jobs
-    from devloop.shared import AgentJobResult
+    from devloop.execution import AgentJobResult
 
     # Ensure JOB_RUNNER is not docker
     os.environ.pop("JOB_RUNNER", None)

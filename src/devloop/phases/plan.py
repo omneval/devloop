@@ -24,13 +24,9 @@ from temporalio.common import RetryPolicy
 
 from .._constants import _ACTIVITY_TIMEOUT, _as_int, _RETRY
 from ..phases._utils import callback_or_ops
-from ..shared import (
-    AgentJobResult,
-    DispatchInput,
-    JOB_DISPATCH_QUEUE,
-    PlanIssueInput,
-    TaskSpec,
-)
+from ..execution import AgentJobResult, DispatchInput, TaskSpec
+from ..github import PlanIssueInput
+from ..shared import JOB_DISPATCH_QUEUE
 
 from .phase_ops import PhaseOps
 

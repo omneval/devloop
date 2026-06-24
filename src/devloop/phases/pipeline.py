@@ -25,7 +25,7 @@ import inspect
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Optional
 
 from .._constants import _as_int
-from ..shared import WorkflowKpiInput
+from ..execution import WorkflowKpiInput
 
 if TYPE_CHECKING:
     from ..dev_loop import DevLoopInput

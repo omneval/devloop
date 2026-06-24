@@ -44,22 +44,18 @@ from .phases.pipeline import PhasePipeline
 from .phases.plan import PlanPhase
 from .phases.review import ReviewPhase
 from .phases.review_fix_pass import ReviewFixPass
-from .shared import (
+from .cichecks import CIChecksResult, PollCIChecksInput
+from .execution import (
     AgentJobResult,
     AnswerInput,
     AwaitInput,
-    CIChecksResult,
-    InlineComment,
-    JobStatus,
-    JOB_DISPATCH_QUEUE,
     OpenAgentPRsInput,
-    Phase,
-    PlanIssueInput,
-    PollCIChecksInput,
-    PostCommentsInput,
     TaskSpec,
     WorkflowKpiInput,
 )
+from .github import InlineComment, PlanIssueInput, PostCommentsInput
+from .phases import JobStatus, Phase
+from .shared import JOB_DISPATCH_QUEUE
 
 
 # --------------------------------------------------------------------------- #

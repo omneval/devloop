@@ -21,7 +21,7 @@ from .phase_ops import (
     _DispatchFixCallback,
 )
 from ..phases._utils import callback_or_ops
-from ..shared import TaskSpec
+from ..execution import TaskSpec
 
 
 class ReviewFixPass:

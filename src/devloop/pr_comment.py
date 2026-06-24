@@ -420,7 +420,7 @@ class PRCommentWorkflow(PhaseOps):
 
     async def _cb_get_branch(self, project_id: str, pr_number: int) -> str:
         """Real ``get_pr_branch`` activity — adapter for PRCommentPhase."""
-        from .shared import GetPRBranchInput
+        from ..github import GetPRBranchInput
 
         return await workflow.execute_activity(
             "get_pr_branch",
@@ -443,7 +443,7 @@ class PRCommentWorkflow(PhaseOps):
 
     async def _cb_poll_ci(self, project_id: str, pr_number: int) -> Any:
         """Real ``poll_ci_checks`` activity — adapter for CICycle."""
-        from .shared import CIChecksResult, PollCIChecksInput
+        from ..cichecks import CIChecksResult, PollCIChecksInput
 
         return await workflow.execute_activity(
             "poll_ci_checks",

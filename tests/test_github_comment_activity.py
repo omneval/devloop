@@ -8,7 +8,7 @@ from __future__ import annotations
 from dataclasses import fields
 from unittest.mock import MagicMock
 
-from devloop.shared import GithubNotificationInput
+from devloop.github import GithubNotificationInput
 
 
 # ---------------------------------------------------------------------------
@@ -58,7 +58,7 @@ def test_post_github_comment_has_activity_defn():
 def test_post_github_comment_posts_to_issues_api(monkeypatch):
     """Happy path: posts the body to the correct GitHub Issues comment endpoint."""
     from devloop.github_ops import post_github_comment
-    from devloop.shared import GithubNotificationInput
+    from devloop.github import GithubNotificationInput
 
     # Set up a fake project registry with a token
     fake_cfg = MagicMock()
@@ -109,7 +109,7 @@ def test_post_github_comment_posts_to_issues_api(monkeypatch):
 def test_post_github_comment_uses_correct_repo(monkeypatch):
     """The POST goes to the repo derived from the project's github_url."""
     from devloop.github_ops import post_github_comment
-    from devloop.shared import GithubNotificationInput
+    from devloop.github import GithubNotificationInput
 
     fake_cfg = MagicMock()
     fake_cfg.github_url = "https://github.com/someorg/somerepo"

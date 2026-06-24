@@ -13,7 +13,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable, Coroutine
 
-from ..shared import AgentJobResult, PlanIssueInput, TaskSpec
+from ..execution import AgentJobResult, TaskSpec
+from ..github import PlanIssueInput
 
 
 # Type alias: post a GitHub Issue/PR comment.

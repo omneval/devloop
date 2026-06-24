@@ -20,7 +20,7 @@ from temporalio import activity
 from . import cluster
 from .github_ops import _client  # reuse the authed httpx client
 from .projects import get_project, parse_github_repo
-from .shared import PublishSummaryInput
+from .github import PublishSummaryInput
 from .summarization import SummarizeInput, SummarizeResult
 
 

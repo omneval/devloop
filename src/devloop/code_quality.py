@@ -8,13 +8,10 @@ from temporalio import workflow
 
 with workflow.unsafe.imports_passed_through():
     from ._constants import _RETRY, _GITHUB_COMMENT_TIMEOUT
+    from .execution import TaskSpec
+    from .github import CreateGithubIssueInput, UpdateGithubIssueInput
     from .phases.phase_ops import PhaseOps
-    from .shared import (
-        CreateGithubIssueInput,
-        Phase,
-        TaskSpec,
-        UpdateGithubIssueInput,
-    )
+    from .phases import Phase
 
 
 @dataclass
