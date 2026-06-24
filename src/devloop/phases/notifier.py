@@ -120,13 +120,6 @@ def _pr_number_from_url(pr_url: str) -> Optional[int]:
         return None
 
 
-def _as_int(value: Any) -> int:
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return 0
-
-
 class NotifierCallbacks(PhaseOps):
     """Backward-compatible shim that delegates to a ``PhaseOps`` instance.
 

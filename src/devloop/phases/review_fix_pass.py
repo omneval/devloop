@@ -158,13 +158,6 @@ class ReviewFixPass:
             await cb.kpi_bump(name, value)
 
 
-def _as_int(value: Any) -> int:
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return 0
-
-
 class ReviewFixPassCallbacks(PhaseOps):
     """Backward-compatible shim that delegates to a ``PhaseOps`` instance.
 
