@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from devloop.phases.execute import ExecutePhase, ExecutePhaseCallbacks
+from devloop.phases.execute import ExecutePhase
 from devloop.phases.phase_ops import PhaseOps
 from devloop.projects import install_registry
 from devloop.shared import JobStatus
@@ -20,7 +20,7 @@ class TestExecutePhase:
         """ExecutePhase produces commits on first attempt → CI fix cycle."""
         phase = ExecutePhase()
 
-        callbacks = ExecutePhaseCallbacks(
+        callbacks = PhaseOps(
             dispatch_execute=AsyncMock(
                 return_value=MagicMock(
                     status=JobStatus.COMPLETE.value,
@@ -53,7 +53,7 @@ class TestExecutePhase:
     async def test_retry_on_zero_commits(self) -> None:
         """ExecutePhase retries when status==COMPLETE but zero commits."""
         phase = ExecutePhase()
-        callbacks = ExecutePhaseCallbacks(
+        callbacks = PhaseOps(
             dispatch_execute=AsyncMock(
                 side_effect=[
                     MagicMock(
@@ -93,7 +93,7 @@ class TestExecutePhase:
     async def test_exhausted_retries_returns_zero_commits(self) -> None:
         """ExecutePhase returns exhausted result after all retries."""
         phase = ExecutePhase()
-        callbacks = ExecutePhaseCallbacks(
+        callbacks = PhaseOps(
             dispatch_execute=AsyncMock(
                 side_effect=[
                     MagicMock(
@@ -133,7 +133,7 @@ class TestExecutePhase:
     async def test_non_complete_status_parks_issue(self) -> None:
         """ExecutePhase parks the issue when status is not COMPLETE."""
         phase = ExecutePhase()
-        callbacks = ExecutePhaseCallbacks(
+        callbacks = PhaseOps(
             dispatch_execute=AsyncMock(
                 return_value=MagicMock(
                     status=JobStatus.FAILED.value,
@@ -181,7 +181,7 @@ class TestExecutePhase:
 
         phase = ExecutePhase()
 
-        callbacks = ExecutePhaseCallbacks(
+        callbacks = PhaseOps(
             dispatch_execute=AsyncMock(
                 return_value=MagicMock(
                     status=JobStatus.COMPLETE.value,
@@ -238,7 +238,7 @@ class TestExecutePhase:
 
         phase = ExecutePhase()
 
-        callbacks = ExecutePhaseCallbacks(
+        callbacks = PhaseOps(
             dispatch_execute=AsyncMock(
                 return_value=MagicMock(
                     status=JobStatus.COMPLETE.value,

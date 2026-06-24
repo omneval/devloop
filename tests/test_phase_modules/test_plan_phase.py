@@ -6,7 +6,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from devloop.phases.plan import PlanPhase, PlanPhaseCallbacks
+from devloop.phases.phase_ops import PhaseOps
+from devloop.phases.plan import PlanPhase
 
 
 class TestPlanPhase:
@@ -16,7 +17,7 @@ class TestPlanPhase:
     async def test_webhook_triggered_uses_plan_issue_activity(self) -> None:
         """When triggering_issue > 0, PlanPhase calls plan_issue activity."""
         plan_phase = PlanPhase()
-        callbacks = PlanPhaseCallbacks(
+        callbacks = PhaseOps(
             plan_issue=AsyncMock(return_value={"issues": [{"id": "5"}]}),
             drop_issues_in_review=AsyncMock(
                 return_value=[{"id": "5"}]  # no issues in review
@@ -34,7 +35,7 @@ class TestPlanPhase:
     async def test_backlog_triggers_agent_job_dispatch(self) -> None:
         """When triggering_issue == 0, PlanPhase dispatches a plan agent job."""
         plan_phase = PlanPhase()
-        callbacks = PlanPhaseCallbacks(
+        callbacks = PhaseOps(
             dispatch_plan=AsyncMock(
                 return_value=MagicMock(plan={"issues": [{"id": "3"}]})
             ),
@@ -51,7 +52,7 @@ class TestPlanPhase:
     async def test_drops_issues_in_review(self) -> None:
         """Issues already having open review PRs are filtered out."""
         plan_phase = PlanPhase()
-        callbacks = PlanPhaseCallbacks(
+        callbacks = PhaseOps(
             plan_issue=AsyncMock(return_value={"issues": [{"id": "1"}, {"id": "2"}]}),
             drop_issues_in_review=AsyncMock(
                 return_value=[{"id": "1"}]  # only id=1 survives
@@ -69,7 +70,7 @@ class TestPlanPhase:
     async def test_empty_issues_returns_issues_key(self) -> None:
         """Plan with no issues still returns dict with empty issues list."""
         plan_phase = PlanPhase()
-        callbacks = PlanPhaseCallbacks(
+        callbacks = PhaseOps(
             plan_issue=AsyncMock(return_value={"issues": []}),
             drop_issues_in_review=AsyncMock(return_value=[]),
         )

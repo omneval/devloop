@@ -17,7 +17,7 @@ already have an open agent PR so the workflow doesn't re-surface them.
 from __future__ import annotations
 
 from datetime import timedelta
-from typing import Any, Callable, Coroutine, Optional
+from typing import Any, Optional
 
 from temporalio import workflow
 from temporalio.common import RetryPolicy
@@ -35,10 +35,6 @@ from ..shared import (
 # Re-use types from the unified protocol
 from .phase_ops import (
     PhaseOps,
-    _DispatchPlanCallback,
-    _DropInReviewCallback,
-    _KpiBumpCallback,
-    _PostCommentCallback,
 )
 
 
@@ -161,50 +157,3 @@ def _as_int(value: Any) -> int:
         return int(value)
     except (TypeError, ValueError):
         return 0
-
-
-class PlanPhaseCallbacks(PhaseOps):
-    """Backward-compatible shim that delegates to a ``PhaseOps`` instance.
-
-    This class exists only for callers that still construct
-    ``PlanPhaseCallbacks(plan_issue=..., dispatch_plan=..., ...)`` directly.  On
-    construction it creates a ``PhaseOps`` that carries the same fields,
-    so all downstream code uses the unified protocol.
-
-    Subclassing ``PhaseOps`` so that consumers expecting a ``PhaseOps``
-    instance still work.
-    """
-
-    def __init__(
-        self,
-        plan_issue: Optional[
-            Callable[[PlanIssueInput], Coroutine[Any, Any, dict]]
-        ] = None,
-        dispatch_plan: Optional[_DispatchPlanCallback] = None,
-        drop_issues_in_review: Optional[_DropInReviewCallback] = None,
-        post_comment: Optional[_PostCommentCallback] = None,
-        kpi_bump: Optional[_KpiBumpCallback] = None,
-        **kwargs: Any,
-    ) -> None:
-        PhaseOps.__init__(
-            self,
-            plan_issue=plan_issue,
-            dispatch_plan=dispatch_plan,
-            drop_issues_in_review=drop_issues_in_review,
-            comment=post_comment,
-            kpi_bump=kpi_bump,
-            **kwargs,
-        )
-
-    @classmethod
-    def default(cls) -> "PlanPhaseCallbacks":
-        return cls()
-
-    @property
-    def phaseops(self) -> PhaseOps:
-        return self
-
-
-# Re-export for convenience.
-PhaseOpsCallbacks = PhaseOps  # noqa: F401
-PlanPhaseCallbacks = PlanPhaseCallbacks  # noqa: F401
