@@ -8,12 +8,11 @@ deserialises the request and calls ``WebhookRouter.route()``.
 from __future__ import annotations
 
 import logging
-import os
-import re
 
 from temporalio.common import WorkflowIDConflictPolicy
 from temporalio.exceptions import WorkflowAlreadyStartedError
 
+from . import _constants
 from .projects import ProjectConfig, parse_github_repo
 from .shared import ORCHESTRATION_QUEUE
 
@@ -21,10 +20,9 @@ log = logging.getLogger(__name__)
 
 # Agent account that posts agent comments/reviews/PRs — events authored by
 # this login are the agent's own activity and must not re-trigger
-# PRCommentWorkflow.  Kept local to avoid circular import with webhook.py.
-AGENT_GITHUB_LOGIN: str = os.environ.get("AGENT_GITHUB_LOGIN", "devloop-bot")
-
-_AGENT_BRANCH = re.compile(r"^agent/issue-(\d+)")
+# PRCommentWorkflow.
+AGENT_GITHUB_LOGIN: str = _constants.AGENT_GITHUB_LOGIN
+_AGENT_BRANCH = _constants._AGENT_BRANCH
 
 
 class WorkflowFactory:

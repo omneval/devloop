@@ -20,6 +20,7 @@ from typing import Any
 from temporalio import activity
 
 from .. import cluster
+from .._constants import _AGENT_BRANCH
 from ..cichecks import CICheckFailure, CIChecksResult, PollCIChecksInput
 from ..execution import OpenAgentPRsInput
 from ..github import (
@@ -44,8 +45,6 @@ import devloop.github_ops as _github_ops
 log = logging.getLogger(__name__)
 
 # ── Pure helpers ──────────────────────────────────────────────────────────
-
-_AGENT_BRANCH = re.compile(r"^agent/issue-(\d+)")
 
 
 def make_issue_branch(issue_number: int, title: str) -> str:
