@@ -29,6 +29,7 @@ from ..shared import (
     JOB_DISPATCH_QUEUE,
     PlanIssueInput,
     TaskSpec,
+    as_int,
 )
 
 
@@ -145,22 +146,15 @@ class PlanPhase:
                 start_to_close_timeout=timedelta(minutes=2),
                 retry_policy=_RETRY,
             )
-            in_review = {_as_int(n) for n in (in_review or [])}
+            in_review = {as_int(n) for n in (in_review or [])}
             if in_review:
                 issues = [
                     issue
                     for issue in issues
-                    if _as_int(issue.get("id")) not in in_review
+                    if as_int(issue.get("id")) not in in_review
                 ]
 
         return {**plan, "issues": issues}
-
-
-def _as_int(value: Any) -> int:
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return 0
 
 
 class PlanPhaseCallbacks(PhaseOps):

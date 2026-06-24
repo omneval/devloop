@@ -48,6 +48,7 @@ from .shared import (
     AgentJobResult,
     AnswerInput,
     AwaitInput,
+    as_int,
     CIChecksResult,
     InlineComment,
     JobStatus,
@@ -141,13 +142,6 @@ class DevLoopResult:
     queued_for_review: list[int] = field(default_factory=list)
     detail: str = ""
     review_verdicts: dict[int, str] = field(default_factory=dict)
-
-
-def _as_int(value) -> int:
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return 0
 
 
 @workflow.defn
@@ -377,7 +371,7 @@ class DevLoopWorkflow(PhaseOps):
         await self._emit_kpis(
             WorkflowKpiInput(
                 project_id=inp.project_id,
-                issue_number=_as_int(issue.get("id")),
+                issue_number=as_int(issue.get("id")),
                 ci_fix_iterations=counters.get("ci_fix_iterations", 0),
                 review_fix_passes=fix_passes,
                 answer_jobs=counters.get("answer_jobs", 0),
@@ -385,7 +379,7 @@ class DevLoopWorkflow(PhaseOps):
                 review_verdict=verdict or "",
                 label_to_pr_seconds=(workflow.now() - started).total_seconds(),
                 pr_opened=bool(exec_result.get("pr_url")),
-                commits=_as_int(exec_result.get("commits")),
+                commits=as_int(exec_result.get("commits")),
                 ci_exhausted=bool(exec_result.get("exhausted")),
             )
         )
@@ -540,15 +534,15 @@ class DevLoopWorkflow(PhaseOps):
             start_to_close_timeout=timedelta(minutes=2),
             retry_policy=_RETRY,
         )
-        in_review = {_as_int(n) for n in (in_review or [])}
+        in_review = {as_int(n) for n in (in_review or [])}
         if not in_review:
             return issues
         kept, skipped = [], []
         for issue in issues:
-            (skipped if _as_int(issue.get("id")) in in_review else kept).append(issue)
+            (skipped if as_int(issue.get("id")) in in_review else kept).append(issue)
         if skipped:
             for sk in skipped:
-                sk_no = _as_int(sk.get("id"))
+                sk_no = as_int(sk.get("id"))
                 await self._comment(
                     inp.project_id,
                     sk_no,
@@ -684,7 +678,7 @@ class DevLoopWorkflow(PhaseOps):
         inline = [
             InlineComment(
                 file=c.get("file", ""),
-                line=_as_int(c.get("line")),
+                line=as_int(c.get("line")),
                 body=c.get("body", ""),
             )
             for c in (review.get("inline_comments") or [])

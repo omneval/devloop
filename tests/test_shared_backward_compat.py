@@ -227,3 +227,43 @@ class TestSharedModuleIndependence:
 
         after = "devloop.github" in sys.modules
         assert before is after
+
+
+class TestAsInt:
+    """Tests for the consolidated as_int helper in devloop.shared."""
+
+    def test_as_int_int_input(self) -> None:
+        """Passing an int should return it unchanged."""
+        from devloop.shared import as_int
+
+        assert as_int(42) == 42
+
+    def test_as_int_float_string(self) -> None:
+        """A float-string cannot be parsed by int() — returns 0."""
+        from devloop.shared import as_int
+
+        assert as_int("3.14") == 0
+
+    def test_as_int_none(self) -> None:
+        """Passing None should return 0."""
+        from devloop.shared import as_int
+
+        assert as_int(None) == 0
+
+    def test_as_int_negative(self) -> None:
+        """Negative numbers should round-trip correctly."""
+        from devloop.shared import as_int
+
+        assert as_int(-7) == -7
+
+    def test_as_int_zero(self) -> None:
+        """Zero should return zero."""
+        from devloop.shared import as_int
+
+        assert as_int(0) == 0
+
+    def test_as_int_empty_string(self) -> None:
+        """An empty string should return 0 (ValueError catch)."""
+        from devloop.shared import as_int
+
+        assert as_int("") == 0

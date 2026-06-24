@@ -20,6 +20,7 @@ from typing import Any, Callable, Coroutine, Optional
 from devloop.github import ReviewerRequestResult
 
 from .phase_ops import PhaseOps
+from ..shared import as_int
 
 # Re-use types from the unified protocol
 _PostCommentCallback = Callable[[str, int, str], Coroutine[Any, Any, None]]
@@ -56,7 +57,7 @@ class Notifier:
         """
         cb = callbacks or PhaseOps.default()
         ops = PhaseOps()
-        issue_no = ops.as_int(issue.get("id"))
+        issue_no = as_int(issue.get("id"))
         pr_url = exec_result.get("pr_url", "")
         pr_number = ops.pr_number_from_url(pr_url)
 
@@ -118,13 +119,6 @@ def _pr_number_from_url(pr_url: str) -> Optional[int]:
         return int(parts[-1])
     except (ValueError, IndexError):
         return None
-
-
-def _as_int(value: Any) -> int:
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return 0
 
 
 class NotifierCallbacks(PhaseOps):

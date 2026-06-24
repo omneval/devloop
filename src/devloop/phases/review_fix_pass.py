@@ -22,7 +22,7 @@ from .phase_ops import (
     _KpiBumpCallback,
     _PostCommentCallback,
 )
-from ..shared import TaskSpec
+from ..shared import TaskSpec, as_int
 
 
 class ReviewFixPass:
@@ -61,7 +61,7 @@ class ReviewFixPass:
         """
         cb = callbacks or PhaseOps.default()
         ops = PhaseOps()
-        issue_no = ops.as_int(issue.get("id"))
+        issue_no = as_int(issue.get("id"))
 
         # Use ci_ops sub-protocol with fallback to top-level PhaseOps fields.
         ci_ops = cb.ci_ops
@@ -156,13 +156,6 @@ class ReviewFixPass:
         """Record a KPI metric."""
         if cb and cb.kpi_bump is not None:
             await cb.kpi_bump(name, value)
-
-
-def _as_int(value: Any) -> int:
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return 0
 
 
 class ReviewFixPassCallbacks(PhaseOps):
