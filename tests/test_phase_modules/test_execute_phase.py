@@ -9,7 +9,7 @@ import pytest
 from devloop.phases.execute import ExecutePhase
 from devloop.phases.phase_ops import PhaseOps
 from devloop.projects import install_registry
-from devloop.shared import JobStatus
+from devloop.phases import JobStatus
 
 
 class TestExecutePhase:

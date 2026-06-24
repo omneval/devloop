@@ -13,10 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable, Coroutine
 
-from ..execution import TaskSpec
-
-if TYPE_CHECKING:
-    from ..execution import AgentJobResult
+from ..execution import AgentJobResult, TaskSpec
 
 
 # Type alias: post a GitHub Issue/PR comment.

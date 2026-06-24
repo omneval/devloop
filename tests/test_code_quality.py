@@ -22,17 +22,14 @@ from tests.conftest import time_skipping_env
 
 from devloop.code_quality import CodeQualityInput, CodeQualityWorkflow
 from devloop.projects import ProjectConfig
-from devloop.shared import (
-    AgentJobResult,
+from devloop.execution import AgentJobResult, DispatchInput
+from devloop.github import (
     CreateGithubIssueInput,
-    DispatchInput,
     GithubNotificationInput,
-    JobStatus,
-    JOB_DISPATCH_QUEUE,
-    ORCHESTRATION_QUEUE,
-    Phase,
     UpdateGithubIssueInput,
 )
+from devloop.phases import JobStatus, Phase
+from devloop.shared import JOB_DISPATCH_QUEUE, ORCHESTRATION_QUEUE
 from devloop import schedules
 
 

@@ -85,7 +85,7 @@ class TestPhaseOpsDispatch:
     async def test_dispatch_uses_callback_when_set(self) -> None:
         """When self.dispatch callback is set, _dispatch calls it directly."""
         from devloop.execution import AgentJobResult, TaskSpec
-        from devloop.shared import JobStatus
+        from devloop.phases import JobStatus
 
         ops = PhaseOps()
         call_log: list = []
@@ -321,8 +321,8 @@ class TestPRCommentWorkflowExercisesPhaseOps:
         """When PRCommentWorkflow._dispatch is called with self.dispatch set,
         it goes through PhaseOps._dispatch (callback-first path)."""
         from devloop.execution import AgentJobResult, TaskSpec
+        from devloop.phases import JobStatus
         from devloop.pr_comment import PRCommentWorkflow
-        from devloop.shared import JobStatus
 
         wf = PRCommentWorkflow()
 

@@ -11,7 +11,7 @@ import pytest
 
 from devloop.phases.cycle import CICycle
 from devloop.phases.phase_ops import PhaseOps
-from devloop.shared import CICheckFailure, CIChecksResult
+from devloop.cichecks import CICheckFailure, CIChecksResult
 
 
 class _MockState:

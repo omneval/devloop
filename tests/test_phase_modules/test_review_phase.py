@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from devloop.phases.review import ReviewPhase, PhaseOps
-from devloop.shared import AgentJobResult
+from devloop.execution import AgentJobResult
 
 
 class TestReviewPhase:

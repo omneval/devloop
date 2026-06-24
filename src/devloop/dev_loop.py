@@ -30,7 +30,6 @@ from temporalio import workflow
 from temporalio.common import RetryPolicy
 
 from devloop.dev_loop_logic import pr_number_from_url, render_review_findings_comment
-from .execution import DispatchInput
 from ._constants import _ACTIVITY_TIMEOUT, _as_int, _RETRY
 from .github import (
     GithubNotificationInput,
@@ -49,6 +48,7 @@ from .execution import (
     AgentJobResult,
     AnswerInput,
     AwaitInput,
+    DispatchInput,
     OpenAgentPRsInput,
     TaskSpec,
     WorkflowKpiInput,

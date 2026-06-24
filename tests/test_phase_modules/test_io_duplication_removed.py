@@ -13,7 +13,8 @@ import pytest
 from devloop.phases.execute import ExecutePhase
 from devloop.phases.phase_ops import PhaseOps
 from devloop.phases.review import ReviewPhase
-from devloop.shared import AgentJobResult, JobStatus
+from devloop.execution import AgentJobResult
+from devloop.phases import JobStatus
 
 
 class TestExecutePhaseNoIODuplication:
