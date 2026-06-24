@@ -20,7 +20,9 @@ from temporalio import workflow
 from ._constants import _ACTIVITY_TIMEOUT, _RETRY
 
 with workflow.unsafe.imports_passed_through():
-    from .shared import JOB_DISPATCH_QUEUE, ORCHESTRATION_QUEUE, PublishSummaryInput
+    from .shared import JOB_DISPATCH_QUEUE, ORCHESTRATION_QUEUE
+
+from .github import PublishSummaryInput
 
 
 @dataclass

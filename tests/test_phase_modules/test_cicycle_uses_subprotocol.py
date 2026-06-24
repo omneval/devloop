@@ -23,7 +23,7 @@ class TestCICycleUsesCICycleOpsSubProtocol:
         """CICycle accesses comment via ci_ops sub-protocol."""
         from devloop.phases.cycle import CICycle
 
-        from devloop.shared import CICheckFailure, CIChecksResult
+        from devloop.cichecks import CICheckFailure, CIChecksResult
 
         comment_calls: list[tuple[str, int, str]] = []
 
@@ -75,7 +75,7 @@ class TestCICycleUsesCICycleOpsSubProtocol:
         """CICycle accesses poll_ci via ci_ops sub-protocol."""
         from devloop.phases.cycle import CICycle
 
-        from devloop.shared import CIChecksResult
+        from devloop.cichecks import CIChecksResult
 
         async def _mock_poll_ci(project_id: str, pr_number: int) -> CIChecksResult:
             _mock_poll_ci._called = (project_id, pr_number)
@@ -114,7 +114,7 @@ class TestCICycleUsesCICycleOpsSubProtocol:
         """CICycle accesses kpi_bump via ci_ops sub-protocol."""
         from devloop.phases.cycle import CICycle
 
-        from devloop.shared import CICheckFailure, CIChecksResult
+        from devloop.cichecks import CICheckFailure, CIChecksResult
 
         async def _mock_poll_ci(project_id: str, pr_number: int) -> CIChecksResult:
             _mock_poll_ci._called = (project_id, pr_number)
@@ -175,7 +175,7 @@ class TestCICycleUsesCICycleOpsSubProtocol:
         """CICycle accesses dispatch_fix via ci_ops sub-protocol."""
         from devloop.phases.cycle import CICycle
 
-        from devloop.shared import CICheckFailure, CIChecksResult
+        from devloop.cichecks import CICheckFailure, CIChecksResult
 
         async def _mock_poll_ci(project_id: str, pr_number: int) -> CIChecksResult:
             _mock_poll_ci._called = (project_id, pr_number)
@@ -228,7 +228,7 @@ class TestCICycleUsesCICycleOpsSubProtocol:
         """CICycle accesses cleanup via ci_ops sub-protocol."""
         from devloop.phases.cycle import CICycle
 
-        from devloop.shared import CIChecksResult
+        from devloop.cichecks import CIChecksResult
 
         async def _mock_poll_ci(project_id: str, pr_number: int) -> CIChecksResult:
             _mock_poll_ci._called = (project_id, pr_number)
@@ -265,7 +265,7 @@ class TestCICycleUsesCICycleOpsSubProtocol:
         """When ci_ops.comment is None, CICycle falls back to PhaseOps.comment."""
         from devloop.phases.cycle import CICycle
 
-        from devloop.shared import CICheckFailure, CIChecksResult
+        from devloop.cichecks import CICheckFailure, CIChecksResult
 
         async def _mock_poll_ci(project_id: str, pr_number: int) -> CIChecksResult:
             _mock_poll_ci._called = (project_id, pr_number)

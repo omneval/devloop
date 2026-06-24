@@ -17,29 +17,18 @@ already have an open agent PR so the workflow doesn't re-surface them.
 from __future__ import annotations
 
 from datetime import timedelta
-from typing import Any, Callable, Coroutine, Optional
+from typing import Any, Optional
 
 from temporalio import workflow
 from temporalio.common import RetryPolicy
 
-from .._constants import _ACTIVITY_TIMEOUT, _RETRY
-from ..shared import (
-    AgentJobResult,
-    DispatchInput,
-    JOB_DISPATCH_QUEUE,
-    PlanIssueInput,
-    TaskSpec,
-)
+from .._constants import _ACTIVITY_TIMEOUT, _as_int, _RETRY
+from ..phases._utils import callback_or_ops
+from ..execution import AgentJobResult, DispatchInput, TaskSpec
+from ..github import PlanIssueInput
+from ..shared import JOB_DISPATCH_QUEUE
 
-
-# Re-use types from the unified protocol
-from .phase_ops import (
-    PhaseOps,
-    _DispatchPlanCallback,
-    _DropInReviewCallback,
-    _KpiBumpCallback,
-    _PostCommentCallback,
-)
+from .phase_ops import PhaseOps
 
 
 class PlanPhase:
@@ -74,11 +63,11 @@ class PlanPhase:
         cb = callbacks or PhaseOps.default()
         # Use plan_ops sub-protocol with fallback to top-level PhaseOps fields.
         plan_ops = cb.plan_ops
-        _comment_cb = plan_ops.comment or cb.post_comment
+        _comment_cb = callback_or_ops(plan_ops.comment, cb.post_comment)
 
         if inp.triggering_issue > 0:
             # Lightweight path: single-issue plan via activity (issue #120).
-            _plan_issue_cb = plan_ops.plan_issue or cb.plan_issue
+            _plan_issue_cb = callback_or_ops(plan_ops.plan_issue, cb.plan_issue)
             if _plan_issue_cb is not None:
                 plan = await _plan_issue_cb(
                     PlanIssueInput(
@@ -99,7 +88,9 @@ class PlanPhase:
                 )
         else:
             # Backlog reasoning path: dispatch Plan Agent Execution Job.
-            _dispatch_plan_cb = plan_ops.dispatch_plan or cb.dispatch_plan
+            _dispatch_plan_cb = callback_or_ops(
+                plan_ops.dispatch_plan, cb.dispatch_plan
+            )
             if _dispatch_plan_cb is not None:
                 result = await _dispatch_plan_cb(
                     inp.project_id,
@@ -133,7 +124,9 @@ class PlanPhase:
             plan = result.plan or {"issues": []}
 
         issues = plan.get("issues") or []
-        _drop_cb = plan_ops.drop_issues_in_review or cb.drop_issues_in_review
+        _drop_cb = callback_or_ops(
+            plan_ops.drop_issues_in_review, cb.drop_issues_in_review
+        )
         if _drop_cb is not None:
             issues = await _drop_cb(inp, issues)
         else:
@@ -154,57 +147,3 @@ class PlanPhase:
                 ]
 
         return {**plan, "issues": issues}
-
-
-def _as_int(value: Any) -> int:
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return 0
-
-
-class PlanPhaseCallbacks(PhaseOps):
-    """Backward-compatible shim that delegates to a ``PhaseOps`` instance.
-
-    This class exists only for callers that still construct
-    ``PlanPhaseCallbacks(plan_issue=..., dispatch_plan=..., ...)`` directly.  On
-    construction it creates a ``PhaseOps`` that carries the same fields,
-    so all downstream code uses the unified protocol.
-
-    Subclassing ``PhaseOps`` so that consumers expecting a ``PhaseOps``
-    instance still work.
-    """
-
-    def __init__(
-        self,
-        plan_issue: Optional[
-            Callable[[PlanIssueInput], Coroutine[Any, Any, dict]]
-        ] = None,
-        dispatch_plan: Optional[_DispatchPlanCallback] = None,
-        drop_issues_in_review: Optional[_DropInReviewCallback] = None,
-        post_comment: Optional[_PostCommentCallback] = None,
-        kpi_bump: Optional[_KpiBumpCallback] = None,
-        **kwargs: Any,
-    ) -> None:
-        PhaseOps.__init__(
-            self,
-            plan_issue=plan_issue,
-            dispatch_plan=dispatch_plan,
-            drop_issues_in_review=drop_issues_in_review,
-            comment=post_comment,
-            kpi_bump=kpi_bump,
-            **kwargs,
-        )
-
-    @classmethod
-    def default(cls) -> "PlanPhaseCallbacks":
-        return cls()
-
-    @property
-    def phaseops(self) -> PhaseOps:
-        return self
-
-
-# Re-export for convenience.
-PhaseOpsCallbacks = PhaseOps  # noqa: F401
-PlanPhaseCallbacks = PlanPhaseCallbacks  # noqa: F401

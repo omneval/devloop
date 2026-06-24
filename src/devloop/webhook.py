@@ -23,11 +23,11 @@ import hmac
 import json
 import logging
 import os
-import re
 
 from fastapi import FastAPI, Request, Response
 from temporalio.client import Client
 
+from . import _constants
 from .projects import ProjectConfig, parse_github_repo
 
 log = logging.getLogger(__name__)
@@ -36,11 +36,7 @@ log = logging.getLogger(__name__)
 GITHUB_WEBHOOK_SECRET: str = os.environ.get("GITHUB_WEBHOOK_SECRET", "")
 # The bot account that posts agent comments/reviews/PRs — events authored by
 # this login are the agent's own activity and must not re-trigger PRCommentWorkflow.
-AGENT_GITHUB_LOGIN: str = os.environ.get("AGENT_GITHUB_LOGIN", "devloop-bot")
-
-# Agent issue branches are named ``agent/issue-<N>[-slug]`` (see entrypoint.py /
-# github_ops._AGENT_BRANCH) — PRCommentWorkflow only engages on these PRs.
-_AGENT_BRANCH = re.compile(r"^agent/issue-(\d+)")
+AGENT_GITHUB_LOGIN: str = _constants.AGENT_GITHUB_LOGIN
 
 
 def _verify_github_signature(body: bytes, signature: str) -> bool:

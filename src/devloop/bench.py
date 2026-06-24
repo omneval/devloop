@@ -38,9 +38,10 @@ import dataclasses
 import json
 import logging
 import os
-import re
 import sys
 import time
+
+from devloop._constants import _AGENT_BRANCH
 
 log = logging.getLogger(__name__)
 
@@ -191,9 +192,6 @@ def open_replay_issue(scratch_repo: str, golden: GoldenIssue, label: str) -> int
         json={"labels": [label]},
     )
     return replay_number
-
-
-_AGENT_BRANCH = re.compile(r"^agent/issue-(\d+)")
 
 
 def find_agent_pr(scratch_repo: str, replay_number: int) -> int:

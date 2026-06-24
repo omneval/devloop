@@ -11,15 +11,13 @@ from __future__ import annotations
 
 from typing import Any, Callable, Coroutine, Optional
 
+from ..phases._utils import callback_or_ops
 from ..phases.cycle import CICycle
 from ..phases.execute_phase_ops import ExecutePhaseOps
 from ..phases.phase_ops import PhaseOps
 from ..projects import get_project
-from ..shared import (
-    AgentJobResult,
-    JobStatus,
-    TaskSpec,
-)
+from ..execution import AgentJobResult, TaskSpec
+from ..phases import JobStatus
 
 
 # Type aliases for injectable callbacks.
@@ -31,35 +29,6 @@ _AnswerQuestionCallback = Callable[
 ]
 _PostCommentCallback = Callable[[str, int, str], Coroutine[Any, Any, None]]
 _KpiBumpCallback = Callable[[str, int], Coroutine[Any, Any, None]]
-
-
-class ExecutePhaseCallbacks(PhaseOps):
-    """Backward-compatible shim that extends the unified ``PhaseOps`` protocol.
-
-    This class exists only for callers that still construct
-    ``ExecutePhaseCallbacks(dispatch_execute=..., ...)`` directly.  It
-    inherits from ``PhaseOps`` so all downstream code uses the unified
-    protocol seamlessly.
-    """
-
-    def __init__(
-        self,
-        dispatch_execute: Optional[_DispatchExecuteCallback] = None,
-        answer_question: Optional[_AnswerQuestionCallback] = None,
-        post_comment: Optional[_PostCommentCallback] = None,
-        kpi_bump: Optional[_KpiBumpCallback] = None,
-    ) -> None:
-        super().__init__(
-            dispatch_execute=dispatch_execute,
-            answer_question=answer_question,
-            post_comment=post_comment,
-            kpi_bump=kpi_bump,
-        )
-
-    @classmethod
-    def default(cls) -> "ExecutePhaseCallbacks":
-        """Return a callbacks instance that delegates to Temporal activities."""
-        return cls()
 
 
 class ExecutePhase:
@@ -92,7 +61,7 @@ class ExecutePhase:
             exec_result dict with ``issue_id``, ``branch``, ``pr_url``,
             ``commits``, ``exhausted`` keys.
         """
-        cb = callbacks or ExecutePhaseCallbacks.default()
+        cb = callbacks or PhaseOps()
         ops = PhaseOps()
         issue_no = ops.as_int(issue.get("id"))
 
@@ -126,14 +95,16 @@ class ExecutePhase:
                 inp.project_id,
                 issue_no,
                 "⏳ queued — agent is working on this issue",
-                callback=exec_ops.comment or cb.comment or cb.post_comment,
+                callback=callback_or_ops(exec_ops.comment, cb.comment, cb.post_comment),
             )
             result = await ops.dispatch_helper(
                 inp.project_id,
                 spec,
                 issue_number=issue_no,
                 poll_interval_seconds=inp.poll_interval_seconds,
-                dispatch_callback=exec_ops.dispatch_execute or cb.dispatch_execute,
+                dispatch_callback=callback_or_ops(
+                    exec_ops.dispatch_execute, cb.dispatch_execute
+                ),
             )
             # Resolve mid-run AWAITING_HUMAN questions.
             result = await self._answer_questions(
@@ -151,7 +122,7 @@ class ExecutePhase:
                 inp.project_id,
                 issue_no,
                 "❌ Parked — execute phase failed: execute_max_iterations must be >= 1",
-                callback=exec_ops.comment or cb.comment or cb.post_comment,
+                callback=callback_or_ops(exec_ops.comment, cb.comment, cb.post_comment),
             )
             return {
                 "issue_id": issue_no,
@@ -166,7 +137,7 @@ class ExecutePhase:
                 inp.project_id,
                 issue_no,
                 f"❌ Parked — execute phase failed: {result.error or 'unknown error'}",
-                callback=exec_ops.comment or cb.comment or cb.post_comment,
+                callback=callback_or_ops(exec_ops.comment, cb.comment, cb.post_comment),
             )
             return {
                 "issue_id": issue_no,
@@ -182,7 +153,7 @@ class ExecutePhase:
                 issue_no,
                 f"❌ Execute exhausted {max_iters} attempts with no commits"
                 " — skipping this round",
-                callback=exec_ops.comment or cb.comment or cb.post_comment,
+                callback=callback_or_ops(exec_ops.comment, cb.comment, cb.post_comment),
             )
             return {
                 "issue_id": issue_no,
@@ -196,7 +167,7 @@ class ExecutePhase:
             inp.project_id,
             issue_no,
             f"✅ Implemented — PR: {result.pr_url or result.branch}",
-            callback=exec_ops.comment or cb.comment or cb.post_comment,
+            callback=callback_or_ops(exec_ops.comment, cb.comment, cb.post_comment),
         )
         exec_result = {
             "issue_id": issue_no,
@@ -242,10 +213,3 @@ class ExecutePhase:
             return await ops.answer_question(project_id, issue_no, result)
         # Default: no question resolution — return result as-is.
         return result
-
-
-def _as_int(value: Any) -> int:
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return 0

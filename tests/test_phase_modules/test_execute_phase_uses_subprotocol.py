@@ -10,7 +10,7 @@ import pytest
 
 from devloop.phases.execute import ExecutePhase
 from devloop.phases.phase_ops import PhaseOps
-from devloop.shared import JobStatus
+from devloop.phases import JobStatus
 
 
 class TestExecutePhaseUsesExecuteOpsSubProtocol:

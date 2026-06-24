@@ -35,15 +35,9 @@ from temporalio.exceptions import ApplicationError
 
 from . import cluster
 from .cluster import NAMESPACE
-from .shared import (
-    KEY_HUMAN_ANSWER,
-    KEY_RESULT,
-    AgentJobResult,
-    AnswerInput,
-    AwaitInput,
-    DispatchInput,
-    JobStatus,
-)
+from .execution import AgentJobResult, AnswerInput, AwaitInput, DispatchInput
+from .phases import JobStatus
+from .shared import KEY_HUMAN_ANSWER, KEY_RESULT
 from .projects import get_project
 
 log = logging.getLogger(__name__)

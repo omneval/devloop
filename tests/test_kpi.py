@@ -8,7 +8,7 @@ import pytest
 
 from devloop import kpi
 from devloop.projects import ProjectConfig, _REGISTRY
-from devloop.shared import WorkflowKpiInput
+from devloop.execution import WorkflowKpiInput
 
 _PROJECT = ProjectConfig(
     id="proj",

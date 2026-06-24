@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from devloop.phases.review_fix_pass import ReviewFixPass, ReviewFixPassCallbacks
+from devloop.phases.review_fix_pass import ReviewFixPass, PhaseOps
 
 
 class TestReviewFixPass:
@@ -16,7 +16,7 @@ class TestReviewFixPass:
     async def test_fix_pass_produces_commits(self) -> None:
         """ReviewFixPass returns True when fix produces commits."""
         phase = ReviewFixPass()
-        callbacks = ReviewFixPassCallbacks(
+        callbacks = PhaseOps(
             dispatch_fix=AsyncMock(return_value=2),
             post_comment=AsyncMock(),
         )
@@ -40,7 +40,7 @@ class TestReviewFixPass:
     async def test_fix_pass_no_findings_returns_false(self) -> None:
         """ReviewFixPass returns False when review has no findings."""
         phase = ReviewFixPass()
-        callbacks = ReviewFixPassCallbacks(
+        callbacks = PhaseOps(
             dispatch_fix=AsyncMock(),
             post_comment=AsyncMock(),
         )
@@ -64,7 +64,7 @@ class TestReviewFixPass:
     async def test_fix_pass_no_commits_returns_false(self) -> None:
         """ReviewFixPass returns False when fix produces zero commits."""
         phase = ReviewFixPass()
-        callbacks = ReviewFixPassCallbacks(
+        callbacks = PhaseOps(
             dispatch_fix=AsyncMock(return_value=0),
             post_comment=AsyncMock(),
         )

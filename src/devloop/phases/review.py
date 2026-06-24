@@ -13,13 +13,10 @@ from temporalio import workflow
 
 from .._constants import _RETRY
 from ..dev_loop_logic import render_review_findings_comment
-from ..phases.phase_ops import PhaseOps, _PostCommentCallback
-from ..shared import (
-    AgentJobResult,
-    InlineComment,
-    PostCommentsInput,
-    TaskSpec,
-)
+from ..phases._utils import callback_or_ops
+from ..phases.phase_ops import PhaseOps
+from ..execution import AgentJobResult, TaskSpec
+from ..github import InlineComment, PostCommentsInput
 
 
 # Type aliases for injectable callbacks.
@@ -69,7 +66,7 @@ class ReviewPhase:
 
         # Use review_ops sub-protocol with fallback to top-level PhaseOps fields.
         review_ops = cb.review_ops
-        _comment_cb = review_ops.comment or cb.post_comment
+        _comment_cb = callback_or_ops(review_ops.comment, cb.post_comment)
 
         spec = TaskSpec(
             phase="review",
@@ -83,7 +80,7 @@ class ReviewPhase:
             "⏳ queued — agent is reviewing this issue",
             callback=_comment_cb,
         )
-        _dispatch_cb = review_ops.dispatch_review or cb.dispatch_review
+        _dispatch_cb = callback_or_ops(review_ops.dispatch_review, cb.dispatch_review)
         result = await ops.dispatch_helper(
             inp.project_id,
             spec,
@@ -110,7 +107,9 @@ class ReviewPhase:
             )
 
         # Post the reviewer's findings to the PR.
-        _post_review_cb = review_ops.post_review_findings or cb.post_review_findings
+        _post_review_cb = callback_or_ops(
+            review_ops.post_review_findings, cb.post_review_findings
+        )
         await self._post_review_findings(
             inp.project_id,
             exec_result.get("pr_url", ""),
@@ -141,7 +140,7 @@ class ReviewPhase:
         plain issue comment so findings still surface instead of dropping
         them or crashing the run.
         """
-        _cb = post_review_findings_callback or cb.post_review_findings
+        _cb = callback_or_ops(post_review_findings_callback, cb.post_review_findings)
         if _cb is not None:
             await _cb(project_id, pr_url, review, result)
             return
@@ -174,46 +173,3 @@ class ReviewPhase:
             start_to_close_timeout=timedelta(minutes=2),
             retry_policy=_RETRY,
         )
-
-
-def _as_int(value: Any) -> int:
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return 0
-
-
-class ReviewPhaseCallbacks(PhaseOps):
-    """Backward-compatible shim that delegates to a ``PhaseOps`` instance.
-
-    This class exists only for callers that still construct
-    ``ReviewPhaseCallbacks(dispatch_review=..., ...)`` directly.  On
-    construction it creates a ``PhaseOps`` that carries the same fields,
-    so all downstream code uses the unified protocol.
-
-    Subclassing ``PhaseOps`` so that consumers expecting a ``PhaseOps``
-    instance still work.
-    """
-
-    def __init__(
-        self,
-        dispatch_review: Optional[_DispatchReviewCallback] = None,
-        post_review_findings: Optional[_PostReviewFindingsCallback] = None,
-        post_comment: Optional[_PostCommentCallback] = None,
-        **kwargs: Any,
-    ) -> None:
-        PhaseOps.__init__(
-            self,
-            dispatch_review=dispatch_review,
-            post_review_findings=post_review_findings,
-            comment=post_comment,
-            **kwargs,
-        )
-
-    @classmethod
-    def default(cls) -> "ReviewPhaseCallbacks":
-        return cls()
-
-    @property
-    def phaseops(self) -> PhaseOps:
-        return self

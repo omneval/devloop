@@ -16,13 +16,13 @@ from devloop.github_ops import (
     post_pr_comments,
     request_github_reviewer,
 )
-from devloop.shared import (
+from devloop.github import (
     GithubNotificationInput,
     InlineComment,
-    PollCIChecksInput,
     PostCommentsInput,
     RequestReviewerInput,
 )
+from devloop.cichecks import PollCIChecksInput
 from devloop.projects import ProjectConfig, _REGISTRY
 
 _PROJECT = ProjectConfig(

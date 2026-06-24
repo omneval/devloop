@@ -8,7 +8,8 @@ import pytest
 from temporalio.testing import ActivityEnvironment
 
 from devloop import github_ops
-from devloop.shared import Phase, CreateGithubIssueInput, UpdateGithubIssueInput
+from devloop.github import CreateGithubIssueInput, UpdateGithubIssueInput
+from devloop.phases.enums import Phase
 from devloop.github_ops import create_github_issue, update_github_issue
 from devloop.projects import ProjectConfig, _REGISTRY
 

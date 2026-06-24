@@ -7,13 +7,12 @@ interface: ``run(inp, callbacks)``.
 After the phase, the caller (typically ``PRCommentWorkflow``) runs the
 CI fix cycle and requests a reviewer — those are separate phases.
 
-The ``_AGENT_BRANCH`` regex guards against clobbering human branches
-(issue #101).
+The ``_AGENT_BRANCH`` regex (imported from ``devloop._constants``) guards
+against clobbering human branches (issue #101).
 """
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any, Callable, Coroutine, Optional
@@ -21,24 +20,17 @@ from typing import TYPE_CHECKING, Any, Callable, Coroutine, Optional
 from temporalio import workflow
 from temporalio.common import RetryPolicy
 
-from .._constants import _ACTIVITY_TIMEOUT, _GITHUB_COMMENT_TIMEOUT, _RETRY
+from .._constants import (
+    _ACTIVITY_TIMEOUT,
+    _AGENT_BRANCH,
+    _GITHUB_COMMENT_TIMEOUT,
+    _RETRY,
+)
 from ..dev_loop_logic import pr_number_from_url
 
 if TYPE_CHECKING:
+    from ..execution import AgentJobResult, TaskSpec
     from ..pr_comment import PRCommentInput, PRCommentResult
-    from ..shared import AgentJobResult, TaskSpec
-
-# Agent issue branches are named ``agent/issue-<N>[-slug]`` (see entrypoint.py /
-# github_ops._AGENT_BRANCH / webhook._AGENT_BRANCH). ``_handle_pull_request_review``
-# already filters on this before starting the workflow (the head ref comes free
-# in that payload); ``_handle_issue_comment`` can't — an ``issue_comment``
-# payload carries no head ref, only a PR number — so it dispatches with an
-# empty ``branch`` and lets ``get_pr_branch`` resolve it here. Re-checking the
-# resolved branch closes that gap: without it, an ``@devloop-bot`` mention on
-# *any* open PR (not just agent-owned ones) would resolve a real branch and
-# proceed to the entrypoint's ``force=True`` push — clobbering a human's work
-# (issue #101).
-_AGENT_BRANCH = re.compile(r"^agent/issue-(\d+)")
 
 
 # Type aliases for injectable callbacks.
@@ -95,9 +87,8 @@ class PRCommentPhase:
             The result with ``exec_result`` dict (with issue_id, branch,
             pr_url, commits), or an error if the phase failed.
         """
-        from ..shared import JobStatus, Phase, TaskSpec
-
-        # Lazy import PRCommentResult to avoid circular import.
+        # Lazy imports to avoid circular dependencies.
+        from ..phases import JobStatus, Phase
         from ..pr_comment import PRCommentResult
 
         cb = callbacks or _Callbacks.default()
@@ -204,7 +195,7 @@ class PRCommentPhase:
 
     async def _get_branch(self, project_id: str, pr_number: int, cb: _Callbacks) -> str:
         """Resolve a PR's branch via callback or default activity."""
-        from ..shared import GetPRBranchInput
+        from ..github import GetPRBranchInput
 
         if cb.get_branch is not None:
             return await cb.get_branch(project_id, pr_number)
@@ -226,11 +217,8 @@ class PRCommentPhase:
         cb: _Callbacks,
     ) -> "AgentJobResult":
         """Dispatch the PR comment agent job (or use injected callback)."""
-        from ..shared import (
-            JOB_DISPATCH_QUEUE,
-            AgentJobResult,
-            DispatchInput,
-        )
+        from ..execution import AgentJobResult, DispatchInput
+        from ..shared import JOB_DISPATCH_QUEUE
 
         if cb.dispatch is not None:
             return await cb.dispatch(
@@ -255,7 +243,7 @@ class PRCommentPhase:
         self, project_id: str, issue_number: int, body: str, cb: _Callbacks
     ) -> None:
         """Post a GitHub Issue/PR comment."""
-        from ..shared import GithubNotificationInput
+        from ..github import GithubNotificationInput
 
         if cb.post_comment is not None:
             await cb.post_comment(project_id, issue_number, body)

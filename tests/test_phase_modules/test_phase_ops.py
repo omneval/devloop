@@ -8,9 +8,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from devloop.phases.phase_ops import PhaseOps
-from devloop.shared import (
+from devloop.cichecks import PollCIChecksInput
+from devloop.github import (
     GithubNotificationInput,
-    PollCIChecksInput,
     RequestReviewerInput,
 )
 

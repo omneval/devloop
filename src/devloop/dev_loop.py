@@ -30,8 +30,7 @@ from temporalio import workflow
 from temporalio.common import RetryPolicy
 
 from devloop.dev_loop_logic import pr_number_from_url, render_review_findings_comment
-from .execution import DispatchInput
-from ._constants import _ACTIVITY_TIMEOUT, _RETRY
+from ._constants import _ACTIVITY_TIMEOUT, _as_int, _RETRY
 from .github import (
     GithubNotificationInput,
     RequestReviewerInput,
@@ -44,22 +43,19 @@ from .phases.pipeline import PhasePipeline
 from .phases.plan import PlanPhase
 from .phases.review import ReviewPhase
 from .phases.review_fix_pass import ReviewFixPass
-from .shared import (
+from .cichecks import CIChecksResult, PollCIChecksInput
+from .execution import (
     AgentJobResult,
     AnswerInput,
     AwaitInput,
-    CIChecksResult,
-    InlineComment,
-    JobStatus,
-    JOB_DISPATCH_QUEUE,
+    DispatchInput,
     OpenAgentPRsInput,
-    Phase,
-    PlanIssueInput,
-    PollCIChecksInput,
-    PostCommentsInput,
     TaskSpec,
     WorkflowKpiInput,
 )
+from .github import InlineComment, PlanIssueInput, PostCommentsInput
+from .phases import JobStatus, Phase
+from .shared import JOB_DISPATCH_QUEUE
 
 
 # --------------------------------------------------------------------------- #
@@ -141,13 +137,6 @@ class DevLoopResult:
     queued_for_review: list[int] = field(default_factory=list)
     detail: str = ""
     review_verdicts: dict[int, str] = field(default_factory=dict)
-
-
-def _as_int(value) -> int:
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return 0
 
 
 @workflow.defn

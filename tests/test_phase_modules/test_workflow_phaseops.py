@@ -89,7 +89,7 @@ class TestDevLoopWorkflowImplementsPhaseOps:
     async def test_workflow_delegates_dispatch_to_activity(self) -> None:
         """DevLoopWorkflow.dispatch calls the dispatch_agent_job activity."""
         from devloop.dev_loop import DevLoopWorkflow
-        from devloop.shared import TaskSpec
+        from devloop.execution import TaskSpec
 
         workflow = DevLoopWorkflow()
 
@@ -186,8 +186,8 @@ class TestPRCommentWorkflowImplementsPhaseOps:
     @pytest.mark.asyncio
     async def test_workflow_delegates_dispatch_to_activity(self) -> None:
         """PRCommentWorkflow.dispatch calls the dispatch_agent_job activity."""
+        from devloop.execution import TaskSpec
         from devloop.pr_comment import PRCommentWorkflow
-        from devloop.shared import TaskSpec
 
         workflow = PRCommentWorkflow()
 

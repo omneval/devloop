@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from devloop.phases.review_fix_pass import ReviewFixPass, ReviewFixPassCallbacks
+from devloop.phases.review_fix_pass import ReviewFixPass, PhaseOps
 
 
 class TestReviewFixPassUsesCICycleOpsSubProtocol:
@@ -18,7 +18,7 @@ class TestReviewFixPassUsesCICycleOpsSubProtocol:
         """ReviewFixPass accesses comment via ci_ops sub-protocol."""
         phase = ReviewFixPass()
 
-        callbacks = ReviewFixPassCallbacks(
+        callbacks = PhaseOps(
             dispatch_fix=AsyncMock(return_value=2),
         )
         # Set ci_ops.comment so the phase can call it.
@@ -54,7 +54,7 @@ class TestReviewFixPassUsesCICycleOpsSubProtocol:
 
         _dispatch_fix._called = False  # type: ignore[attr-defined]
 
-        callbacks = ReviewFixPassCallbacks()
+        callbacks = PhaseOps()
         callbacks.ci_ops.comment = AsyncMock()
         callbacks.ci_ops.dispatch_fix = _dispatch_fix  # type: ignore[assignment]
 
@@ -79,7 +79,7 @@ class TestReviewFixPassUsesCICycleOpsSubProtocol:
         """When ci_ops.comment is None, ReviewFixPass falls back to PhaseOps.comment."""
         phase = ReviewFixPass()
 
-        callbacks = ReviewFixPassCallbacks(
+        callbacks = PhaseOps(
             dispatch_fix=AsyncMock(return_value=2),
             post_comment=AsyncMock(),
         )

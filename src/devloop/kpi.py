@@ -22,7 +22,7 @@ from temporalio import activity
 
 from . import cluster
 from .projects import get_project
-from .shared import WorkflowKpiInput
+from .execution import WorkflowKpiInput
 
 log = logging.getLogger(__name__)
 

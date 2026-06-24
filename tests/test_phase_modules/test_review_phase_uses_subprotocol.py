@@ -9,7 +9,7 @@ import pytest
 
 from devloop.phases.review import ReviewPhase
 from devloop.phases.phase_ops import PhaseOps
-from devloop.shared import AgentJobResult
+from devloop.execution import AgentJobResult
 
 
 class TestReviewPhaseUsesReviewOpsSubProtocol:

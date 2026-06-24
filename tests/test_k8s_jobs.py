@@ -17,7 +17,8 @@ from datetime import timedelta
 from devloop import k8s_jobs
 from devloop._constants import _ACTIVITY_TIMEOUT
 from devloop.projects import ProjectConfig, _REGISTRY
-from devloop.shared import DispatchInput, JobStatus, TaskSpec
+from devloop.execution import DispatchInput, TaskSpec
+from devloop.phases.enums import JobStatus
 
 _PROJECT = ProjectConfig(
     id="omneval",

@@ -1,5 +1,9 @@
+from __future__ import annotations
+
 import os
+import re
 from datetime import timedelta
+from typing import Any
 
 from temporalio.common import RetryPolicy
 
@@ -15,3 +19,16 @@ _ACTIVITY_TIMEOUT = timedelta(
 )
 
 JOB_DISPATCH_QUEUE = os.getenv("JOB_DISPATCH_QUEUE", "devloop-job-dispatch")
+
+# Webhook constants — defined once in _constants so all callers import them
+# rather than each duplicating their own copy (improves locality).
+_AGENT_BRANCH = re.compile(r"^agent/issue-(\d+)")
+AGENT_GITHUB_LOGIN: str = os.environ.get("AGENT_GITHUB_LOGIN", "devloop-bot")
+
+
+def _as_int(value: Any) -> int:
+    """Safely convert *value* to ``int``, returning ``0`` on failure."""
+    try:
+        return int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return 0

@@ -18,8 +18,8 @@ from .github import (
     RequestReviewerInput,
     ReviewerRequestResult,
 )
-from .phases.cycle import CICycle, CICycleCallbacks as _CICycleCallbacks
-from .phases.notifier import Notifier, NotifierCallbacks as _NotifierCallbacks
+from .phases.cycle import CICycle
+from .phases.notifier import Notifier
 from .phases.phase_ops import PhaseOps
 from .phases.pr_comment import (
     PRCommentPhase,
@@ -364,7 +364,7 @@ class PRCommentWorkflow(PhaseOps):
         exec_result: dict,
     ) -> Any:
         """Adapter that binds CICycle callbacks."""
-        callbacks = _CICycleCallbacks.default()
+        callbacks = PhaseOps.default()
         callbacks.poll_ci = self._cb_poll_ci
         callbacks.dispatch_fix = self._cb_dispatch_fix
         callbacks.post_comment = self._cb_post_comment
@@ -387,7 +387,7 @@ class PRCommentWorkflow(PhaseOps):
         cycle_result: Any,
     ) -> None:
         """Adapter that binds Notifier callbacks."""
-        callbacks = _NotifierCallbacks.default()
+        callbacks = PhaseOps.default()
         callbacks.request_reviewer = self._cb_request_reviewer
         callbacks.post_comment = self._cb_post_comment
         exec_result_with_exhausted = dict(exec_result)
@@ -420,7 +420,7 @@ class PRCommentWorkflow(PhaseOps):
 
     async def _cb_get_branch(self, project_id: str, pr_number: int) -> str:
         """Real ``get_pr_branch`` activity — adapter for PRCommentPhase."""
-        from .shared import GetPRBranchInput
+        from .github import GetPRBranchInput
 
         return await workflow.execute_activity(
             "get_pr_branch",
@@ -443,7 +443,7 @@ class PRCommentWorkflow(PhaseOps):
 
     async def _cb_poll_ci(self, project_id: str, pr_number: int) -> Any:
         """Real ``poll_ci_checks`` activity — adapter for CICycle."""
-        from .shared import CIChecksResult, PollCIChecksInput
+        from .cichecks import CIChecksResult, PollCIChecksInput
 
         return await workflow.execute_activity(
             "poll_ci_checks",
