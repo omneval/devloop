@@ -179,6 +179,14 @@ async def _run_workflow(
                 )
 
 
+def _get_phase(d: dict) -> str:
+    """Extract the phase string from a dispatch entry (handles dataclass or dict)."""
+    ts = d["task_spec"]
+    if isinstance(ts, dict):
+        return ts.get("phase", "")
+    return getattr(ts, "phase", "")
+
+
 # ---------------------------------------------------------------------------
 # Cycle 1: Pass path — score >= threshold
 # ---------------------------------------------------------------------------
@@ -237,9 +245,7 @@ async def test_abort_path_closes_issue_without_improve_dispatch():
 
     # No improve phase dispatched
     improve_dispatches = [
-        d
-        for d in calls.dispatches
-        if d["task_spec"].phase == Phase.CODE_QUALITY_IMPROVE.value
+        d for d in calls.dispatches if _get_phase(d) == Phase.CODE_QUALITY_IMPROVE.value
     ]
     assert improve_dispatches == []
 
@@ -265,9 +271,7 @@ async def test_fail_path_dispatches_improve_and_posts_completion_comment():
 
     # Improve phase dispatched
     improve_dispatches = [
-        d
-        for d in calls.dispatches
-        if d["task_spec"].phase == Phase.CODE_QUALITY_IMPROVE.value
+        d for d in calls.dispatches if _get_phase(d) == Phase.CODE_QUALITY_IMPROVE.value
     ]
     assert len(improve_dispatches) == 1
 
@@ -320,3 +324,46 @@ async def test_ensure_schedules_deletes_code_quality_when_disabled():
     # The handle for the code-quality schedule should have been obtained (for deletion)
     assert "code-quality-myrepo" in client.handles
     assert client.handles["code-quality-myrepo"].deleted is True
+
+
+# ---------------------------------------------------------------------------
+# Cycle 6: verify PhaseOps callback wiring (all 17 fields present)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_code_quality_workflow_has_phase_ops_callbacks():
+    """CodeQualityWorkflow must wire all 17 PhaseOps callback fields."""
+    wf = CodeQualityWorkflow()
+
+    # Core operations
+    assert wf.comment is not None
+    assert wf.cleanup is not None
+    assert wf.dispatch is not None
+    assert wf.kpi_bump is not None
+    assert wf.kpi_take is not None
+    assert wf.emit_kpis is not None
+    assert wf.poll_ci is not None
+    assert wf.request_reviewer is not None
+
+    # ExecutePhase-specific
+    assert wf.dispatch_execute is not None
+    assert wf.answer_question is not None
+
+    # ReviewPhase-specific
+    assert wf.dispatch_review is not None
+    assert wf.post_review_findings is not None
+
+    # CICycle/ReviewFixPass-specific
+    assert wf.dispatch_fix is not None
+
+    # PlanPhase-specific
+    assert wf.plan_issue is not None
+    assert wf.dispatch_plan is not None
+    assert wf.drop_issues_in_review is not None
+
+    # Sub-protocol references
+    assert wf.execute_ops is not None
+    assert wf.review_ops is not None
+    assert wf.ci_ops is not None
+    assert wf.plan_ops is not None
