@@ -13,7 +13,8 @@ from temporalio import workflow
 
 from .._constants import _RETRY
 from ..dev_loop_logic import render_review_findings_comment
-from ..phases.phase_ops import PhaseOps, _PostCommentCallback
+from ..phases.phase_ops import PhaseOps
+from ..phases.io_ops import _PostCommentCallback
 from ..shared import (
     AgentJobResult,
     InlineComment,
