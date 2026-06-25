@@ -52,48 +52,26 @@ from .._constants import (
     _RETRY,
 )
 
+# ── Re-export shared callback types from _types.py (single source of truth) ─ #
 
-# ── Core I/O operations (shared by every phase) ────────────────────────── #
+from ._types import (  # noqa: E402
+    _AnswerQuestionCallback,
+    _CleanupCallback,
+    _DispatchCallback,
+    _DispatchFixCallback,
+    _DispatchPlanCallback,
+    _DropInReviewCallback,
+    _KpiBumpCallback,
+    _PollCiCallback,
+    _PostCommentCallback,
+    _PostReviewFindingsCallback,
+    _RequestReviewerCallback,
+)
 
-_PostCommentCallback = Callable[[str, int, str], Coroutine[Any, Any, None]]
-_CleanupCallback = Callable[[str], Coroutine[Any, Any, None]]
-_DispatchCallback = Callable[
-    [str, TaskSpec, int, float], Coroutine[Any, Any, AgentJobResult]
-]
-_KpiBumpCallback = Callable[[str, int], Coroutine[Any, Any, None]]
+# ── Internal-only callbacks (not shared across modules) ──────────────────── #
+
 _KpiTakeCallback = Callable[[], Coroutine[Any, Any, dict]]
 _EmitKpisCallback = Callable[[WorkflowKpiInput], Coroutine[Any, Any, None]]
-_PollCiCallback = Callable[[str, int], Coroutine[Any, Any, CIChecksResult]]
-_RequestReviewerCallback = Callable[
-    [str, Optional[int]], Coroutine[Any, Any, ReviewerRequestResult]
-]
-
-# ── ExecutePhase-specific ──────────────────────────────────────────────── #
-
-_AnswerQuestionCallback = Callable[
-    [str, int, AgentJobResult], Coroutine[Any, Any, AgentJobResult]
-]
-
-# ── ReviewPhase-specific ───────────────────────────────────────────────── #
-
-_PostReviewFindingsCallback = Callable[
-    [str, str, dict, AgentJobResult], Coroutine[Any, Any, None]
-]
-
-# ── CICycle/ReviewFixPass-specific ─────────────────────────────────────── #
-
-# dispatch_fix — same positional shape as _DispatchCallback but returns
-# commit count instead of AgentJobResult (#188).
-_DispatchFixCallback = Callable[
-    [str, TaskSpec, int, float], Coroutine[Any, Any, int]
-]  # returns commits count
-
-# ── PlanPhase-specific ──────────────────────────────────────────────────── #
-
-_DispatchPlanCallback = Callable[
-    [str, TaskSpec, float], Coroutine[Any, Any, AgentJobResult]
-]
-_DropInReviewCallback = Callable[[Any, list[dict]], Coroutine[Any, Any, list[dict]]]
 
 
 class PhaseOps:

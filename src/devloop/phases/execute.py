@@ -9,7 +9,7 @@ and delegates to ``CICycle`` for the CI fix loop.
 
 from __future__ import annotations
 
-from typing import Any, Callable, Coroutine, Optional
+from typing import Any, Optional
 
 from ..phases.cycle import CICycle
 from ..phases.execute_phase_ops import ExecutePhaseOps
@@ -21,16 +21,13 @@ from ..shared import (
     TaskSpec,
 )
 
-
-# Type aliases for injectable callbacks.
-_DispatchExecuteCallback = Callable[
-    [str, TaskSpec, int, float], Coroutine[Any, Any, AgentJobResult]
-]
-_AnswerQuestionCallback = Callable[
-    [str, int, AgentJobResult], Coroutine[Any, Any, AgentJobResult]
-]
-_PostCommentCallback = Callable[[str, int, str], Coroutine[Any, Any, None]]
-_KpiBumpCallback = Callable[[str, int], Coroutine[Any, Any, None]]
+# Re-export shared callback types from _types.py
+from ._types import (  # noqa: E401
+    _AnswerQuestionCallback,
+    _DispatchExecuteCallback,
+    _KpiBumpCallback,
+    _PostCommentCallback,
+)
 
 
 class ExecutePhaseCallbacks(PhaseOps):

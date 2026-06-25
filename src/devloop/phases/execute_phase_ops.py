@@ -11,27 +11,18 @@ Exposes exactly four fields that the Execute phase actually needs:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Callable, Coroutine
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from ..execution import AgentJobResult, TaskSpec
+    pass
 
-
-# Type alias: post a GitHub Issue/PR comment.
-_PostCommentCallback = Callable[[str, int, str], Coroutine[Any, Any, None]]
-
-# Type alias: dispatch the execute agent job and wait for result.
-_DispatchExecuteCallback = Callable[
-    [str, "TaskSpec", int, float], Coroutine[Any, Any, "AgentJobResult"]
-]
-
-# Type alias: resolve an AWAITING_HUMAN question for an execute job.
-_AnswerQuestionCallback = Callable[
-    [str, int, "AgentJobResult"], Coroutine[Any, Any, "AgentJobResult"]
-]
-
-# Type alias: increment a per-issue KPI counter.
-_KpiBumpCallback = Callable[[str, int], Coroutine[Any, Any, None]]
+# Re-export shared callback types from _types.py
+from ._types import (  # noqa: E401
+    _AnswerQuestionCallback,
+    _DispatchExecuteCallback,
+    _KpiBumpCallback,
+    _PostCommentCallback,
+)
 
 
 @dataclass

@@ -13,7 +13,7 @@ from temporalio import workflow
 
 from .._constants import _RETRY
 from ..dev_loop_logic import render_review_findings_comment
-from ..phases.phase_ops import PhaseOps, _PostCommentCallback
+from ..phases.phase_ops import PhaseOps
 from ..shared import (
     AgentJobResult,
     InlineComment,
@@ -21,14 +21,12 @@ from ..shared import (
     TaskSpec,
 )
 
-
-# Type aliases for injectable callbacks.
-_DispatchReviewCallback = Callable[
-    [str, TaskSpec, int, float], Coroutine[Any, Any, AgentJobResult]
-]
-_PostReviewFindingsCallback = Callable[
-    [str, str, dict, AgentJobResult], Coroutine[Any, Any, None]
-]
+# Re-export shared callback types from _types.py
+from ._types import (  # noqa: E401
+    _DispatchReviewCallback,
+    _PostCommentCallback,
+    _PostReviewFindingsCallback,
+)
 
 
 class ReviewPhase:

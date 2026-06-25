@@ -11,24 +11,15 @@ Exposes exactly four fields that the Plan phase actually needs:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Callable, Coroutine
-
-from ..shared import AgentJobResult, PlanIssueInput, TaskSpec
 
 
-# Type alias: post a GitHub Issue/PR comment.
-_PostCommentCallback = Callable[[str, int, str], Coroutine[Any, Any, None]]
-
-# Type alias: lightweight single-issue plan (webhook-triggered).
-_PlanIssueCallback = Callable[[PlanIssueInput], Coroutine[Any, Any, dict]]
-
-# Type alias: dispatch a plan agent job (backlog path).
-_DispatchPlanCallback = Callable[
-    [str, TaskSpec, float], Coroutine[Any, Any, AgentJobResult]
-]
-
-# Type alias: drop issues that already have an open agent PR.
-_DropInReviewCallback = Callable[[Any, list[dict]], Coroutine[Any, Any, list[dict]]]
+# Re-export shared callback types from _types.py
+from ._types import (  # noqa: E401
+    _DispatchPlanCallback,
+    _DropInReviewCallback,
+    _PlanIssueCallback,
+    _PostCommentCallback,
+)
 
 
 @dataclass

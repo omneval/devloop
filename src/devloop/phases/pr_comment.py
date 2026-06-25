@@ -16,7 +16,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import TYPE_CHECKING, Any, Callable, Coroutine, Optional
+from typing import TYPE_CHECKING, Optional
 
 from temporalio import workflow
 from temporalio.common import RetryPolicy
@@ -27,6 +27,9 @@ from ..dev_loop_logic import pr_number_from_url
 if TYPE_CHECKING:
     from ..pr_comment import PRCommentInput, PRCommentResult
     from ..shared import AgentJobResult, TaskSpec
+
+# Re-export shared callback types from _types.py
+from ._types import _DispatchCallback, _GetBranchCallback, _PostCommentCallback
 
 # Agent issue branches are named ``agent/issue-<N>[-slug]`` (see entrypoint.py /
 # github_ops._AGENT_BRANCH / webhook._AGENT_BRANCH). ``_handle_pull_request_review``
@@ -39,14 +42,6 @@ if TYPE_CHECKING:
 # proceed to the entrypoint's ``force=True`` push — clobbering a human's work
 # (issue #101).
 _AGENT_BRANCH = re.compile(r"^agent/issue-(\d+)")
-
-
-# Type aliases for injectable callbacks.
-_GetBranchCallback = Callable[[str, int], Coroutine[Any, Any, str]]
-_DispatchCallback = Callable[
-    [str, "TaskSpec", int, float], Coroutine[Any, Any, "AgentJobResult"]
-]
-_PostCommentCallback = Callable[[str, int, str], Coroutine[Any, Any, None]]
 
 
 @dataclass
