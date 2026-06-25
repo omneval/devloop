@@ -140,7 +140,7 @@ class ScanningPhase:
         if cb.create_issue is not None:
             return await cb.create_issue(inp)
 
-        import workflow
+        from temporalio import workflow
 
         return await workflow.execute_activity(
             "create_github_issue",
@@ -164,7 +164,7 @@ class ScanningPhase:
         if cb.dispatch is not None:
             return await cb.dispatch(project_id, spec, issue_number, 5.0)
 
-        import workflow
+        from temporalio import workflow
 
         result = await workflow.execute_activity(
             "dispatch_agent_job",
@@ -192,7 +192,7 @@ class ScanningPhase:
             await cb.post_comment(project_id, issue_number, body)
             return
 
-        import workflow
+        from temporalio import workflow
 
         await workflow.execute_activity(
             "post_github_comment",
