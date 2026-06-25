@@ -517,7 +517,8 @@ class IoOps:
     # as_int
     # ------------------------------------------------------------------
 
-    def as_int(self, value: Any) -> int:
+    @staticmethod
+    def as_int(value: Any) -> int:
         """Safely convert *value* to ``int``, returning ``0`` on failure."""
         try:
             return int(value)
