@@ -24,6 +24,7 @@ from __future__ import annotations
 import inspect
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Optional
 
+from ..phases.phase_ops import PhaseOps
 from ..shared import WorkflowKpiInput
 
 if TYPE_CHECKING:
@@ -63,13 +64,6 @@ async def _run_fn(fn, *args):
     if inspect.isawaitable(result):
         return await result
     return result
-
-
-def _as_int(value: Any) -> int:
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return 0
 
 
 # Type aliases for injected callables.
@@ -182,7 +176,7 @@ class PhasePipeline:
                 )
 
             issue = issues[0]  # sequential: one issue per round
-            issue_id = _as_int(issue.get("id"))
+            issue_id = PhaseOps.as_int(issue.get("id"))
             exec_result = await _run_fn(execute_phase, inp, issue)
             if not exec_result.get("commits"):
                 # Track consecutive zero-commit rounds for this issue.
@@ -218,9 +212,9 @@ class PhasePipeline:
                 verdict = (review or {}).get("verdict")
 
             await _run_fn(notifier, inp, issue, exec_result)
-            queued.append(_as_int(issue.get("id")))
+            queued.append(PhaseOps.as_int(issue.get("id")))
             if verdict:
-                verdicts[_as_int(issue.get("id"))] = verdict
+                verdicts[PhaseOps.as_int(issue.get("id"))] = verdict
 
             # Notify caller that the round completed successfully.
             if post_round is not None:

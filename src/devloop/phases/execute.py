@@ -242,10 +242,3 @@ class ExecutePhase:
             return await ops.answer_question(project_id, issue_no, result)
         # Default: no question resolution — return result as-is.
         return result
-
-
-def _as_int(value: Any) -> int:
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return 0

@@ -177,13 +177,6 @@ class ReviewPhase:
         )
 
 
-def _as_int(value: Any) -> int:
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return 0
-
-
 class ReviewPhaseCallbacks(PhaseOps):
     """Backward-compatible shim that delegates to a ``PhaseOps`` instance.
 
