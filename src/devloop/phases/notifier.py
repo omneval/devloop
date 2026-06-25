@@ -15,17 +15,16 @@ supposed to act on it.
 
 from __future__ import annotations
 
-from typing import Any, Callable, Coroutine, Optional
+from typing import Any, Optional
 
-from devloop.github import ReviewerRequestResult
 
 from .phase_ops import PhaseOps
 
-# Re-use types from the unified protocol
-_PostCommentCallback = Callable[[str, int, str], Coroutine[Any, Any, None]]
-_RequestReviewerCallback = Callable[
-    [str, Optional[int]], Coroutine[Any, Any, ReviewerRequestResult]
-]
+# Re-export shared callback types from _types.py
+from ._types import (  # noqa: E401
+    _PostCommentCallback,
+    _RequestReviewerCallback,
+)
 
 
 class Notifier:

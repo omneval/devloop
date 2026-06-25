@@ -33,8 +33,10 @@ from ..shared import (
 
 
 # Re-use types from the unified protocol
-from .phase_ops import (
-    PhaseOps,
+from .phase_ops import PhaseOps
+
+# Re-export shared callback types from _types.py
+from ._types import (  # noqa: E401
     _DispatchPlanCallback,
     _DropInReviewCallback,
     _KpiBumpCallback,

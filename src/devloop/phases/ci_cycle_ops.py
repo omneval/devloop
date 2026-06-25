@@ -12,28 +12,20 @@ Exposes exactly five fields that the CI fix cycle actually needs:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Callable, Coroutine
+from typing import TYPE_CHECKING
 
-from ..cichecks import CIChecksResult
 
 if TYPE_CHECKING:
-    from ..execution import TaskSpec
+    pass
 
-
-# Type alias: post a GitHub PR comment.
-_PostCommentCallback = Callable[[str, int, str], Coroutine[Any, Any, None]]
-
-# Type alias: dispatch a CI fix agent job, returns commit count (int).
-_DispatchFixCallback = Callable[[str, "TaskSpec", int, float], Coroutine[Any, Any, int]]
-
-# Type alias: poll CI checks for a PR.
-_PollCiCallback = Callable[[str, int], Coroutine[Any, Any, CIChecksResult]]
-
-# Type alias: increment a per-issue KPI counter.
-_KpiBumpCallback = Callable[[str, int], Coroutine[Any, Any, None]]
-
-# Type alias: delete the output ConfigMap for a completed job.
-_CleanupCallback = Callable[[str], Coroutine[Any, Any, None]]
+# Re-export shared callback types from _types.py
+from ._types import (  # noqa: E401
+    _CleanupCallback,
+    _DispatchFixCallback,
+    _KpiBumpCallback,
+    _PollCiCallback,
+    _PostCommentCallback,
+)
 
 
 @dataclass
