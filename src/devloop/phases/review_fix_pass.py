@@ -16,12 +16,12 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from .phase_ops import (
-    PhaseOps,
+from .io_ops import (
     _DispatchFixCallback,
     _KpiBumpCallback,
     _PostCommentCallback,
 )
+from .phase_ops import PhaseOps
 from ..shared import TaskSpec
 
 

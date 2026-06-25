@@ -197,7 +197,7 @@ class TestPhaseOpsComment:
             return None
 
         with patch(
-            "devloop.phases.phase_ops.workflow.execute_activity",
+            "devloop.phases.io_ops.workflow.execute_activity",
             fake_execute_activity,
         ):
             await ops._comment("proj", 42, "hello")
@@ -233,7 +233,7 @@ class TestPhaseOpsCleanup:
             return None
 
         with patch(
-            "devloop.phases.phase_ops.workflow.execute_activity",
+            "devloop.phases.io_ops.workflow.execute_activity",
             fake_act,
         ):
             await ops._cleanup("my-job")
@@ -280,7 +280,7 @@ class TestPhaseOpsDispatch:
             return _FakeResult()
 
         with patch(
-            "devloop.phases.phase_ops.workflow.execute_activity",
+            "devloop.phases.io_ops.workflow.execute_activity",
             fake_act,
         ):
             await PhaseOps.dispatch_helper(
@@ -354,7 +354,7 @@ class TestPhaseOpsPoll:
             return MagicMock(all_passed=True, failures=[])
 
         with patch(
-            "devloop.phases.phase_ops.workflow.execute_activity",
+            "devloop.phases.io_ops.workflow.execute_activity",
             fake_act,
         ):
             result = await PhaseOps.poll(PhaseOps(), "proj", 42, callback=None)
@@ -392,7 +392,7 @@ class TestPhaseOpsRequestReviewer:
             return MagicMock(requested=True, reason=None)
 
         with patch(
-            "devloop.phases.phase_ops.workflow.execute_activity",
+            "devloop.phases.io_ops.workflow.execute_activity",
             fake_act,
         ):
             result = await ops._request_reviewer("proj", 42)

@@ -33,13 +33,13 @@ from ..shared import (
 
 
 # Re-use types from the unified protocol
-from .phase_ops import (
-    PhaseOps,
+from .io_ops import (
     _DispatchPlanCallback,
     _DropInReviewCallback,
     _KpiBumpCallback,
     _PostCommentCallback,
 )
+from .phase_ops import PhaseOps
 
 
 class PlanPhase:
