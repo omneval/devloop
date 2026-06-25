@@ -80,10 +80,9 @@ class TestScanningPhaseRun:
         # Comment should be posted before dispatch
         post_comment_calls = callbacks.post_comment.call_args_list
         assert len(post_comment_calls) >= 1
-        first_call = post_comment_calls[0]
         assert (
-            "queued" in first_call[0][2].lower()
-            or "sentrux" in first_call[0][2].lower()
+            post_comment_calls[0][0][2]
+            == "⏳ queued — sentrux scan starting"
         )
 
     @pytest.mark.asyncio

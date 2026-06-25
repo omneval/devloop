@@ -92,7 +92,7 @@ class ScanningPhase:
         await self._comment(
             project_id,
             parent_issue_number,
-            "queued — sentrux scan starting",
+            "⏳ queued — sentrux scan starting",
             cb,
         )
 

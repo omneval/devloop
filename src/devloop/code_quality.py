@@ -19,6 +19,7 @@ from typing import Optional
 from temporalio import workflow
 from temporalio.common import RetryPolicy
 
+from .cichecks import CIChecksResult, PollCIChecksInput
 from .execution import AgentJobResult, DispatchInput, TaskSpec, WorkflowKpiInput
 from .github import (
     GithubNotificationInput,
@@ -33,11 +34,7 @@ with workflow.unsafe.imports_passed_through():
     from .phases.improve_phase import ImprovePhase, ImprovePhaseCallbacks
     from .phases.quality_gate import QualityGate
     from .phases.scanning_phase import ScanningPhase, ScanningPhaseCallbacks
-    from .shared import (
-        CreateGithubIssueInput,
-        CIChecksResult,
-        UpdateGithubIssueInput,
-    )
+    from .shared import CreateGithubIssueInput, UpdateGithubIssueInput
 
 
 @dataclass
@@ -204,8 +201,6 @@ class CodeQualityWorkflow(PhaseOps):
         self, project_id: str, pr_number: int
     ) -> CIChecksResult:
         """Real ``poll_ci_checks`` activity — adapter for PhaseOps.poll_ci."""
-        from .cichecks import PollCIChecksInput
-
         return await workflow.execute_activity(
             "poll_ci_checks",
             PollCIChecksInput(project_id=project_id, pr_number=pr_number),
