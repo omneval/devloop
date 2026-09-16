@@ -169,7 +169,7 @@ def structured_extractor(
     or cannot be parsed into *model_cls*.
     """
     client = _get_llm_client(role)
-    model = _strip_provider_prefix(_llm_setting("AGENT_MODEL", role, "qwen3-27b"))
+    model = _strip_provider_prefix(_llm_setting("AGENT_MODEL", role, "qwen3.8-flash-next"))
     schema = model_cls.model_json_schema()
     try:
         response = client.chat.completions.create(
