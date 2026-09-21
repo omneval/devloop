@@ -34,7 +34,7 @@ log = logging.getLogger(__name__)
 
 STATE_CONFIGMAP = os.getenv("SUMMARY_STATE_CONFIGMAP", "dev-loop-summary-state")
 LLM_BASE_URL = os.getenv("AGENT_LLM_BASE_URL", "http://192.168.68.104/v1")
-SUMMARY_MODEL = os.getenv("SUMMARY_MODEL", "qwen3-27b")
+SUMMARY_MODEL = os.getenv("SUMMARY_MODEL", "qwen3.8-flash-next")
 
 SUMMARY_LABEL = "devloop-summary"
 

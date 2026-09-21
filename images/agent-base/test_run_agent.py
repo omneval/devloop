@@ -390,7 +390,7 @@ def test_happy_path_constructs_sdk_objects_correctly(monkeypatch, tmp_path):
     build_agent (hand-rolled preset: get_default_tools + get_default_condenser +
     Agent(..., agent_context=None)), and passes that agent to LocalConversation."""
     monkeypatch.delenv("AGENT_STUB", raising=False)
-    monkeypatch.setenv("AGENT_MODEL", "qwen3-27b")
+    monkeypatch.setenv("AGENT_MODEL", "qwen3.8-flash-next")
     monkeypatch.setenv("AGENT_LLM_BASE_URL", "http://192.168.68.104/v1")
     monkeypatch.setenv("AGENT_LLM_API_KEY", "test-key")
 
@@ -412,8 +412,8 @@ def test_happy_path_constructs_sdk_objects_correctly(monkeypatch, tmp_path):
     # LLM called with model + base_url + api_key
     LLM_cls.assert_called_once()
     llm_kwargs = LLM_cls.call_args
-    assert llm_kwargs.kwargs.get("model") == "qwen3-27b" or (
-        llm_kwargs.args and llm_kwargs.args[0] == "qwen3-27b"
+    assert llm_kwargs.kwargs.get("model") == "qwen3.8-flash-next" or (
+        llm_kwargs.args and llm_kwargs.args[0] == "qwen3.8-flash-next"
     )
     assert llm_kwargs.kwargs.get("base_url") == "http://192.168.68.104/v1"
     assert llm_kwargs.kwargs.get("api_key") == "test-key"
@@ -448,7 +448,7 @@ def test_happy_path_honours_default_env(monkeypatch, tmp_path):
         entrypoint.run_agent(_spec(), str(tmp_path), _noop_tracer())
 
     llm_kwargs = LLM_cls.call_args.kwargs
-    assert llm_kwargs["model"] == "qwen3-27b"
+    assert llm_kwargs["model"] == "qwen3.8-flash-next"
     assert llm_kwargs["base_url"] == "http://192.168.68.104/v1"
 
 

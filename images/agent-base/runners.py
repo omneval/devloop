@@ -81,7 +81,7 @@ class OpenHandsRunner:
         # use the base execute model.
         llm_role = "review" if spec.phase == "review" else ""
         llm = LLM(
-            model=llm_setting("AGENT_MODEL", llm_role, "qwen3-27b"),
+            model=llm_setting("AGENT_MODEL", llm_role, "qwen3.8-flash-next"),
             base_url=llm_setting(
                 "AGENT_LLM_BASE_URL", llm_role, "http://192.168.68.104/v1"
             ),
